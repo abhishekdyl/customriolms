@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+/* Design tokens ported directly from the approved lms_screens.jsx mockup —
+   same vivid indigo/amber/violet/cyan system, not reinvented for the real app. */
+@theme {
+  --font-head: "Sora", "Inter", sans-serif;
+  --font-body: "Inter", sans-serif;
+
+  --color-paper: #F7F7FC;
+  --color-surface: #FFFFFF;
+  --color-ink: #14142B;
+  --color-ink-soft: #4E4B66;
+  --color-ink-faint: #A0A3BD;
+  --color-line: #E4E4F0;
+  --color-line-soft: #EFEFFB;
+
+  --color-primary: #3D5AFE;
+  --color-primary-soft: #E8EBFF;
+  --color-violet: #8C54FF;
+  --color-cyan: #00B8D9;
+  --color-amber: #FF8A00;
+  --color-amber-soft: #FFEEDB;
+  --color-success: #00C48C;
+  --color-success-soft: #D9F7EC;
+  --color-danger: #FF3B5C;
+  --color-danger-soft: #FFE3E9;
+
+  --color-rail: #181B3F;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+}

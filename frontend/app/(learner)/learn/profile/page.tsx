@@ -1,0 +1,221 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Check, Eye, EyeOff, Lock, LogOut, User as UserIcon } from "lucide-react";
+import { Topbar } from "@/components/shell/topbar";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ApiError } from "@/lib/api-client";
+import { useChangePassword, useCurrentUser, useLogoutAll, useUpdateProfile } from "@/lib/hooks/use-auth";
+
+const ROLE_LABEL: Record<string, string> = {
+  super_admin: "Super Admin",
+  org_admin: "Org Admin",
+  team_lead: "Team Lead",
+  learner: "Learner",
+};
+
+function Card({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-4 rounded-[14px] border border-line bg-surface p-5">
+      <h2 className="font-head text-[14.5px] text-ink">{title}</h2>
+      {hint && <p className="mt-0.5 text-[12px] text-ink-faint">{hint}</p>}
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
+function Message({ kind, children }: { kind: "ok" | "error"; children: React.ReactNode }) {
+  return (
+    <p className={kind === "ok" ? "flex items-center gap-1.5 text-[12.5px] text-success" : "text-[12.5px] text-danger"}>
+      {kind === "ok" && <Check size={13} />}
+      {children}
+    </p>
+  );
+}
+
+/** Backend validation errors can arrive as a list; always show readable text. */
+function errorText(e: unknown, fallback: string) {
+  return e instanceof ApiError && typeof e.message === "string" && !e.message.startsWith("[") ? e.message : fallback;
+}
+
+function DetailsCard() {
+  const { data: user } = useCurrentUser();
+  const update = useUpdateProfile();
+  const [name, setName] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  // Seed the field once the profile has loaded.
+  useEffect(() => {
+    if (user) setName(user.name);
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const clean = name.trim().replace(/\s+/g, " ");
+  const dirty = !!user && clean !== user.name;
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaved(false);
+    if (!clean) {
+      setLocalError("Please enter your name.");
+      return;
+    }
+    setLocalError(null);
+    update.mutate({ name: clean }, { onSuccess: (me) => { setName(me.name); setSaved(true); } });
+  };
+
+  return (
+    <Card title="Your details">
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <div>
+          <Label htmlFor="name">Full name</Label>
+          <Input
+            id="name"
+            value={name}
+            maxLength={200}
+            onChange={(e) => { setName(e.target.value); setSaved(false); setLocalError(null); }}
+            className="mt-1.5"
+          />
+        </div>
+
+        <div>
+          <Label htmlFor="email">Email</Label>
+          <Input id="email" value={user?.email ?? ""} disabled readOnly className="mt-1.5" />
+          <p className="mt-1 text-[11.5px] text-ink-faint">This is your login. Ask your admin if it needs to change.</p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="team">Team</Label>
+            <Input id="team" value={user?.team_name ?? "—"} disabled readOnly className="mt-1.5" />
+          </div>
+          <div>
+            <Label htmlFor="role">Role</Label>
+            <Input id="role" value={user ? ROLE_LABEL[user.role] ?? user.role : ""} disabled readOnly className="mt-1.5" />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button type="submit" disabled={!dirty || update.isPending}>
+            {update.isPending ? "Saving…" : "Save changes"}
+          </Button>
+          {saved && !dirty && <Message kind="ok">Saved</Message>}
+          {(localError || update.isError) && (
+            <Message kind="error">{localError ?? errorText(update.error, "Couldn’t save. Please try again.")}</Message>
+          )}
+        </div>
+      </form>
+    </Card>
+  );
+}
+
+function PasswordCard() {
+  const change = useChangePassword({ redirectAfter: false });
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [show, setShow] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setDone(false);
+    if (next.length < 8) return setLocalError("New password must be at least 8 characters.");
+    if (next !== confirm) return setLocalError("New passwords don’t match.");
+    setLocalError(null);
+    change.mutate(
+      { current_password: current, new_password: next },
+      { onSuccess: () => { setDone(true); setCurrent(""); setNext(""); setConfirm(""); } }
+    );
+  };
+
+  const type = show ? "text" : "password";
+  return (
+    <Card title="Password" hint="Changing it signs you out on your other devices.">
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <div>
+          <Label htmlFor="cur">Current password</Label>
+          <div className="relative mt-1.5">
+            <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint" />
+            <Input id="cur" type={type} value={current} onChange={(e) => setCurrent(e.target.value)} className="pl-9 pr-9" autoComplete="current-password" required />
+            <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Hide passwords" : "Show passwords"} className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-faint">
+              {show ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="new">New password</Label>
+            <Input id="new" type={type} value={next} onChange={(e) => setNext(e.target.value)} className="mt-1.5" autoComplete="new-password" minLength={8} required />
+          </div>
+          <div>
+            <Label htmlFor="confirm">Confirm new password</Label>
+            <Input id="confirm" type={type} value={confirm} onChange={(e) => setConfirm(e.target.value)} className="mt-1.5" autoComplete="new-password" minLength={8} required />
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button type="submit" disabled={change.isPending || !current || !next || !confirm}>
+            {change.isPending ? "Updating…" : "Update password"}
+          </Button>
+          {done && <Message kind="ok">Password updated</Message>}
+          {(localError || change.isError) && (
+            <Message kind="error">{localError ?? errorText(change.error, "Couldn’t update your password.")}</Message>
+          )}
+        </div>
+      </form>
+    </Card>
+  );
+}
+
+function SessionsCard() {
+  const logoutAll = useLogoutAll();
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <Card title="Devices" hint="Signed in somewhere you don’t recognise, or lost a device? End every session.">
+      {confirming ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[12.5px] text-ink-soft">Log out everywhere, including here?</span>
+          <Button variant="secondary" onClick={() => logoutAll.mutate()} disabled={logoutAll.isPending}>
+            {logoutAll.isPending ? "Logging out…" : "Yes, log out everywhere"}
+          </Button>
+          <button type="button" onClick={() => setConfirming(false)} className="text-[12.5px] text-ink-faint">
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <Button variant="secondary" onClick={() => setConfirming(true)}>
+          <LogOut size={14} className="mr-2" /> Log out of all devices
+        </Button>
+      )}
+      {logoutAll.isError && <div className="mt-2"><Message kind="error">Couldn’t log out. Please try again.</Message></div>}
+    </Card>
+  );
+}
+
+export default function ProfilePage() {
+  const { data: user } = useCurrentUser();
+  const initials = user?.name?.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "";
+
+  return (
+    <>
+      <Topbar title="Profile" />
+      <div className="mx-auto w-full max-w-[640px] flex-1 px-4 pb-8 pt-5 md:px-8 md:pt-6">
+        {/* header — same avatar block as the prototype */}
+        <div className="mb-6 flex flex-col items-center">
+          <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-full bg-amber">
+            {initials ? <span className="font-head text-xl text-white">{initials}</span> : <UserIcon size={24} color="#fff" />}
+          </div>
+          <div className="font-head text-base text-ink">{user?.name ?? "\u00A0"}</div>
+          <div className="text-[12.5px] text-ink-faint">{user?.team_name ?? "No team yet"}</div>
+        </div>
+
+        <DetailsCard />
+        <PasswordCard />
+        <SessionsCard />
+      </div>
+    </>
+  );
+}

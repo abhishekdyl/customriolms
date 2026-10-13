@@ -1,0 +1,99 @@
+"use client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api-client";
+import type { Course, CourseListItem, Module } from "@/lib/types";
+
+export function useCourses() {
+  return useQuery({ queryKey: ["courses"], queryFn: () => api.get<CourseListItem[]>("/api/v1/courses") });
+}
+
+export function useCourse(id: string) {
+  return useQuery({
+    queryKey: ["courses", id],
+    queryFn: () => api.get<Course>(`/api/v1/courses/${id}`),
+    enabled: !!id,
+  });
+}
+
+export function useCreateCourse() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { title: string; category_id?: string | null }) => api.post<Course>("/api/v1/courses", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
+  });
+}
+
+export function useUpdateCourse(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<Course>) => api.patch<Course>(`/api/v1/courses/${courseId}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+      qc.invalidateQueries({ queryKey: ["courses"] });
+    },
+  });
+}
+
+export function useDeleteCourse() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/courses/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
+  });
+}
+
+export function useAssignCourse(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { team_ids: string[]; user_ids: string[] }) => api.post<Course>(`/api/v1/courses/${courseId}/assign`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
+  });
+}
+
+export function useBulkAssignCourses() {
+  const qc = useQueryClient();
+  return useMutation({
+    // No bulk-assign endpoint on the backend yet — this just calls the
+    // existing single-course /assign once per selected course. Fine for
+    // the handful of courses a bulk-select would realistically cover.
+    mutationFn: async (body: { course_ids: string[]; team_ids: string[]; user_ids: string[] }) => {
+      await Promise.all(
+        body.course_ids.map((id) => api.post(`/api/v1/courses/${id}/assign`, { team_ids: body.team_ids, user_ids: body.user_ids }))
+      );
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
+  });
+}
+
+export function useAddModule(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { title: string; type?: string }) => api.post<Module>(`/api/v1/courses/${courseId}/modules`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+  });
+}
+
+export function useUpdateModule(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ moduleId, ...body }: { moduleId: string } & Partial<Module>) =>
+      api.patch<Module>(`/api/v1/courses/${courseId}/modules/${moduleId}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+  });
+}
+
+export function useDeleteModule(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (moduleId: string) => api.delete(`/api/v1/courses/${courseId}/modules/${moduleId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+  });
+}
+
+export function useReorderModules(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (moduleIds: string[]) => api.post(`/api/v1/courses/${courseId}/modules/reorder`, { module_ids: moduleIds }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+  });
+}
