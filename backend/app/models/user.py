@@ -42,10 +42,10 @@ class User(Base):
 
     # Self-service profile — editable by the user themselves (email is the
     # username, so it is deliberately NOT editable).
-    # phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    # job_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    # location: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    # bio: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    bio: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     org: Mapped["Org"] = relationship(back_populates="users")
     team: Mapped["Team | None"] = relationship(back_populates="users")

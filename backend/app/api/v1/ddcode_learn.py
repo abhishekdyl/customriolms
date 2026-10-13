@@ -12,11 +12,11 @@ from app.models.org import Org
 from app.models.course import Course
 from app.models.team import Team
 from app.models.user import RoleName, User
-from app.schemas.learn import (
+from app.schemas.ddcode_learn import (
     CertDetail, CompleteResult, LearnCourseDetail, LearnCourseItem, LearnModule, LearnNotification, LearnProgress,
     LearnSummary, LeaderRow, ProfileOut, ProfileUpdate, QuizQuestionOut, QuizResult, QuizSubmit,
 )
-from app.services import learn_service as svc
+from app.services import ddcode_learn_service as svc
 from app.services.certificate_service import ensure_org_has_a_template
 
 # The whole learner app lives behind this one dependency: only LEARNER (and platform

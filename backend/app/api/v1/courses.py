@@ -14,9 +14,11 @@ from app.schemas.course import (
     CourseAssignRequest, CourseCreate, CourseListItem, CourseOut, CourseUpdate,
     LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem,
 )
+from app.schemas.ddcode_learn import CompleteResult, QuizResult, QuizSubmit
 from app.services.course_service import (
     add_module, assign_course, get_course_or_404, get_my_course, list_courses, list_my_courses, reorder_modules, update_module,
 )
+from app.services import ddcode_learn_service as progress_svc
 
 router = APIRouter(prefix="/api/v1/courses", tags=["courses"])
 
@@ -41,6 +43,35 @@ async def get_my_courses(db: AsyncSession = Depends(get_db), current_user: User 
 async def get_my_course_detail(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Course view for the learner it's assigned to — modules and quiz questions, no answers."""
     return await get_my_course(db, course_id, current_user)
+
+
+async def _module_belongs_to_course(module_id: uuid.UUID, course_id: uuid.UUID, db: AsyncSession) -> None:
+    row = (await db.execute(select(Module.id).where(Module.id == module_id, Module.course_id == course_id))).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Module not found on this course")
+
+
+@router.post("/mine/{course_id}/modules/{module_id}/complete", response_model=CompleteResult)
+async def complete_my_module(
+    course_id: uuid.UUID, module_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Marks a non-quiz module done for the caller. 404s if the module isn't
+    on this course, or the course isn't assigned to them (checked inside
+    complete_module via assigned_courses)."""
+    await _module_belongs_to_course(module_id, course_id, db)
+    pct, completed, code = await progress_svc.complete_module(db, current_user, module_id)
+    return CompleteResult(progress=pct, course_completed=completed, certificate_code=code)
+
+
+@router.post("/mine/{course_id}/modules/{module_id}/quiz", response_model=QuizResult)
+async def submit_my_quiz(
+    course_id: uuid.UUID, module_id: uuid.UUID, body: QuizSubmit,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Scores a quiz module's answers server-side and records the attempt."""
+    await _module_belongs_to_course(module_id, course_id, db)
+    result = await progress_svc.submit_quiz(db, current_user, module_id, body.answers)
+    return result
 
 
 @router.post("", response_model=CourseOut, status_code=201, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])

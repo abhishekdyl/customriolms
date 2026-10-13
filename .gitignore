@@ -19,3 +19,4 @@ out/
 
 # OS
 .DS_Store
+*.rdb

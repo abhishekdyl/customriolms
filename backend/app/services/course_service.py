@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import any_, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.badge import Badge
@@ -14,6 +14,11 @@ from app.schemas.course import (
     CourseListItem, LearnerCourseOut, LearnerModuleOut, LearnerQuizQuestionOut,
     ModuleCreate, ModuleUpdate, MyCourseItem,
 )
+# Real per-learner progress (ModuleProgress-backed) lives in
+# ddcode_learn_service — reused here rather than reimplemented so the
+# course list/detail views and the /api/v1/learn/* endpoints never
+# disagree about what "completed" means.
+from app.services import ddcode_learn_service as progress_svc
 
 
 async def _validate_ids_belong_to_org(db: AsyncSession, model, ids: list[uuid.UUID], org_id: uuid.UUID, label: str) -> None:
@@ -46,10 +51,16 @@ async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListIt
 
 def _assigned_to(user: User) -> list:
     """SQL conditions meaning "this course is assigned to this user" — directly
-    or through their team. The caller ORs them together."""
-    conditions = [user.id == any_(Course.assigned_user_ids)]
+    or through their team. The caller ORs them together.
+
+    Uses the ARRAY column's own .any(value) comparator rather than the
+    any_(column) == literal free function — the latter can't infer the
+    bind parameter's type from a bare literal on the left and silently
+    binds it as BOOLEAN instead of UUID, which asyncpg then rejects at
+    execute time ("Not a boolean value: UUID(...)")."""
+    conditions = [Course.assigned_user_ids.any(user.id)]
     if user.team_id is not None:
-        conditions.append(user.team_id == any_(Course.assigned_team_ids))
+        conditions.append(Course.assigned_team_ids.any(user.team_id))
     return conditions
 
 
@@ -64,15 +75,25 @@ async def list_my_courses(db: AsyncSession, user: User) -> list[MyCourseItem]:
         .group_by(Course.id, Category.name)
         .order_by(Course.title)
     )
-    return [
-        MyCourseItem(
+    rows = result.all()
+    # modules isn't eagerly joined by the aggregate query above, so pull each
+    # course's modules (already lazy="selectin" on the model) for the real
+    # progress calculation rather than trusting module_count alone.
+    courses = (await db.execute(
+        select(Course).where(Course.id.in_([r[0].id for r in rows]))
+    )).scalars().all()
+    courses_by_id = {c.id: c for c in courses}
+    done = await progress_svc.completed_map(db, user.id)
+    out = []
+    for course, category_name, module_count in rows:
+        pct, _, _ = progress_svc.course_progress(courses_by_id[course.id], done)
+        out.append(MyCourseItem(
             id=course.id, title=course.title, category_id=course.category_id, category_name=category_name,
             duration_label=course.duration_label, module_count=module_count,
             assigned_team_count=len(course.assigned_team_ids or []),
-            progress_pct=0,
-        )
-        for course, category_name, module_count in result.all()
-    ]
+            progress_pct=pct,
+        ))
+    return out
 
 
 async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> LearnerCourseOut:
@@ -86,13 +107,15 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
     if course is None:
         raise HTTPException(status_code=404, detail="Course not found")
 
+    done = await progress_svc.completed_map(db, user.id)
+    pct, completed_count, _ = progress_svc.course_progress(course, done)
     modules = [
         LearnerModuleOut(
             id=m.id, title=m.title, type=m.type, position=m.position, required=m.required, threshold=m.threshold,
             file_url=m.file_url, file_name=m.file_name, file_size_label=m.file_size_label,
             instructions=m.instructions, skill_count=len(m.skill_ids or []),
             questions=[LearnerQuizQuestionOut(id=q.id, text=q.text, options=list(q.options)) for q in (m.questions or [])],
-            completed=False,
+            completed=m.id in done,
         )
         for m in course.modules
     ]
@@ -101,7 +124,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
         category_id=course.category_id, category_name=course.category.name if course.category else None,
         duration_label=course.duration_label, module_count=len(modules),
         assigned_team_count=len(course.assigned_team_ids or []),
-        progress_pct=0, modules=modules, completed_module_count=0,
+        progress_pct=pct, modules=modules, completed_module_count=completed_count,
     )
 
 
