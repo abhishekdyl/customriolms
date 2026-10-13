@@ -1,20 +1,20 @@
-"""add missing orgs.allowed_domains column
+"""add missing orgs.allowed_domains column (now a no-op)
 
 Revision ID: b2f6a914c3e0
 Revises: a8c5e2d91f47
 
-The Org model (app/models/org.py) has declared `allowed_domains` since the
-domain-restriction feature was designed, but no earlier migration actually
-added the column — 72f6cab0b642 added plan/status/user_limit/created_at and
-stopped there. Any INSERT that includes it (org creation, PATCH /orgs/me)
-fails with "column does not exist" until this runs. Found while testing the
-learner-role work in this patch; unrelated to it, but blocking, so fixed here.
+This used to run `ALTER TABLE orgs ADD COLUMN allowed_domains ...`. That's
+now a duplicate: c7a2d8e14f39 ("add org profile fields") already adds the
+same column earlier in the chain, so on a fresh install this migration
+used to fail with "column already exists".
+
+Left as a no-op revision (not deleted) because production databases that
+migrated before this fix already have "b2f6a914c3e0" recorded in
+alembic_version — deleting the file would break their next `alembic
+upgrade head` with "Can't locate revision identified by 'b2f6a914c3e0'".
+A no-op keeps the chain intact for them while fixing fresh installs.
 """
 from typing import Sequence, Union
-
-import sqlalchemy as sa
-from alembic import op
-from sqlalchemy.dialects import postgresql
 
 revision: str = "b2f6a914c3e0"
 down_revision: Union[str, None] = "a8c5e2d91f47"
@@ -23,11 +23,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "orgs",
-        sa.Column("allowed_domains", postgresql.ARRAY(sa.String()), nullable=False, server_default="{}"),
-    )
+    pass
 
 
 def downgrade() -> None:
-    op.drop_column("orgs", "allowed_domains")
+    pass
