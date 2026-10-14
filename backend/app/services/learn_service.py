@@ -63,6 +63,17 @@ def status_for(pct: int) -> str:
     return "completed" if pct >= 100 else "not_started" if pct == 0 else "in_progress"
 
 
+def assert_course_open(course: Course) -> None:
+    """opens_at/closes_at are a hard window on new learner progress — not on
+    admin editing, and not retroactive on what's already completed. Called
+    right before recording a completion or a quiz attempt."""
+    now = datetime.now(timezone.utc)
+    if course.opens_at is not None and now < course.opens_at:
+        raise HTTPException(status_code=403, detail="This course hasn't opened yet")
+    if course.closes_at is not None and now > course.closes_at:
+        raise HTTPException(status_code=403, detail="This course is closed")
+
+
 # ---------- activity / streak ----------
 async def touch_activity(db: AsyncSession, user_id: uuid.UUID) -> None:
     stmt = pg_insert(ActivityDay).values(user_id=user_id, day=date.today()).on_conflict_do_nothing()
@@ -170,6 +181,7 @@ async def complete_module(db: AsyncSession, user: User, module_id: uuid.UUID) ->
     module, course = await _module_in_assigned_course(db, user, module_id)
     if module.type == ModuleType.QUIZ:
         raise HTTPException(status_code=400, detail="Quiz modules are completed by passing the quiz")
+    assert_course_open(course)
     await _mark_done(db, user, course, module, None)
     await db.commit()
     return await _finish_course_if_done(db, user, course)
@@ -187,6 +199,7 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
     module, course = await _module_in_assigned_course(db, user, module_id)
     if module.type != ModuleType.QUIZ or not module.questions:
         raise HTTPException(status_code=400, detail="This module has no quiz")
+    assert_course_open(course)
     results = []
     right = 0
     for i, q in enumerate(module.questions):

@@ -18,15 +18,22 @@ function CreateCourseDialog({ open, onOpenChange }: { open: boolean; onOpenChang
   const createCourse = useCreateCourse();
   const [title, setTitle] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [opensAt, setOpensAt] = useState("");
+  const [closesAt, setClosesAt] = useState("");
+
+  const dateError = opensAt && closesAt && closesAt <= opensAt;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim() || dateError) return;
     createCourse.mutate(
-      { title: title.trim(), category_id: categoryId || null },
+      {
+        title: title.trim(), category_id: categoryId || null,
+        opens_at: opensAt || null, closes_at: closesAt || null,
+      },
       {
         onSuccess: () => {
-          setTitle("");
+          setTitle(""); setOpensAt(""); setClosesAt("");
           onOpenChange(false);
         },
       }
@@ -59,7 +66,29 @@ function CreateCourseDialog({ open, onOpenChange }: { open: boolean; onOpenChang
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
-          <Button type="submit" disabled={createCourse.isPending}>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <div>
+              <p className="mb-1 text-[11px] text-ink-soft">Opens (optional)</p>
+              <input
+                type="date" value={opensAt} onChange={(e) => setOpensAt(e.target.value)}
+                className="h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-xs outline-none focus-visible:border-primary"
+              />
+            </div>
+            <div>
+              <p className="mb-1 text-[11px] text-ink-soft">Closes (optional)</p>
+              <input
+                type="date" value={closesAt} onChange={(e) => setClosesAt(e.target.value)}
+                className="h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-xs outline-none focus-visible:border-primary"
+              />
+            </div>
+          </div>
+          {dateError && <p className="text-xs text-danger">Close date must be after the open date.</p>}
+          <p className="text-[11px] text-ink-faint">
+            After the close date, no one new can be assigned and learners can&apos;t make further progress — anything already completed stays.
+          </p>
+
+          <Button type="submit" disabled={createCourse.isPending || !!dateError}>
             {createCourse.isPending ? "Creating…" : "Create & add modules"}
           </Button>
         </form>

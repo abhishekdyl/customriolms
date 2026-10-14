@@ -12,11 +12,12 @@ from app.models.module import Module
 from app.models.user import RoleName, User
 from app.schemas.course import (
     CourseAssignRequest, CourseCreate, CourseListItem, CourseOut, CourseUpdate,
-    LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem,
+    EnrolledLearnerOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem,
 )
 from app.schemas.learn import CompleteResult, QuizResult, QuizSubmit
 from app.services.course_service import (
-    add_module, assign_course, get_course_or_404, get_my_course, list_courses, list_my_courses, reorder_modules, update_module,
+    add_module, assign_course, get_course_or_404, get_my_course, list_courses, list_enrolled,
+    list_my_courses, reorder_modules, update_module,
 )
 from app.services import learn_service as progress_svc
 
@@ -80,9 +81,12 @@ async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db), 
         cat = await db.execute(select(Category).where(Category.id == body.category_id, Category.org_id == current_user.org_id))
         if cat.scalar_one_or_none() is None:
             raise HTTPException(status_code=400, detail="Category not found in this organization")
+    if body.opens_at and body.closes_at and body.closes_at <= body.opens_at:
+        raise HTTPException(status_code=400, detail="Close date must be after the open date")
 
     course = Course(org_id=current_user.org_id, title=body.title, category_id=body.category_id,
-                     description=body.description, duration_label=body.duration_label)
+                     description=body.description, duration_label=body.duration_label,
+                     opens_at=body.opens_at, closes_at=body.closes_at)
     db.add(course)
     await db.commit()
     # Not db.refresh() — see course_service.get_course_or_404's note; a
@@ -120,6 +124,18 @@ async def delete_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 async def assign(course_id: uuid.UUID, body: CourseAssignRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     return await assign_course(db, course, body.team_ids, body.user_ids)
+
+
+@router.get(
+    "/{course_id}/enrolled", response_model=list[EnrolledLearnerOut],
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+)
+async def get_enrolled(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Who's actually enrolled — team + individual assignment resolved into
+    real learners, each with their own progress. A Team Lead only sees
+    their own team's members (enforced in list_enrolled)."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    return await list_enrolled(db, course, current_user)
 
 
 # ---------- Modules — nested under their course, not a flat /api/v1/modules,

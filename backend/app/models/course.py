@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ARRAY, Boolean, ForeignKey, String, Text
+from sqlalchemy import ARRAY, Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,6 +30,14 @@ class Course(Base):
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_label: Mapped[str] = mapped_column(String(50), default="")  # display string e.g. "45 min" — not used for any calculation
+
+    # Both optional. opens_at: before this, the course exists (admin can
+    # build/assign it) but a learner can't open or progress it yet.
+    # closes_at: a hard enrollment/completion cutoff — past it, no new
+    # assignment and no further progress from a learner, but admin edit
+    # access and anything already completed (certs, scores) stays intact.
+    opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closes_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Assignment — soft references to Team/User, same reasoning as Module.skill_ids:
     # union-merged on assign, never replaced, so re-assigning never drops an existing team.

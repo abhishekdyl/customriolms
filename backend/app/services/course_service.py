@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select
@@ -9,9 +10,10 @@ from app.models.category import Category
 from app.models.course import Course
 from app.models.module import Module, ModuleQuizQuestion
 from app.models.skill import Skill
-from app.models.user import User
+from app.models.team import Team
+from app.models.user import RoleName, User
 from app.schemas.course import (
-    CourseListItem, LearnerCourseOut, LearnerModuleOut, LearnerQuizQuestionOut,
+    CourseListItem, EnrolledLearnerOut, LearnerCourseOut, LearnerModuleOut, LearnerQuizQuestionOut,
     ModuleCreate, ModuleUpdate, MyCourseItem,
 )
 # Real per-learner progress (ModuleProgress-backed) lives in
@@ -45,6 +47,7 @@ async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListIt
             id=course.id, title=course.title, category_id=course.category_id, category_name=category_name,
             duration_label=course.duration_label, module_count=module_count,
             assigned_team_count=len(course.assigned_team_ids or []),
+            opens_at=course.opens_at, closes_at=course.closes_at,
         ))
     return items
 
@@ -91,6 +94,7 @@ async def list_my_courses(db: AsyncSession, user: User) -> list[MyCourseItem]:
             id=course.id, title=course.title, category_id=course.category_id, category_name=category_name,
             duration_label=course.duration_label, module_count=module_count,
             assigned_team_count=len(course.assigned_team_ids or []),
+            opens_at=course.opens_at, closes_at=course.closes_at,
             progress_pct=pct,
         ))
     return out
@@ -124,6 +128,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
         category_id=course.category_id, category_name=course.category.name if course.category else None,
         duration_label=course.duration_label, module_count=len(modules),
         assigned_team_count=len(course.assigned_team_ids or []),
+        opens_at=course.opens_at, closes_at=course.closes_at,
         progress_pct=pct, modules=modules, completed_module_count=completed_count,
     )
 
@@ -143,6 +148,8 @@ async def get_course_or_404(db: AsyncSession, course_id: uuid.UUID, org_id: uuid
 
 async def assign_course(db: AsyncSession, course: Course, team_ids: list[uuid.UUID], user_ids: list[uuid.UUID]) -> Course:
     """Union-merge, never replace — assigning to a new team must never silently unassign an existing one."""
+    if course.closes_at is not None and datetime.now(timezone.utc) > course.closes_at:
+        raise HTTPException(status_code=400, detail="This course is closed — it can't be assigned to anyone new")
     course.assigned_team_ids = list(set(course.assigned_team_ids or []) | set(team_ids))
     course.assigned_user_ids = list(set(course.assigned_user_ids or []) | set(user_ids))
     await db.commit()
@@ -221,3 +228,30 @@ async def strip_badge_references(db: AsyncSession, badge_id: uuid.UUID, org_id: 
         module.badge_ids = [b for b in module.badge_ids if b != badge_id]
 
     await db.commit()
+
+
+async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[EnrolledLearnerOut]:
+    """Resolves a course's team + individual assignment into the actual
+    list of enrolled learners, each with their own progress — the "who's
+    actually enrolled" view a count badge can't answer. A Team Lead only
+    sees their own team's members; an Org Admin sees everyone."""
+    rows = await db.execute(
+        select(User, Team.name).outerjoin(Team, Team.id == User.team_id)
+        .where(User.org_id == course.org_id, User.role == RoleName.LEARNER)
+    )
+    out: list[EnrolledLearnerOut] = []
+    for user, team_name in rows.all():
+        if viewer.role == RoleName.TEAM_LEAD and user.team_id != viewer.team_id:
+            continue
+        via_direct = user.id in (course.assigned_user_ids or [])
+        via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
+        if not via_direct and not via_team:
+            continue
+        done = await progress_svc.completed_map(db, user.id)
+        pct, _, _ = progress_svc.course_progress(course, done)
+        out.append(EnrolledLearnerOut(
+            user_id=user.id, name=user.name, email=user.email, team_name=team_name,
+            via="direct" if via_direct else "team", progress_pct=pct, completed=pct >= 100,
+        ))
+    out.sort(key=lambda r: r.name.lower())
+    return out

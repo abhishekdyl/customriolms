@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -76,6 +77,8 @@ class CourseCreate(BaseModel):
     category_id: uuid.UUID | None = None
     description: str | None = None
     duration_label: str = ""
+    opens_at: datetime | None = None
+    closes_at: datetime | None = None
 
 
 class CourseUpdate(BaseModel):
@@ -83,6 +86,8 @@ class CourseUpdate(BaseModel):
     category_id: uuid.UUID | None = None
     description: str | None = None
     duration_label: str | None = None
+    opens_at: datetime | None = None
+    closes_at: datetime | None = None
     certificate_enabled: bool | None = None
     certificate_template_id: uuid.UUID | None = None
     certificate_name: str | None = None
@@ -95,6 +100,19 @@ class CourseAssignRequest(BaseModel):
     user_ids: list[uuid.UUID] = []
 
 
+class EnrolledLearnerOut(BaseModel):
+    """One learner enrolled in a course — via their team or assigned
+    directly — with their own progress on it. Backs the "who's enrolled"
+    view on the admin/team-lead course page (GET /courses/{id}/enrolled)."""
+    user_id: uuid.UUID
+    name: str
+    email: str
+    team_name: str | None
+    via: str  # "team" | "direct" — how they ended up enrolled
+    progress_pct: int
+    completed: bool
+
+
 class CourseOut(BaseModel):
     id: uuid.UUID
     title: str
@@ -102,6 +120,8 @@ class CourseOut(BaseModel):
     category_name: str | None = None  # populated by the service via the join, not a DB column
     description: str | None
     duration_label: str
+    opens_at: datetime | None
+    closes_at: datetime | None
     assigned_team_ids: list[uuid.UUID]
     assigned_user_ids: list[uuid.UUID]
     certificate_enabled: bool
@@ -124,6 +144,8 @@ class CourseListItem(BaseModel):
     duration_label: str
     module_count: int = 0
     assigned_team_count: int = 0
+    opens_at: datetime | None = None
+    closes_at: datetime | None = None
 
     class Config:
         from_attributes = True

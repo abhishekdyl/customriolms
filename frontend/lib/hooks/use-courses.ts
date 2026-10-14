@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { Course, CourseListItem, Module } from "@/lib/types";
+import type { Course, CourseListItem, EnrolledLearner, Module } from "@/lib/types";
 
 export function useCourses() {
   return useQuery({ queryKey: ["courses"], queryFn: () => api.get<CourseListItem[]>("/api/v1/courses") });
@@ -18,7 +18,8 @@ export function useCourse(id: string) {
 export function useCreateCourse() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { title: string; category_id?: string | null }) => api.post<Course>("/api/v1/courses", body),
+    mutationFn: (body: { title: string; category_id?: string | null; opens_at?: string | null; closes_at?: string | null }) =>
+      api.post<Course>("/api/v1/courses", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
   });
 }
@@ -95,5 +96,15 @@ export function useReorderModules(courseId: string) {
   return useMutation({
     mutationFn: (moduleIds: string[]) => api.post(`/api/v1/courses/${courseId}/modules/reorder`, { module_ids: moduleIds }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+  });
+}
+
+/** Who's actually enrolled in a course — team + individual assignment
+ * resolved into real learners, each with their own progress. */
+export function useEnrolledLearners(courseId: string) {
+  return useQuery({
+    queryKey: ["courses", courseId, "enrolled"],
+    queryFn: () => api.get<EnrolledLearner[]>(`/api/v1/courses/${courseId}/enrolled`),
+    enabled: !!courseId,
   });
 }

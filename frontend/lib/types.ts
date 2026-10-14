@@ -90,6 +90,20 @@ export interface CourseListItem {
   duration_label: string;
   module_count: number;
   assigned_team_count: number;
+  opens_at: string | null;
+  closes_at: string | null;
+}
+
+/** One learner enrolled in a course — via their team or assigned directly —
+ * with their own progress. From GET /courses/{id}/enrolled. */
+export interface EnrolledLearner {
+  user_id: string;
+  name: string;
+  email: string;
+  team_name: string | null;
+  via: "team" | "direct";
+  progress_pct: number;
+  completed: boolean;
 }
 
 export interface Course extends CourseListItem {

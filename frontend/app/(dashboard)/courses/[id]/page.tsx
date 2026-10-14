@@ -1,18 +1,26 @@
 "use client";
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, ChevronUp, ChevronDown, Users, Award } from "lucide-react";
+import { ArrowLeft, Plus, ChevronUp, ChevronDown, Users, Award, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   useCourse, useAddModule, useUpdateModule, useDeleteModule, useReorderModules, useUpdateCourse,
+  useEnrolledLearners,
 } from "@/lib/hooks/use-courses";
 import { useBadges } from "@/lib/hooks/use-badges";
 import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
 import { ModuleEditorRow } from "@/components/shell/courses/module-editor";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
 import type { Module } from "@/lib/types";
+
+// "2026-03-01T00:00:00+00:00" -> "2026-03-01", for a <input type="date"> value.
+function toDateInputValue(iso: string | null): string {
+  return iso ? iso.slice(0, 10) : "";
+}
+
+const isClosed = (closesAt: string | null) => !!closesAt && new Date(closesAt) < new Date();
 
 export default function CourseManagePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -24,6 +32,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   const reorder = useReorderModules(id);
   const { data: badges } = useBadges();
   const { data: certTemplates } = useCertTemplates();
+  const { data: enrolled, isLoading: enrolledLoading } = useEnrolledLearners(id);
 
   const [newModuleTitle, setNewModuleTitle] = useState("");
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
@@ -87,6 +96,12 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
         </Button>
       </div>
 
+      {isClosed(course.closes_at) && (
+        <p className="mb-3 flex items-center gap-1.5 text-xs text-danger">
+          <Lock className="h-3.5 w-3.5" /> This course closed on {new Date(course.closes_at!).toLocaleDateString()} — no new assignments or learner progress.
+        </p>
+      )}
+
       <textarea
         defaultValue={course.description ?? ""}
         onBlur={(e) => updateCourse.mutate({ description: e.target.value })}
@@ -96,6 +111,28 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
       />
 
       <div className="mb-6 rounded-xl border border-line bg-surface p-4">
+        <p className="mb-3 text-xs font-medium text-ink-faint">Open / close dates</p>
+        <div className="mb-4 grid grid-cols-2 gap-2.5">
+          <div>
+            <p className="mb-1 text-[10.5px] text-ink-faint">Opens (optional)</p>
+            <input
+              type="date"
+              defaultValue={toDateInputValue(course.opens_at)}
+              onBlur={(e) => updateCourse.mutate({ opens_at: e.target.value || null })}
+              className="h-8 w-full rounded-md border border-line bg-surface px-2 text-xs outline-none focus-visible:border-primary"
+            />
+          </div>
+          <div>
+            <p className="mb-1 text-[10.5px] text-ink-faint">Closes (optional)</p>
+            <input
+              type="date"
+              defaultValue={toDateInputValue(course.closes_at)}
+              onBlur={(e) => updateCourse.mutate({ closes_at: e.target.value || null })}
+              className="h-8 w-full rounded-md border border-line bg-surface px-2 text-xs outline-none focus-visible:border-primary"
+            />
+          </div>
+        </div>
+
         <p className="mb-3 text-xs font-medium text-ink-faint">Course-level completion</p>
         <div className="mb-3 flex items-center justify-between">
           <span className="text-sm text-ink">Certificate on course completion</span>
@@ -139,6 +176,36 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                 );
               })}
             </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mb-6 rounded-xl border border-line bg-surface p-4">
+        <p className="mb-3 text-xs font-medium text-ink-faint">
+          Enrolled learners {enrolled ? `(${enrolled.length})` : ""}
+        </p>
+        {enrolledLoading && <p className="text-xs text-ink-faint">Loading…</p>}
+        {!enrolledLoading && (enrolled?.length ?? 0) === 0 && (
+          <p className="text-xs text-ink-faint">No one's enrolled yet — assign a team or a learner above.</p>
+        )}
+        {(enrolled?.length ?? 0) > 0 && (
+          <div className="flex flex-col divide-y divide-line-soft">
+            {enrolled!.map((e) => (
+              <div key={e.user_id} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-ink">{e.name}</p>
+                  <p className="truncate text-[11px] text-ink-faint">
+                    {e.email} · {e.via === "team" ? (e.team_name ?? "via team") : "assigned directly"}
+                  </p>
+                </div>
+                <div className="flex flex-shrink-0 items-center gap-2">
+                  <span className="text-xs text-ink-soft">{e.progress_pct}%</span>
+                  {e.completed && (
+                    <span className="rounded-full bg-success-soft px-2 py-0.5 text-[10.5px] text-success">Done</span>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
