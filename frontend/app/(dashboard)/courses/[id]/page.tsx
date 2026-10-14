@@ -13,6 +13,7 @@ import { useBadges } from "@/lib/hooks/use-badges";
 import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
 import { ModuleEditorRow } from "@/components/shell/courses/module-editor";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
+import { toQuestionInput } from "@/lib/quiz-utils";
 import type { Module } from "@/lib/types";
 
 // "2026-03-01T00:00:00+00:00" -> "2026-03-01", for a <input type="date"> value.
@@ -64,7 +65,15 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
     clearTimeout(debounceTimers.current[moduleId]);
     debounceTimers.current[moduleId] = setTimeout(() => {
-      updateModuleMutation.mutate({ moduleId, ...patch });
+      // The editor works with the authoring/display shape (QuizQuestion —
+      // what GET returns, with a server-assigned id and presigned
+      // image_url); the PATCH endpoint expects QuestionIn (image_key
+      // only, no id) — see quiz-utils.ts for why.
+      const { questions, ...rest } = patch;
+      updateModuleMutation.mutate({
+        moduleId, ...rest,
+        ...(questions ? { questions: questions.map(toQuestionInput) } : {}),
+      });
     }, 400);
   };
 

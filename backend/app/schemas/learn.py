@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.schemas.certificate import CertTemplateOut
+from app.schemas.question import QuestionLearnerOut
 
 
 class LearnSummary(BaseModel):
@@ -32,12 +33,6 @@ class LearnCourseItem(BaseModel):
     cover_index: int            # stable palette slot for the cover colour
 
 
-class QuizQuestionOut(BaseModel):
-    id: uuid.UUID
-    text: str
-    options: list[str]          # NOTE: correct_index is deliberately never sent before submitting
-
-
 class LearnModule(BaseModel):
     id: uuid.UUID
     title: str
@@ -49,7 +44,9 @@ class LearnModule(BaseModel):
     skill_count: int
     file_name: str | None
     instructions: str | None
-    questions: list[QuizQuestionOut] = []
+    # QuestionLearnerOut (schemas/question.py) is the shared no-answers
+    # question shape — also used by the live /courses/mine/* path.
+    questions: list[QuestionLearnerOut] = []
 
 
 class LearnCourseDetail(BaseModel):
@@ -69,14 +66,26 @@ class CompleteResult(BaseModel):
     certificate_code: str | None = None
 
 
+class QuizAnswerIn(BaseModel):
+    """One answer to one question, keyed by question_id (not position) so a
+    client that only sends a subset, or sends them out of order, still
+    scores correctly. option_id answers MCQ/TRUE_FALSE; text answers
+    SHORT_ANSWER. Both are optional so an unanswered question just scores
+    wrong rather than failing validation."""
+    question_id: uuid.UUID
+    option_id: str | None = None
+    text: str | None = None
+
+
 class QuizSubmit(BaseModel):
-    answers: list[int]
+    answers: list[QuizAnswerIn]
 
 
 class QuizQuestionResult(BaseModel):
     question_id: uuid.UUID
-    picked: int | None
-    correct_index: int
+    picked_option_id: str | None = None
+    picked_text: str | None = None
+    correct_option_id: str | None = None
     correct: bool
 
 

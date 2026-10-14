@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { Course, CourseListItem, EnrolledLearner, Module } from "@/lib/types";
+import type { Course, CourseListItem, EnrolledLearner, Module, QuestionInput } from "@/lib/types";
 
 export function useCourses() {
   return useQuery({ queryKey: ["courses"], queryFn: () => api.get<CourseListItem[]>("/api/v1/courses") });
@@ -77,7 +77,10 @@ export function useAddModule(courseId: string) {
 export function useUpdateModule(courseId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ moduleId, ...body }: { moduleId: string } & Partial<Module>) =>
+    // `questions` here is QuestionInput[] (what the PATCH endpoint
+    // actually accepts), not Module["questions"] (QuizQuestion[], the GET
+    // shape with a server id + presigned image_url) — see quiz-utils.ts.
+    mutationFn: ({ moduleId, ...body }: { moduleId: string } & Omit<Partial<Module>, "questions"> & { questions?: QuestionInput[] }) =>
       api.patch<Module>(`/api/v1/courses/${courseId}/modules/${moduleId}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
   });

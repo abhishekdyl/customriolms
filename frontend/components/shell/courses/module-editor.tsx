@@ -1,14 +1,16 @@
 "use client";
 import { useState } from "react";
-import { ChevronDown, CheckCircle2, Circle, Trash2, Plus, Upload, X, Award, Loader2 } from "lucide-react";
+import { ChevronDown, CheckCircle2, Circle, Trash2, Plus, Upload, X, Award, Loader2, Image as ImageIcon, Library } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useSkills } from "@/lib/hooks/use-skills";
 import { useBadges } from "@/lib/hooks/use-badges";
 import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
 import { useUploadModuleFile, useRemoveModuleFile, useUploadScormPackage } from "@/lib/hooks/use-courses";
+import { useQuestionBanks, useQuestionBank, useImportBankQuestions, useUploadQuestionImage } from "@/lib/hooks/use-question-banks";
+import { newQuestion, tempId } from "@/lib/quiz-utils";
 import { ApiError } from "@/lib/api-client";
-import type { Module, ModuleType, QuizQuestion } from "@/lib/types";
+import type { Module, ModuleType, QuestionType, QuizQuestion } from "@/lib/types";
 
 const moduleTypeLabel: Record<ModuleType, string> = {
   watch: "Watch video", quiz: "Pass quiz", read: "Read & acknowledge", manual: "Manual sign-off", scorm: "SCORM package",
@@ -145,48 +147,217 @@ function ScormUploadField({
   );
 }
 
-function QuizBuilder({ questions, onChange }: { questions: QuizQuestion[]; onChange: (q: QuizQuestion[]) => void }) {
-  const addQuestion = () =>
-    onChange([...questions, { id: `new-${Date.now()}`, text: "New question", options: ["Option A", "Option B"], correct_index: 0 }]);
+const questionTypeLabel: Record<QuestionType, string> = {
+  mcq: "Multiple choice", true_false: "True / False", short_answer: "Short answer",
+};
+
+// Small inline image upload/preview, shared by a question's own image and
+// each of its MCQ/TRUE_FALSE options — a "picture quiz" question/option is
+// just one of these with no text, not a different shape (see
+// backend/app/schemas/question.py).
+function ImagePicker({ imageUrl, onUploaded, onRemove, size = "h-16 w-16" }: {
+  imageUrl: string | null; onUploaded: (key: string, url: string | null) => void; onRemove: () => void; size?: string;
+}) {
+  const upload = useUploadQuestionImage();
+  const [error, setError] = useState<string | null>(null);
+
+  if (upload.isPending) {
+    return <div className={`flex ${size} flex-shrink-0 items-center justify-center rounded-lg border border-dashed border-line`}><Loader2 className="h-3.5 w-3.5 animate-spin text-ink-faint" /></div>;
+  }
+  if (imageUrl) {
+    return (
+      <div className={`relative ${size} flex-shrink-0 overflow-hidden rounded-lg border border-line-soft`}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+        <button onClick={onRemove} className="absolute right-0.5 top-0.5 rounded-full bg-paper/90 p-0.5">
+          <X className="h-3 w-3 text-ink-faint" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className={`flex-shrink-0 ${size}`}>
+      <label className={`flex ${size} cursor-pointer items-center justify-center rounded-lg border border-dashed border-line`}>
+        <ImageIcon className="h-3.5 w-3.5 text-ink-faint" />
+        <input
+          type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            setError(null);
+            upload.mutate(f, {
+              onSuccess: (res) => onUploaded(res.image_key, res.image_url),
+              onError: (err) => setError(err instanceof ApiError ? err.message : "Upload failed."),
+            });
+          }}
+        />
+      </label>
+      {error && <p className="mt-0.5 max-w-16 text-[9px] text-danger">{error}</p>}
+    </div>
+  );
+}
+
+function BankImportPicker({ courseId, moduleId, onDone }: { courseId: string; moduleId: string; onDone: () => void }) {
+  const { data: banks } = useQuestionBanks();
+  const [bankId, setBankId] = useState<string>("");
+  const { data: bank } = useQuestionBank(bankId || null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const importQs = useImportBankQuestions(courseId);
+
+  return (
+    <div className="rounded-lg border border-line-soft bg-paper p-3">
+      <select value={bankId} onChange={(e) => { setBankId(e.target.value); setSelected([]); }} className="w-full rounded-md border border-line px-2 py-1.5 text-xs">
+        <option value="">Choose a question bank…</option>
+        {banks?.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.question_count})</option>)}
+      </select>
+      {bank && (
+        <div className="mt-2 flex flex-col gap-1">
+          {bank.questions.length === 0 && <p className="text-[11px] text-ink-faint">This bank has no questions yet.</p>}
+          {bank.questions.map((q) => (
+            <label key={q.id} className="flex items-start gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-surface">
+              <input
+                type="checkbox" className="mt-0.5"
+                checked={selected.includes(q.id)}
+                onChange={(e) => setSelected(e.target.checked ? [...selected, q.id] : selected.filter((x) => x !== q.id))}
+              />
+              <span className="flex-1">
+                <span className="text-ink">{q.text || "(image question)"}</span>
+                <span className="ml-1.5 text-[10px] text-ink-faint">{questionTypeLabel[q.type]}</span>
+              </span>
+            </label>
+          ))}
+          {bank.questions.length > 0 && (
+            <button
+              disabled={selected.length === 0 || importQs.isPending}
+              onClick={() => importQs.mutate({ bankId, moduleId, questionIds: selected }, { onSuccess: onDone })}
+              className="mt-1 w-full rounded-md bg-primary py-1.5 text-[11px] font-medium text-white disabled:opacity-40"
+            >
+              {importQs.isPending ? "Importing…" : `Import ${selected.length || ""} question${selected.length === 1 ? "" : "s"}`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function QuestionCard({ q, onChange, onDelete }: { q: QuizQuestion; onChange: (next: QuizQuestion) => void; onDelete: () => void }) {
+  const setType = (type: QuestionType) => {
+    if (type === q.type) return;
+    const base = newQuestion(type);
+    onChange({ ...base, id: q.id, text: q.text, image_key: q.image_key, image_url: q.image_url });
+  };
+
+  return (
+    <div className="rounded-lg border border-line-soft bg-paper p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <select value={q.type} onChange={(e) => setType(e.target.value as QuestionType)} className="rounded-md border border-line px-2 py-1 text-[11px]">
+          {Object.entries(questionTypeLabel).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <button onClick={onDelete}><Trash2 className="h-3.5 w-3.5 text-danger" /></button>
+      </div>
+
+      <div className="mb-2 flex items-start gap-2">
+        <Input
+          value={q.text ?? ""} placeholder="Question text (optional if there's an image)"
+          onChange={(e) => onChange({ ...q, text: e.target.value })} className="h-8 flex-1 text-sm"
+        />
+        <ImagePicker
+          imageUrl={q.image_url}
+          onUploaded={(key, url) => onChange({ ...q, image_key: key, image_url: url })}
+          onRemove={() => onChange({ ...q, image_key: null, image_url: null })}
+        />
+      </div>
+
+      {(q.type === "mcq" || q.type === "true_false") && (
+        <>
+          {q.options.map((opt) => (
+            <div key={opt.id} className="mb-1 flex items-center gap-2">
+              <button onClick={() => onChange({ ...q, correct_option_id: opt.id })} className="flex-shrink-0">
+                {opt.id === q.correct_option_id ? <CheckCircle2 className="h-3.5 w-3.5 text-success" /> : <Circle className="h-3.5 w-3.5 text-ink-faint" />}
+              </button>
+              <input
+                value={opt.text ?? ""} placeholder="Option text (optional if there's an image)"
+                onChange={(e) => onChange({ ...q, options: q.options.map((o) => (o.id === opt.id ? { ...o, text: e.target.value } : o)) })}
+                className="flex-1 border-b border-line-soft bg-transparent py-0.5 text-xs outline-none"
+              />
+              <ImagePicker
+                imageUrl={opt.image_url}
+                size="h-10 w-10"
+                onUploaded={(key, url) => onChange({ ...q, options: q.options.map((o) => (o.id === opt.id ? { ...o, image_key: key, image_url: url } : o)) })}
+                onRemove={() => onChange({ ...q, options: q.options.map((o) => (o.id === opt.id ? { ...o, image_key: null, image_url: null } : o)) })}
+              />
+              {q.type === "mcq" && q.options.length > 2 && (
+                <button onClick={() => onChange({ ...q, options: q.options.filter((o) => o.id !== opt.id), correct_option_id: q.correct_option_id === opt.id ? null : q.correct_option_id })}>
+                  <X className="h-3 w-3 text-ink-faint" />
+                </button>
+              )}
+            </div>
+          ))}
+          {q.type === "mcq" && (
+            <button
+              onClick={() => onChange({ ...q, options: [...q.options, { id: tempId("opt"), text: `Option ${String.fromCharCode(65 + q.options.length)}`, image_key: null, image_url: null }] })}
+              className="mt-1 text-[11px] text-primary"
+            >
+              + Add option
+            </button>
+          )}
+        </>
+      )}
+
+      {q.type === "short_answer" && (
+        <div className="flex flex-col gap-1">
+          <p className="text-[11px] text-ink-soft">Accepted answers (any one matches, case-insensitive)</p>
+          {q.accepted_answers.map((a, ai) => (
+            <div key={ai} className="flex items-center gap-2">
+              <input
+                value={a}
+                onChange={(e) => onChange({ ...q, accepted_answers: q.accepted_answers.map((x, i) => (i === ai ? e.target.value : x)) })}
+                className="flex-1 border-b border-line-soft bg-transparent py-0.5 text-xs outline-none"
+              />
+              {q.accepted_answers.length > 1 && (
+                <button onClick={() => onChange({ ...q, accepted_answers: q.accepted_answers.filter((_, i) => i !== ai) })}>
+                  <X className="h-3 w-3 text-ink-faint" />
+                </button>
+              )}
+            </div>
+          ))}
+          <button onClick={() => onChange({ ...q, accepted_answers: [...q.accepted_answers, ""] })} className="mt-1 text-left text-[11px] text-primary">
+            + Add alternative answer
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuizBuilder({
+  courseId, moduleId, questions, onChange,
+}: { courseId: string; moduleId: string; questions: QuizQuestion[]; onChange: (q: QuizQuestion[]) => void }) {
+  const [importing, setImporting] = useState(false);
   const updateQ = (id: string, next: QuizQuestion) => onChange(questions.map((q) => (q.id === id ? next : q)));
   const deleteQ = (id: string) => onChange(questions.filter((q) => q.id !== id));
 
   return (
     <div className="flex flex-col gap-2.5">
       {questions.map((q) => (
-        <div key={q.id} className="rounded-lg border border-line-soft bg-paper p-3">
-          <div className="mb-2 flex items-start gap-2">
-            <Input value={q.text} onChange={(e) => updateQ(q.id, { ...q, text: e.target.value })} className="h-8 flex-1 text-sm" />
-            <button onClick={() => deleteQ(q.id)}><Trash2 className="h-3.5 w-3.5 text-danger" /></button>
-          </div>
-          {q.options.map((opt, oi) => (
-            <div key={oi} className="mb-1 flex items-center gap-2">
-              <button onClick={() => updateQ(q.id, { ...q, correct_index: oi })} className="flex-shrink-0">
-                {oi === q.correct_index ? <CheckCircle2 className="h-3.5 w-3.5 text-success" /> : <Circle className="h-3.5 w-3.5 text-ink-faint" />}
-              </button>
-              <input
-                value={opt}
-                onChange={(e) => updateQ(q.id, { ...q, options: q.options.map((o, i) => (i === oi ? e.target.value : o)) })}
-                className="flex-1 border-b border-line-soft bg-transparent py-0.5 text-xs outline-none"
-              />
-              {q.options.length > 2 && (
-                <button onClick={() => updateQ(q.id, { ...q, options: q.options.filter((_, i) => i !== oi), correct_index: q.correct_index === oi ? 0 : q.correct_index })}>
-                  <X className="h-3 w-3 text-ink-faint" />
-                </button>
-              )}
-            </div>
-          ))}
-          <button
-            onClick={() => updateQ(q.id, { ...q, options: [...q.options, `Option ${String.fromCharCode(65 + q.options.length)}`] })}
-            className="mt-1 text-[11px] text-primary"
-          >
-            + Add option
-          </button>
-        </div>
+        <QuestionCard key={q.id} q={q} onChange={(next) => updateQ(q.id, next)} onDelete={() => deleteQ(q.id)} />
       ))}
-      <button onClick={addQuestion} className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line py-2">
-        <Plus className="h-3 w-3 text-primary" /> <span className="text-xs font-medium text-primary">Add question</span>
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onChange([...questions, newQuestion("mcq")])}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-dashed border-line py-2"
+        >
+          <Plus className="h-3 w-3 text-primary" /> <span className="text-xs font-medium text-primary">Add question</span>
+        </button>
+        <button
+          onClick={() => setImporting((v) => !v)}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-dashed border-line py-2"
+        >
+          <Library className="h-3 w-3 text-primary" /> <span className="text-xs font-medium text-primary">Import from bank</span>
+        </button>
+      </div>
+      {importing && <BankImportPicker courseId={courseId} moduleId={moduleId} onDone={() => setImporting(false)} />}
     </div>
   );
 }
@@ -295,7 +466,9 @@ export function ModuleEditorRow({
                 scormVersion={m.scorm_version} onRemove={() => removeFile.mutate(m.id)}
               />
             )}
-            {m.type === "quiz" && <QuizBuilder questions={m.questions} onChange={(qs) => onChange({ questions: qs })} />}
+            {m.type === "quiz" && (
+              <QuizBuilder courseId={courseId} moduleId={m.id} questions={m.questions} onChange={(qs) => onChange({ questions: qs })} />
+            )}
             {m.type === "manual" && (
               <textarea
                 value={m.instructions ?? ""}

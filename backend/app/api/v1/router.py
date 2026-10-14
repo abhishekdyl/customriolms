@@ -11,6 +11,7 @@ from app.api.v1.certificates import router as certificates_router
 from app.api.v1.orgs import router as orgs_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.learn import router as learn_router
+from app.api.v1.question_banks import router as question_banks_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router)
@@ -24,6 +25,7 @@ api_router.include_router(certificates_router)
 api_router.include_router(orgs_router)
 api_router.include_router(notifications_router)
 api_router.include_router(learn_router)
+api_router.include_router(question_banks_router)
 
 # As each module is built, its router is added here — main.py never
 # changes again after this point, which keeps that file stable.

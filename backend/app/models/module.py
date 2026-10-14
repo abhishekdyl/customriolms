@@ -2,10 +2,20 @@ import enum
 import uuid
 
 from sqlalchemy import ARRAY, Boolean, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+
+class QuestionType(str, enum.Enum):
+    MCQ = "mcq"                  # single correct option out of 2+
+    TRUE_FALSE = "true_false"    # MCQ with exactly two fixed options
+    SHORT_ANSWER = "short_answer"  # free-text, matched against accepted_answers
+    # "Picture quiz" isn't a separate type — an MCQ/TRUE_FALSE question (or
+    # any of its options) can carry an image instead of, or alongside,
+    # text; at least one of text/image is required on each. See
+    # schemas/question.py's validators for the actual rule.
 
 
 class ModuleType(str, enum.Enum):
@@ -93,9 +103,23 @@ class ModuleQuizQuestion(Base):
     """
     A single question authored for a QUIZ-type module. This is authoring
     content (what the admin wrote), not a learner's attempt at it —
-    that's QUIZ_ATTEMPT, a separate and still-unbuilt table. Recording
-    attempts is the single biggest documented gap in the whole skill/
-    certificate/leaderboard pipeline; this table alone doesn't close it.
+    that's QuizAttempt (see progress.py), which only stores the overall
+    score, not a per-question breakdown — recording that remains a gap.
+
+    Shares its exact shape with BankQuestion (question_bank.py) — a
+    question lives on a module (text/image + options JSON + correct
+    answer) whether it was authored here directly or copied in from a
+    question bank via question_bank_service.import_into_module. They're
+    deliberately two tables, not one with a nullable module_id/bank_id,
+    so a bank question's lifecycle (reusable, edited independently) never
+    gets tangled with a module's live-editing/reordering/cascade-delete
+    behavior.
+
+    options_json / correct_option_id replaced the old options (plain
+    string array) + correct_index (position in that array) columns —
+    an option now needs its own stable id (since it may carry an image,
+    reordering shouldn't silently reassign "the right answer" to a
+    different option), text and/or image, independent of the others.
     """
     __tablename__ = "module_quiz_questions"
 
@@ -103,8 +127,19 @@ class ModuleQuizQuestion(Base):
     module_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("modules.id"), nullable=False, index=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
 
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    options: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False)
-    correct_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    type: Mapped[QuestionType] = mapped_column(default=QuestionType.MCQ)
+    # At least one of text/image_key is required — enforced at the API
+    # layer (schemas/question.py), not the DB, since a plain CHECK
+    # constraint can't see the image_key format easily and the app-level
+    # error message is far more useful to an admin mid-authoring.
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # MCQ / TRUE_FALSE: list of {"id": str, "text": str|None, "image_key": str|None}
+    options_json: Mapped[list[dict]] = mapped_column(JSONB, default=list)
+    correct_option_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    # SHORT_ANSWER: matched case-insensitively against any entry
+    accepted_answers: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
 
     module: Mapped["Module"] = relationship(back_populates="questions")

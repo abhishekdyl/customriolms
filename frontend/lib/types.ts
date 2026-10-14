@@ -56,11 +56,44 @@ export interface Category {
 // ---------- Courses ----------
 export type ModuleType = "watch" | "read" | "quiz" | "manual" | "scorm";
 
+export type QuestionType = "mcq" | "true_false" | "short_answer";
+
+/** One MCQ/TRUE_FALSE option — at least one of text/image_url is present
+ * (a "picture quiz" option is just an option with an image and no text,
+ * not a different shape). id is stable across reorders. */
+export interface QuestionOption {
+  id: string;
+  text: string | null;
+  // Only populated in the authoring view (QuestionOut) — needed so the
+  // editor can round-trip an unchanged image back as QuestionInput's
+  // image_key without re-uploading it. Absent/null for a learner.
+  image_key?: string | null;
+  image_url: string | null;
+}
+
+/** Authoring shape — includes the answer key. Mirrors
+ * backend/app/schemas/question.py's QuestionOut. */
 export interface QuizQuestion {
   id: string;
-  text: string;
-  options: string[];
-  correct_index: number;
+  type: QuestionType;
+  text: string | null;
+  image_key: string | null;
+  image_url: string | null;
+  options: QuestionOption[];
+  correct_option_id: string | null;
+  accepted_answers: string[];
+}
+
+/** What the authoring UI sends to create/replace a question — mirrors
+ * QuestionIn. image_key/option image_key are set by uploading first via
+ * POST /question-banks/images, then embedding the returned key here. */
+export interface QuestionInput {
+  type: QuestionType;
+  text: string | null;
+  image_key: string | null;
+  options: { id: string; text: string | null; image_key: string | null }[];
+  correct_option_id: string | null;
+  accepted_answers: string[];
 }
 
 export interface Module {
@@ -204,7 +237,14 @@ export interface LearnerModule {
   scorm_version: string | null;
   instructions: string | null;
   skill_count: number;
-  questions: { id: string; text: string; options: string[] }[];
+  /** No answer key — mirrors QuestionLearnerOut. */
+  questions: {
+    id: string;
+    type: QuestionType;
+    text: string | null;
+    image_url: string | null;
+    options: QuestionOption[];
+  }[];
   completed: boolean;
 }
 
@@ -222,10 +262,20 @@ export interface CompleteResult {
   certificate_code: string | null;
 }
 
+/** One answer to one question, submitted by question_id (not position) —
+ * mirrors QuizAnswerIn. option_id answers MCQ/TRUE_FALSE, text answers
+ * SHORT_ANSWER. */
+export interface QuizAnswer {
+  question_id: string;
+  option_id?: string | null;
+  text?: string | null;
+}
+
 export interface QuizQuestionResult {
   question_id: string;
-  picked: number | null;
-  correct_index: number;
+  picked_option_id: string | null;
+  picked_text: string | null;
+  correct_option_id: string | null;
   correct: boolean;
 }
 

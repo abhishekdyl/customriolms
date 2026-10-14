@@ -38,6 +38,10 @@ MAX_VIDEO_BYTES = 500 * 1024 * 1024   # 500 MB
 MAX_DOC_BYTES = 50 * 1024 * 1024      # 50 MB
 MAX_SCORM_ZIP_BYTES = 300 * 1024 * 1024  # 300 MB, pre-unpack
 
+_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+MAX_IMAGE_BYTES = 10 * 1024 * 1024    # 10 MB — a quiz question/option image, not a video frame
+
 
 @dataclass
 class UploadLimits:
@@ -88,6 +92,22 @@ def validate_upload(file: UploadFile, module_type: str, size: int) -> UploadLimi
     if size > limits.max_bytes:
         raise HTTPException(status_code=400, detail=f"File is too large — max {limits.max_bytes // (1024 * 1024)} MB for this module type")
     return limits
+
+
+def validate_image_upload(file: UploadFile, size: int) -> None:
+    """For a quiz question/option image — a different, much smaller
+    limit and type set than a module's own video/doc upload."""
+    ext = "." + file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else ""
+    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or ""
+    if ext not in _IMAGE_EXTS and content_type not in _IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported image type ({ext or content_type or 'unknown'}) — use JPG, PNG, WEBP or GIF")
+    if size > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail=f"Image is too large — max {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
+
+
+def build_image_key(org_id: uuid.UUID, filename: str) -> str:
+    safe_name = (filename or "image").replace("/", "_").replace("\\", "_")
+    return f"question-images/{org_id}/{uuid.uuid4().hex}_{safe_name}"
 
 
 def size_label(num_bytes: int) -> str:

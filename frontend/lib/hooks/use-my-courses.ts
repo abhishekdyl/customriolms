@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { CompleteResult, LearnerCourse, MyCourse, QuizResult } from "@/lib/types";
+import type { CompleteResult, LearnerCourse, MyCourse, QuizAnswer, QuizResult } from "@/lib/types";
 
 /** Courses assigned to the logged-in user (via team or directly), with progress. */
 export function useMyCourses() {
@@ -38,7 +38,7 @@ export function useCompleteModule(courseId: string) {
 export function useSubmitQuiz(courseId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ moduleId, answers }: { moduleId: string; answers: number[] }) =>
+    mutationFn: ({ moduleId, answers }: { moduleId: string; answers: QuizAnswer[] }) =>
       api.post<QuizResult>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/quiz`, { answers }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["courses", "mine", courseId] });

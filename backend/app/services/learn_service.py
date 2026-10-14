@@ -195,18 +195,39 @@ async def _module_in_assigned_course(db: AsyncSession, user: User, module_id: uu
     raise HTTPException(status_code=404, detail="Module not found")
 
 
-async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answers: list[int]) -> dict:
+def _short_answer_correct(picked_text: str | None, accepted: list[str]) -> bool:
+    picked = (picked_text or "").strip().lower()
+    return bool(picked) and any(picked == (a or "").strip().lower() for a in accepted)
+
+
+async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answers: list) -> dict:
+    """`answers` is a list of QuizAnswerIn (schemas/learn.py) — each keyed by
+    question_id rather than position, so scoring doesn't depend on the
+    client sending questions back in the same order it received them.
+
+    MCQ/TRUE_FALSE: correct iff the picked option_id matches the question's
+    correct_option_id. SHORT_ANSWER: correct iff the picked text
+    case-insensitively matches one of accepted_answers."""
     module, course = await _module_in_assigned_course(db, user, module_id)
     if module.type != ModuleType.QUIZ or not module.questions:
         raise HTTPException(status_code=400, detail="This module has no quiz")
     assert_course_open(course)
+    answers_by_question = {a.question_id: a for a in answers}
     results = []
     right = 0
-    for i, q in enumerate(module.questions):
-        picked = answers[i] if i < len(answers) else None
-        ok = picked == q.correct_index
+    for q in module.questions:
+        ans = answers_by_question.get(q.id)
+        picked_option_id = ans.option_id if ans else None
+        picked_text = ans.text if ans else None
+        if q.type.value == "short_answer":
+            ok = _short_answer_correct(picked_text, q.accepted_answers or [])
+        else:
+            ok = picked_option_id is not None and picked_option_id == q.correct_option_id
         right += 1 if ok else 0
-        results.append({"question_id": q.id, "picked": picked, "correct_index": q.correct_index, "correct": ok})
+        results.append({
+            "question_id": q.id, "picked_option_id": picked_option_id, "picked_text": picked_text,
+            "correct_option_id": q.correct_option_id, "correct": ok,
+        })
     score = round(100 * right / len(module.questions))
     db.add(QuizAttempt(org_id=user.org_id, user_id=user.id, module_id=module.id, score=score))
     passed = score >= module.threshold

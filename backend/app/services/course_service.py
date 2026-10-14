@@ -13,9 +13,10 @@ from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    CourseListItem, EnrolledLearnerOut, LearnerCourseOut, LearnerModuleOut, LearnerQuizQuestionOut,
+    CourseListItem, EnrolledLearnerOut, LearnerCourseOut, LearnerModuleOut,
     ModuleCreate, ModuleUpdate, MyCourseItem,
 )
+from app.schemas.question import QuestionLearnerOut
 # Real per-learner progress (ModuleProgress-backed) lives in
 # learn_service — reused here rather than reimplemented so the
 # course list/detail views and the /api/v1/learn/* endpoints never
@@ -121,7 +122,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
             file_name=m.file_name, file_size_label=m.file_size_label,
             scorm_launch_path=m.scorm_launch_path, scorm_version=m.scorm_version,
             instructions=m.instructions, skill_count=len(m.skill_ids or []),
-            questions=[LearnerQuizQuestionOut(id=q.id, text=q.text, options=list(q.options)) for q in (m.questions or [])],
+            questions=[QuestionLearnerOut.model_validate(q) for q in (m.questions or [])],
             completed=m.id in done,
         )
         for m in course.modules
@@ -193,7 +194,11 @@ async def update_module(db: AsyncSession, module: Module, body: ModuleUpdate, or
         for q in list(module.questions):
             await db.delete(q)
         for i, q in enumerate(body.questions):
-            db.add(ModuleQuizQuestion(module_id=module.id, position=i, text=q.text, options=q.options, correct_index=q.correct_index))
+            db.add(ModuleQuizQuestion(
+                module_id=module.id, position=i, type=q.type, text=q.text, image_key=q.image_key,
+                options_json=[o.model_dump() for o in q.options],
+                correct_option_id=q.correct_option_id, accepted_answers=q.accepted_answers,
+            ))
 
     await db.commit()
     return await _get_module_with_questions(db, module.id)
@@ -201,7 +206,15 @@ async def update_module(db: AsyncSession, module: Module, body: ModuleUpdate, or
 
 async def _get_module_with_questions(db: AsyncSession, module_id: uuid.UUID) -> Module:
     result = await db.execute(select(Module).where(Module.id == module_id))
-    return result.scalar_one()
+    module = result.scalar_one()
+    # expire_on_commit=False means a module already loaded earlier in this
+    # request (its `questions` relationship already populated as whatever
+    # it was then) won't pick up rows added/removed since — the identity
+    # map just hands back the same object. Explicitly refreshing the
+    # relationship re-runs its selectin load so callers always see the
+    # current question set, not a stale one from before their own edit.
+    await db.refresh(module, attribute_names=["questions"])
+    return module
 
 
 async def upload_module_content(db: AsyncSession, module: Module, file) -> Module:

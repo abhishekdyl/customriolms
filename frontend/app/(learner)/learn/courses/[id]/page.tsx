@@ -10,7 +10,7 @@ import { useCompleteModule, useMyCourse, useSubmitQuiz } from "@/lib/hooks/use-m
 import { MODULE_TYPE_LABEL } from "@/lib/learner-courses";
 import { cn } from "@/lib/utils";
 import { ScormPlayer } from "@/components/shell/courses/scorm-player";
-import type { LearnerModule, QuizResult } from "@/lib/types";
+import type { LearnerModule, QuizAnswer, QuizResult } from "@/lib/types";
 
 const TABS = [
   { id: "content", label: "Modules", icon: BookOpen },
@@ -101,9 +101,13 @@ function ModuleRow({ module: m, courseId }: { module: LearnerModule; courseId: s
 }
 
 /** Interactive quiz — radio answers per question, scored server-side on submit. */
+// One question's working answer — option_id for MCQ/TRUE_FALSE, text for
+// SHORT_ANSWER (mirrors QuizAnswer, see lib/types.ts).
+type Answer = { option_id?: string; text?: string };
+
 function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; courseId: string }) {
   const submit = useSubmitQuiz(courseId);
-  const [answers, setAnswers] = useState<Record<string, number>>({});
+  const [answers, setAnswers] = useState<Record<string, Answer>>({});
   const [result, setResult] = useState<QuizResult | null>(null);
 
   if (quizModule.completed && !result) {
@@ -118,12 +122,21 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
     );
   }
 
-  const allAnswered = quizModule.questions.every((q) => answers[q.id] !== undefined);
+  const isAnswered = (q: LearnerModule["questions"][number]) => {
+    const a = answers[q.id];
+    if (!a) return false;
+    return q.type === "short_answer" ? !!(a.text ?? "").trim() : !!a.option_id;
+  };
+  const allAnswered = quizModule.questions.every(isAnswered);
 
   function handleSubmit() {
-    const ordered = quizModule.questions.map((q) => answers[q.id] ?? -1);
+    const payload: QuizAnswer[] = quizModule.questions.map((q) => ({
+      question_id: q.id,
+      option_id: answers[q.id]?.option_id ?? null,
+      text: answers[q.id]?.text ?? null,
+    }));
     submit.mutate(
-      { moduleId: quizModule.id, answers: ordered },
+      { moduleId: quizModule.id, answers: payload },
       { onSuccess: (data) => setResult(data) }
     );
   }
@@ -170,19 +183,37 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
               <div className="text-[13px] text-ink">
                 {qi + 1}. {q.text}
               </div>
-              <div className="mt-1.5 flex flex-col gap-1">
-                {q.options.map((opt, oi) => (
-                  <label key={oi} className="flex items-center gap-2 py-0.5">
-                    <input
-                      type="radio"
-                      name={q.id}
-                      checked={answers[q.id] === oi}
-                      onChange={() => setAnswers((a) => ({ ...a, [q.id]: oi }))}
-                    />
-                    <span className="text-[12.5px] text-ink-soft">{opt}</span>
-                  </label>
-                ))}
-              </div>
+              {q.image_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={q.image_url} alt="" className="mt-1.5 max-h-40 rounded-lg border border-line-soft object-contain" />
+              )}
+
+              {q.type === "short_answer" ? (
+                <input
+                  value={answers[q.id]?.text ?? ""}
+                  onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: { text: e.target.value } }))}
+                  placeholder="Your answer"
+                  className="mt-1.5 w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] outline-none"
+                />
+              ) : (
+                <div className="mt-1.5 flex flex-col gap-1">
+                  {q.options.map((opt) => (
+                    <label key={opt.id} className="flex items-center gap-2 py-0.5">
+                      <input
+                        type="radio"
+                        name={q.id}
+                        checked={answers[q.id]?.option_id === opt.id}
+                        onChange={() => setAnswers((a) => ({ ...a, [q.id]: { option_id: opt.id } }))}
+                      />
+                      {opt.image_url && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={opt.image_url} alt="" className="h-10 w-10 flex-shrink-0 rounded-md border border-line-soft object-cover" />
+                      )}
+                      {opt.text && <span className="text-[12.5px] text-ink-soft">{opt.text}</span>}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
 

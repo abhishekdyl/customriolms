@@ -4,21 +4,8 @@ from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
 
 from app.models.module import ModuleType
+from app.schemas.question import QuestionIn, QuestionLearnerOut, QuestionOut
 from app.services import storage_service
-
-
-# ---------- Quiz questions (authoring content, not attempts) ----------
-class QuizQuestionIn(BaseModel):
-    text: str
-    options: list[str] = Field(min_length=2)
-    correct_index: int
-
-
-class QuizQuestionOut(QuizQuestionIn):
-    id: uuid.UUID
-
-    class Config:
-        from_attributes = True
 
 
 # ---------- Modules ----------
@@ -43,7 +30,7 @@ class ModuleUpdate(BaseModel):
     certificate_enabled: bool | None = None
     certificate_template_id: uuid.UUID | None = None
     certificate_name: str | None = None
-    questions: list[QuizQuestionIn] | None = None  # replaces the full question set when provided
+    questions: list[QuestionIn] | None = None  # replaces the full question set when provided
 
 
 class ModuleOut(BaseModel):
@@ -70,7 +57,7 @@ class ModuleOut(BaseModel):
     certificate_enabled: bool
     certificate_template_id: uuid.UUID | None
     certificate_name: str | None
-    questions: list[QuizQuestionOut] = []
+    questions: list[QuestionOut] = []
 
     class Config:
         from_attributes = True
@@ -185,17 +172,10 @@ class MyCourseItem(CourseListItem):
 
 # ---------- Learner-facing course view ----------
 # Deliberately separate from CourseOut/ModuleOut: those carry authoring data
-# (quiz `correct_index`, certificate config, assignment lists) that a learner
-# must never receive. Everything here is safe to hand to the course's learner.
-class LearnerQuizQuestionOut(BaseModel):
-    id: uuid.UUID
-    text: str
-    options: list[str]  # no correct_index — answers are checked server-side
-
-    class Config:
-        from_attributes = True
-
-
+# (correct_option_id, accepted_answers, certificate config, assignment
+# lists) that a learner must never receive. Everything here is safe to
+# hand to the course's learner. QuestionLearnerOut (schemas/question.py)
+# is the shared no-answers question shape.
 class LearnerModuleOut(BaseModel):
     id: uuid.UUID
     title: str
@@ -210,7 +190,7 @@ class LearnerModuleOut(BaseModel):
     scorm_version: str | None = None
     instructions: str | None = None
     skill_count: int = 0
-    questions: list[LearnerQuizQuestionOut] = []
+    questions: list[QuestionLearnerOut] = []
     completed: bool = False  # always False until module progress tracking exists
 
 

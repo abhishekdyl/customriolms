@@ -14,8 +14,9 @@ from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.learn import (
     CertDetail, CompleteResult, LearnCourseDetail, LearnCourseItem, LearnModule, LearnNotification, LearnProgress,
-    LearnSummary, LeaderRow, ProfileOut, ProfileUpdate, QuizQuestionOut, QuizResult, QuizSubmit,
+    LearnSummary, LeaderRow, ProfileOut, ProfileUpdate, QuizResult, QuizSubmit,
 )
+from app.schemas.question import QuestionLearnerOut
 from app.services import learn_service as svc
 from app.services.certificate_service import ensure_org_has_a_template
 
@@ -76,7 +77,7 @@ async def course_detail(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)
             id=m.id, title=m.title, type=m.type.value, required=m.required, threshold=m.threshold,
             completed=mp is not None, score=mp.score if mp else None, skill_count=len(m.skill_ids or []),
             file_name=m.file_name, instructions=m.instructions,
-            questions=[QuizQuestionOut(id=q.id, text=q.text, options=list(q.options)) for q in m.questions],
+            questions=[QuestionLearnerOut.model_validate(q) for q in m.questions],
         ))
     return LearnCourseDetail(
         id=course.id, title=course.title, description=course.description,
