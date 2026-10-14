@@ -11,11 +11,26 @@ export interface IssuedCertificate {
   issued_at: string;
 }
 
+/** Mirrors backend/app/models/badge.py's BadgeCriteria exactly. Each label
+ * doubles as a hint for what "value" means for that criteria — a day
+ * count, a Category name, a Course id, etc. */
 export const badgeCriteriaLabel: Record<BadgeCriteria, string> = {
   streak: "Day login streak of",
-  score: "Perfect quiz scores, count of",
-  completion: "Completes every course in category",
-  manual: "Ranks in top % of team",
+  category_complete: "Completes every course in category",
+  perfect_scores: "Perfect quiz scores, count of",
+  team_rank_pct: "Ranks in top % of team",
+  course_complete: "Completes course",
+};
+
+/** Placeholder/help text shown next to the value input for each criteria,
+ * since "value" is a free-text string whose meaning depends on criteria
+ * (see badge.py's BadgeCriteria comments). */
+export const badgeCriteriaValueHint: Record<BadgeCriteria, string> = {
+  streak: "e.g. 7 (days)",
+  category_complete: "Category name",
+  perfect_scores: "e.g. 3 (count)",
+  team_rank_pct: "e.g. 10 (top %)",
+  course_complete: "Course id",
 };
 
 export const colorChoices = ["#3D5AFE", "#FF8A00", "#8C54FF", "#00B8D9", "#FF3B5C", "#00C48C"];

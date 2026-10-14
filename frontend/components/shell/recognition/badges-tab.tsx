@@ -2,8 +2,10 @@
 import { useState } from "react";
 import { Award, Pencil, Plus, Trash2 } from "lucide-react";
 import { useBadges, useCreateBadge, useDeleteBadge, useUpdateBadge } from "@/lib/hooks/use-badges";
-import { badgeCriteriaLabel, colorChoices } from "@/lib/recognition";
+import { badgeCriteriaLabel, badgeCriteriaValueHint, colorChoices } from "@/lib/recognition";
 import type { Badge, BadgeCriteria } from "@/lib/types";
+import { useCourses } from "@/lib/hooks/use-courses";
+import { useCategories } from "@/lib/hooks/use-categories";
 import { ConfirmRow, IconBtn } from "./ui";
 
 type Draft = { name: string; criteria: BadgeCriteria; value: string; color: string };
@@ -12,6 +14,9 @@ function BadgeEditor({
   initial, saving, onSave, onCancel,
 }: { initial: Draft; saving: boolean; onSave: (d: Draft) => void; onCancel: () => void }) {
   const [d, setD] = useState<Draft>(initial);
+  const { data: courses = [] } = useCourses();
+  const { data: categories = [] } = useCategories();
+
   return (
     <div className="bg-surface border-[1.5px] border-primary rounded-[10px] p-4">
       <input
@@ -20,15 +25,40 @@ function BadgeEditor({
       />
       <div className="flex items-center gap-2 mb-3">
         <select
-          value={d.criteria} onChange={(e) => setD({ ...d, criteria: e.target.value as BadgeCriteria })}
+          value={d.criteria}
+          onChange={(e) => {
+            const criteria = e.target.value as BadgeCriteria;
+            // Switching criteria invalidates whatever free-text value was
+            // there before (a day count doesn't mean anything as a course id).
+            setD({ ...d, criteria, value: "" });
+          }}
           className="flex-1 text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-surface"
         >
           {(Object.keys(badgeCriteriaLabel) as BadgeCriteria[]).map((k) => <option key={k} value={k}>{badgeCriteriaLabel[k]}</option>)}
         </select>
-        <input
-          value={d.value} onChange={(e) => setD({ ...d, value: e.target.value })}
-          className="w-[90px] text-[12.5px] border border-line rounded-md px-2 py-1.5"
-        />
+        {d.criteria === "course_complete" ? (
+          <select
+            value={d.value} onChange={(e) => setD({ ...d, value: e.target.value })}
+            className="w-[150px] text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-surface"
+          >
+            <option value="">Pick a course…</option>
+            {courses.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+          </select>
+        ) : d.criteria === "category_complete" ? (
+          <select
+            value={d.value} onChange={(e) => setD({ ...d, value: e.target.value })}
+            className="w-[150px] text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-surface"
+          >
+            <option value="">Pick a category…</option>
+            {categories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+          </select>
+        ) : (
+          <input
+            value={d.value} onChange={(e) => setD({ ...d, value: e.target.value })}
+            placeholder={badgeCriteriaValueHint[d.criteria]}
+            className="w-[110px] text-[12.5px] border border-line rounded-md px-2 py-1.5"
+          />
+        )}
       </div>
       <div className="flex items-center gap-2 mb-4">
         {colorChoices.map((c) => (
@@ -56,6 +86,14 @@ export function BadgesTab({ query = "" }: { query?: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const { data: courses = [] } = useCourses();
+
+  const displayValue = (b: Badge) => {
+    if (b.criteria === "course_complete") {
+      return courses.find((c) => c.id === b.value)?.title ?? b.value;
+    }
+    return b.value;
+  };
 
   return (
     <div className="max-w-[560px]">
@@ -91,7 +129,7 @@ export function BadgesTab({ query = "" }: { query?: string }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-[13.5px] text-ink font-medium">{b.name}</div>
-                    <div className="text-[11.5px] text-ink-faint">{badgeCriteriaLabel[b.criteria]} {b.value}</div>
+                    <div className="text-[11.5px] text-ink-faint">{badgeCriteriaLabel[b.criteria]} {displayValue(b)}</div>
                   </div>
                   <IconBtn icon={Pencil} label="Edit" onClick={() => setEditingId(b.id)} />
                   <IconBtn icon={Trash2} danger label="Delete" onClick={() => setConfirmId(b.id)} />

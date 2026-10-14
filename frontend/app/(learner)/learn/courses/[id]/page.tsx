@@ -151,6 +151,10 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
 
       {result ? (
         <div className="mt-3 flex flex-col gap-3">
+          <div className="flex items-center gap-2 rounded-lg bg-primary-soft px-3 py-2">
+            <CheckCircle2 size={13} color="var(--color-primary)" />
+            <span className="text-[11.5px] text-ink">Your answers were submitted and recorded.</span>
+          </div>
           <div
             className={cn(
               "flex items-center gap-2 rounded-lg px-3 py-3",
@@ -163,16 +167,38 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
               <XCircle size={14} color="var(--color-danger)" />
             )}
             <span className="text-[12.5px] text-ink">
-              Scored {result.score}% ({result.passed ? "passed" : `needed ${result.threshold}%`})
+              Scored {result.score}% ({result.passed ? "passed" : `needed ${result.threshold}% to pass`})
               {result.course_completed && " · course completed 🎉"}
             </span>
           </div>
+
+          <div className="flex flex-col gap-2">
+            {quizModule.questions.map((q, qi) => {
+              const r = result.results.find((x) => x.question_id === q.id);
+              return (
+                <div key={q.id} className="flex items-start gap-2 rounded-lg border border-line-soft p-2.5">
+                  {r?.correct ? (
+                    <CheckCircle2 size={13} color="var(--color-success)" className="mt-0.5 shrink-0" />
+                  ) : (
+                    <XCircle size={13} color="var(--color-danger)" className="mt-0.5 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-[12.5px] text-ink">{qi + 1}. {q.text ?? "(image question)"}</p>
+                    {!r?.correct && (
+                      <p className="mt-0.5 text-[11.5px] text-danger">That wasn't correct — recorded as submitted either way.</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
           {!result.passed && (
             <button
               onClick={() => setResult(null)}
               className="self-start rounded-lg border border-line px-3 py-1.5 text-[12px] font-medium text-ink"
             >
-              Retake
+              Retake to try for a passing score
             </button>
           )}
         </div>

@@ -122,6 +122,40 @@ class EnrolledLearnerOut(BaseModel):
     completed: bool
 
 
+class QuizAttemptAnswerOut(BaseModel):
+    """One question's answer on one attempt, as it was snapshotted at
+    submit time — see QuizAttempt's docstring for why this isn't a live
+    join back to the question."""
+    question_id: str
+    question_type: str
+    question_text: str | None
+    options: list[dict]
+    picked_option_id: str | None
+    picked_option_text: str | None
+    picked_text: str | None
+    correct_option_id: str | None
+    correct_option_text: str | None
+    accepted_answers: list[str]
+    correct: bool
+
+
+class QuizAttemptOut(BaseModel):
+    """One learner's one submission of one quiz module — backs the Org
+    Admin/Team Lead "quiz submissions" review (GET
+    /courses/{id}/quiz-attempts): every attempt, pass or fail, with
+    exactly what was answered."""
+    id: uuid.UUID
+    user_id: uuid.UUID
+    user_name: str
+    user_email: str
+    module_id: uuid.UUID
+    module_title: str
+    score: int
+    passed: bool
+    created_at: datetime
+    answers: list[QuizAttemptAnswerOut]
+
+
 class CourseOut(BaseModel):
     id: uuid.UUID
     title: str

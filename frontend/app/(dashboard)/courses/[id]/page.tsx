@@ -13,6 +13,7 @@ import { useBadges } from "@/lib/hooks/use-badges";
 import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
 import { ModuleEditorRow } from "@/components/shell/courses/module-editor";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
+import { QuizAttemptsSection } from "@/components/shell/courses/quiz-attempts";
 import { toQuestionInput } from "@/lib/quiz-utils";
 import type { Module } from "@/lib/types";
 
@@ -218,6 +219,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
           </div>
         )}
       </div>
+
+      <QuizAttemptsSection courseId={id} />
 
       <div className="mb-3 flex items-center justify-between">
         <span className="font-head text-sm text-ink">Modules ({modules.length})</span>

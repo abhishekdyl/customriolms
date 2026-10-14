@@ -214,11 +214,15 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
     assert_course_open(course)
     answers_by_question = {a.question_id: a for a in answers}
     results = []
+    snapshot = []  # same data as `results`, plus the question/option text — stored on
+                    # the attempt so an admin can see exactly what was asked and picked
+                    # even if the question is later edited or deleted (see QuizAttempt's docstring)
     right = 0
     for q in module.questions:
         ans = answers_by_question.get(q.id)
         picked_option_id = ans.option_id if ans else None
         picked_text = ans.text if ans else None
+        options = q.options_json or []
         if q.type.value == "short_answer":
             ok = _short_answer_correct(picked_text, q.accepted_answers or [])
         else:
@@ -228,9 +232,27 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
             "question_id": q.id, "picked_option_id": picked_option_id, "picked_text": picked_text,
             "correct_option_id": q.correct_option_id, "correct": ok,
         })
+
+        def _option_text(option_id: str | None) -> str | None:
+            if not option_id:
+                return None
+            return next((o.get("text") for o in options if o.get("id") == option_id), None)
+
+        snapshot.append({
+            "question_id": str(q.id), "question_type": q.type.value, "question_text": q.text,
+            "options": [{"id": o.get("id"), "text": o.get("text")} for o in options],
+            "picked_option_id": picked_option_id, "picked_option_text": _option_text(picked_option_id),
+            "picked_text": picked_text,
+            "correct_option_id": q.correct_option_id, "correct_option_text": _option_text(q.correct_option_id),
+            "accepted_answers": q.accepted_answers or [],
+            "correct": ok,
+        })
     score = round(100 * right / len(module.questions))
-    db.add(QuizAttempt(org_id=user.org_id, user_id=user.id, module_id=module.id, score=score))
     passed = score >= module.threshold
+    db.add(QuizAttempt(
+        org_id=user.org_id, user_id=user.id, module_id=module.id, score=score,
+        passed=passed, answers_json=snapshot,
+    ))
     if passed:
         await _mark_done(db, user, course, module, score)
     await db.commit()

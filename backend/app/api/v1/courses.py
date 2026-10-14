@@ -15,11 +15,12 @@ from app.models.user import RoleName, User
 from app.schemas.course import (
     CourseAssignRequest, CourseCreate, CourseListItem, CourseOut, CourseUpdate,
     EnrolledLearnerOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem,
+    QuizAttemptOut,
 )
 from app.schemas.learn import CompleteResult, QuizResult, QuizSubmit
 from app.services.course_service import (
     _assigned_to, add_module, assign_course, get_course_or_404, get_my_course, list_courses, list_enrolled,
-    list_my_courses, remove_module_content, reorder_modules, update_module, upload_module_content,
+    list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules, update_module, upload_module_content,
     upload_scorm_package,
 )
 from app.services import learn_service as progress_svc
@@ -140,6 +141,20 @@ async def get_enrolled(course_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     their own team's members (enforced in list_enrolled)."""
     course = await get_course_or_404(db, course_id, current_user.org_id)
     return await list_enrolled(db, course, current_user)
+
+
+@router.get(
+    "/{course_id}/quiz-attempts", response_model=list[QuizAttemptOut],
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+)
+async def get_quiz_attempts(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Every submission of every quiz module on this course, pass or fail,
+    with exactly what each learner answered — a quiz always records an
+    attempt whether it's right or wrong, so this is how an admin reviews
+    what actually happened rather than only the pass/fail gate a learner
+    sees. A Team Lead only sees their own team's members."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    return await list_quiz_attempts(db, course, current_user)
 
 
 # ---------- Modules — nested under their course, not a flat /api/v1/modules,

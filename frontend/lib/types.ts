@@ -190,7 +190,10 @@ export interface Skill {
   module_count: number;
 }
 
-export type BadgeCriteria = "streak" | "score" | "completion" | "manual";
+/** Mirrors the backend's BadgeCriteria enum exactly (backend/app/models/badge.py).
+ * `value`'s meaning depends on which of these is picked — see recognition.ts's
+ * badgeCriteriaLabel for the human-readable hint per criteria. */
+export type BadgeCriteria = "streak" | "category_complete" | "perfect_scores" | "team_rank_pct" | "course_complete";
 
 export interface Badge {
   id: string;
@@ -288,4 +291,37 @@ export interface QuizResult {
   progress: number;
   course_completed: boolean;
   certificate_code: string | null;
+}
+
+/** One question's answer on one attempt, as it was snapshotted at submit
+ * time — mirrors QuizAttemptAnswerOut. Survives the question being edited
+ * or deleted later. */
+export interface QuizAttemptAnswer {
+  question_id: string;
+  question_type: QuestionType;
+  question_text: string | null;
+  options: { id: string; text: string | null }[];
+  picked_option_id: string | null;
+  picked_option_text: string | null;
+  picked_text: string | null;
+  correct_option_id: string | null;
+  correct_option_text: string | null;
+  accepted_answers: string[];
+  correct: boolean;
+}
+
+/** One learner's one submission of one quiz module — every attempt, pass
+ * or fail. From GET /courses/{id}/quiz-attempts (Org Admin / Team Lead
+ * only). Mirrors QuizAttemptOut. */
+export interface QuizAttempt {
+  id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  module_id: string;
+  module_title: string;
+  score: number;
+  passed: boolean;
+  created_at: string;
+  answers: QuizAttemptAnswer[];
 }

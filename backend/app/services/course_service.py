@@ -9,12 +9,13 @@ from app.models.badge import Badge
 from app.models.category import Category
 from app.models.course import Course
 from app.models.module import Module, ModuleQuizQuestion, ModuleType
+from app.models.quiz_attempt import QuizAttempt
 from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.course import (
     CourseListItem, EnrolledLearnerOut, LearnerCourseOut, LearnerModuleOut,
-    ModuleCreate, ModuleUpdate, MyCourseItem,
+    ModuleCreate, ModuleUpdate, MyCourseItem, QuizAttemptOut,
 )
 from app.schemas.question import QuestionLearnerOut
 # Real per-learner progress (ModuleProgress-backed) lives in
@@ -338,4 +339,29 @@ async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[
             via="direct" if via_direct else "team", progress_pct=pct, completed=pct >= 100,
         ))
     out.sort(key=lambda r: r.name.lower())
+    return out
+
+
+async def list_quiz_attempts(db: AsyncSession, course: Course, viewer: User) -> list[QuizAttemptOut]:
+    """Every submission of every quiz module in this course, pass or fail,
+    with exactly what each learner answered — the Moodle-style "quiz
+    submissions" review for an Org Admin (everyone) or Team Lead (their
+    own team only), newest first."""
+    rows = await db.execute(
+        select(QuizAttempt, User, Module.title)
+        .join(User, User.id == QuizAttempt.user_id)
+        .join(Module, Module.id == QuizAttempt.module_id)
+        .where(Module.course_id == course.id, QuizAttempt.org_id == course.org_id)
+        .order_by(QuizAttempt.created_at.desc())
+    )
+    out: list[QuizAttemptOut] = []
+    for attempt, user, module_title in rows.all():
+        if viewer.role == RoleName.TEAM_LEAD and user.team_id != viewer.team_id:
+            continue
+        out.append(QuizAttemptOut(
+            id=attempt.id, user_id=user.id, user_name=user.name, user_email=user.email,
+            module_id=attempt.module_id, module_title=module_title,
+            score=attempt.score, passed=attempt.passed, created_at=attempt.created_at,
+            answers=attempt.answers_json or [],
+        ))
     return out
