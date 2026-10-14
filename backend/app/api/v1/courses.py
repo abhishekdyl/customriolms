@@ -14,11 +14,11 @@ from app.schemas.course import (
     CourseAssignRequest, CourseCreate, CourseListItem, CourseOut, CourseUpdate,
     LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem,
 )
-from app.schemas.ddcode_learn import CompleteResult, QuizResult, QuizSubmit
+from app.schemas.learn import CompleteResult, QuizResult, QuizSubmit
 from app.services.course_service import (
     add_module, assign_course, get_course_or_404, get_my_course, list_courses, list_my_courses, reorder_modules, update_module,
 )
-from app.services import ddcode_learn_service as progress_svc
+from app.services import learn_service as progress_svc
 
 router = APIRouter(prefix="/api/v1/courses", tags=["courses"])
 

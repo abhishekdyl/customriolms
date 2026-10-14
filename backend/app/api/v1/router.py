@@ -10,7 +10,7 @@ from app.api.v1.badges import router as badges_router
 from app.api.v1.certificates import router as certificates_router
 from app.api.v1.orgs import router as orgs_router
 from app.api.v1.notifications import router as notifications_router
-from app.api.v1.ddcode_learn import router as learn_router
+from app.api.v1.learn import router as learn_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router)

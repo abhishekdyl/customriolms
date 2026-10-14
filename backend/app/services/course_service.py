@@ -15,10 +15,10 @@ from app.schemas.course import (
     ModuleCreate, ModuleUpdate, MyCourseItem,
 )
 # Real per-learner progress (ModuleProgress-backed) lives in
-# ddcode_learn_service — reused here rather than reimplemented so the
+# learn_service — reused here rather than reimplemented so the
 # course list/detail views and the /api/v1/learn/* endpoints never
 # disagree about what "completed" means.
-from app.services import ddcode_learn_service as progress_svc
+from app.services import learn_service as progress_svc
 
 
 async def _validate_ids_belong_to_org(db: AsyncSession, model, ids: list[uuid.UUID], org_id: uuid.UUID, label: str) -> None:
