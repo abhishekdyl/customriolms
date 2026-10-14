@@ -18,4 +18,5 @@ export const MODULE_TYPE_LABEL = {
   read: "Read & acknowledge",
   quiz: "Pass quiz",
   manual: "Manual sign-off",
+  scorm: "SCORM package",
 } as const;

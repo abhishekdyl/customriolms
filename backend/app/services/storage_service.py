@@ -36,6 +36,7 @@ _DOC_EXTS = {".pdf", ".doc", ".docx", ".ppt", ".pptx"}
 
 MAX_VIDEO_BYTES = 500 * 1024 * 1024   # 500 MB
 MAX_DOC_BYTES = 50 * 1024 * 1024      # 50 MB
+MAX_SCORM_ZIP_BYTES = 300 * 1024 * 1024  # 300 MB, pre-unpack
 
 
 @dataclass
@@ -111,6 +112,40 @@ def delete_object(key: str) -> None:
     """Best-effort — a failed delete here shouldn't block removing the module's reference to it."""
     try:
         _client().delete_object(Bucket=settings.R2_BUCKET_NAME, Key=key)
+    except (BotoCoreError, ClientError, HTTPException):
+        pass
+
+
+def upload_bytes(key: str, data: bytes, content_type: str | None = None) -> None:
+    client = _client()
+    try:
+        client.put_object(
+            Bucket=settings.R2_BUCKET_NAME, Key=key, Body=data,
+            **({"ContentType": content_type} if content_type else {}),
+        )
+    except (BotoCoreError, ClientError) as exc:
+        raise HTTPException(status_code=502, detail=f"Upload to object storage failed: {exc}") from exc
+
+
+def get_bytes(key: str) -> bytes | None:
+    try:
+        obj = _client().get_object(Bucket=settings.R2_BUCKET_NAME, Key=key)
+        return obj["Body"].read()
+    except (BotoCoreError, ClientError):
+        return None
+
+
+def delete_prefix(prefix: str) -> None:
+    """Best-effort delete of every object under a SCORM package's folder —
+    used when a module's package is replaced or removed, so storage
+    doesn't quietly accumulate a full orphaned copy on every re-upload."""
+    try:
+        client = _client()
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=settings.R2_BUCKET_NAME, Prefix=prefix):
+            keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if keys:
+                client.delete_objects(Bucket=settings.R2_BUCKET_NAME, Delete={"Objects": keys})
     except (BotoCoreError, ClientError, HTTPException):
         pass
 

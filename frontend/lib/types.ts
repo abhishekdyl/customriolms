@@ -54,7 +54,7 @@ export interface Category {
 }
 
 // ---------- Courses ----------
-export type ModuleType = "watch" | "read" | "quiz" | "manual";
+export type ModuleType = "watch" | "read" | "quiz" | "manual" | "scorm";
 
 export interface QuizQuestion {
   id: string;
@@ -73,6 +73,8 @@ export interface Module {
   file_url: string | null;
   file_name: string | null;
   file_size_label: string | null;
+  scorm_launch_path: string | null;
+  scorm_version: string | null;
   instructions: string | null;
   skill_ids: string[];
   badge_ids: string[];
@@ -185,7 +187,7 @@ export interface MyCourse extends CourseListItem {
   progress_pct: number;
 }
 
-export type ModuleKind = "watch" | "read" | "quiz" | "manual";
+export type ModuleKind = "watch" | "read" | "quiz" | "manual" | "scorm";
 
 /** A module as a learner sees it — quiz questions have no answers. */
 export interface LearnerModule {
@@ -198,6 +200,8 @@ export interface LearnerModule {
   file_url: string | null;
   file_name: string | null;
   file_size_label: string | null;
+  scorm_launch_path: string | null;
+  scorm_version: string | null;
   instructions: string | null;
   skill_count: number;
   questions: { id: string; text: string; options: string[] }[];

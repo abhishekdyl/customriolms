@@ -62,6 +62,8 @@ class ModuleOut(BaseModel):
     # what lets the model_validator below see it after from_attributes
     # has already converted everything else.
     file_key: str | None = Field(default=None, exclude=True)
+    scorm_launch_path: str | None = None
+    scorm_version: str | None = None
     instructions: str | None
     skill_ids: list[uuid.UUID]
     badge_ids: list[uuid.UUID]
@@ -78,8 +80,11 @@ class ModuleOut(BaseModel):
         # A presigned URL expires, so it's never stored — it's generated
         # fresh on every read from the permanent file_key. Falls back to
         # whatever's in file_url for the rare pre-upload-feature row that
-        # has a legacy value and no key.
-        if self.file_key:
+        # has a legacy value and no key. For a SCORM module, file_key is a
+        # folder prefix, not a single object, so there's no single
+        # presigned URL for it — the player hits the scorm-content
+        # endpoint directly instead (see courses.py).
+        if self.file_key and self.type != ModuleType.SCORM:
             self.file_url = storage_service.presigned_get_url(self.file_key)
         return self
 
@@ -201,6 +206,8 @@ class LearnerModuleOut(BaseModel):
     file_url: str | None = None
     file_name: str | None = None
     file_size_label: str | None = None
+    scorm_launch_path: str | None = None
+    scorm_version: str | None = None
     instructions: str | None = None
     skill_count: int = 0
     questions: list[LearnerQuizQuestionOut] = []

@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy import select
@@ -17,6 +17,28 @@ async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    return await _validate_token(token, db)
+
+
+async def get_current_user_via_header_or_query(
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Same validation as get_current_user, but also accepts the token as a
+    ?token= query param. Only for routes an <iframe>/<video> loads as a
+    plain browser navigation — there's no way to attach an Authorization
+    header to that, so the token has to travel in the URL instead. Never
+    use this for anything else; a URL (and its query string) ends up in
+    logs and browser history, which an auth header doesn't."""
+    bearer = authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None
+    resolved = bearer or token
+    if not resolved:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await _validate_token(resolved, db)
+
+
+async def _validate_token(token: str, db: AsyncSession) -> User:
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",

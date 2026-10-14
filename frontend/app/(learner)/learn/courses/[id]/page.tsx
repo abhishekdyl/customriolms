@@ -9,6 +9,7 @@ import {
 import { useCompleteModule, useMyCourse, useSubmitQuiz } from "@/lib/hooks/use-my-courses";
 import { MODULE_TYPE_LABEL } from "@/lib/learner-courses";
 import { cn } from "@/lib/utils";
+import { ScormPlayer } from "@/components/shell/courses/scorm-player";
 import type { LearnerModule, QuizResult } from "@/lib/types";
 
 const TABS = [
@@ -27,9 +28,41 @@ function BackLink({ label }: { label: string }) {
   );
 }
 
-/** Row for a non-quiz module — shows a "Mark complete" button until done. */
+/** Row for a non-quiz module — shows a "Mark complete" button until done.
+ * A SCORM module is the exception: its own package decides when it's
+ * done (via the JS API shim), so instead of a button it expands into
+ * the actual player right in the list. */
 function ModuleRow({ module: m, courseId }: { module: LearnerModule; courseId: string }) {
   const complete = useCompleteModule(courseId);
+
+  if (m.type === "scorm") {
+    return (
+      <div className="border-b border-line-soft py-3">
+        <div className="mb-2 flex items-center gap-3">
+          {m.completed ? (
+            <CheckCircle2 size={18} color="var(--color-success)" />
+          ) : (
+            <Circle size={18} color="var(--color-ink-faint)" />
+          )}
+          <div className="flex-1">
+            <div className="text-[13.5px] text-ink">{m.title}</div>
+            <div className="text-[11px] text-ink-faint">
+              {MODULE_TYPE_LABEL[m.type]}
+              {m.skill_count > 0 && ` · builds ${m.skill_count} skill${m.skill_count > 1 ? "s" : ""}`}
+            </div>
+          </div>
+        </div>
+        {m.scorm_launch_path ? (
+          <ScormPlayer
+            courseId={courseId} moduleId={m.id} launchPath={m.scorm_launch_path} version={m.scorm_version}
+            completed={m.completed} onComplete={() => complete.mutate(m.id)}
+          />
+        ) : (
+          <div className="text-[12.5px] text-ink-faint">This module's SCORM package isn't ready yet.</div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-3 border-b border-line-soft py-3">

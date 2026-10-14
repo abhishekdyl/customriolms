@@ -98,6 +98,20 @@ export function useUploadModuleFile(courseId: string) {
   });
 }
 
+/** Uploads a SCORM 1.2/2004 .zip — the backend unpacks it and returns the
+ * module with its launch path/version filled in. */
+export function useUploadScormPackage(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ moduleId, file }: { moduleId: string; file: File }) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return api.upload<Module>(`/api/v1/courses/${courseId}/modules/${moduleId}/scorm-upload`, formData);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+  });
+}
+
 export function useRemoveModuleFile(courseId: string) {
   const qc = useQueryClient();
   return useMutation({

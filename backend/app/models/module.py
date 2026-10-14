@@ -13,6 +13,10 @@ class ModuleType(str, enum.Enum):
     READ = "read"      # document, completion gated on marking read
     QUIZ = "quiz"      # gated on minimum score — see ModuleQuizQuestion
     MANUAL = "manual"  # instructor sign-off, no automatic gate
+    SCORM = "scorm"    # a real SCORM 1.2/2004 package, played in a sandboxed
+                       # iframe; completion comes from the package's own JS
+                       # API calls (cmi.core.lesson_status / completion_status),
+                       # not a watched-% or a manual click — see learn_service.
 
 
 class Module(Base):
@@ -57,6 +61,14 @@ class Module(Base):
 
     # MANUAL content
     instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # SCORM content — file_key is reused here as the package's *prefix*
+    # (a folder, not a single object) under which every file the zip
+    # contained was unpacked, since a SCORM package references its own
+    # sibling assets by relative path and needs them all individually
+    # fetchable, not one opaque zip blob.
+    scorm_launch_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    scorm_version: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "1.2" | "2004"
 
     # Cross-feature soft references
     skill_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)

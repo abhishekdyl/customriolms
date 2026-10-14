@@ -3,7 +3,7 @@
  * auth-header injection, base URL, and error shape are handled
  * once, not copy-pasted into every hook.
  */
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export class ApiError extends Error {
   status: number;
@@ -16,6 +16,13 @@ export class ApiError extends Error {
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("access_token");
+}
+
+/** For the rare request that can't carry an Authorization header — e.g. an
+ * <iframe src=...> navigation, like the SCORM player — and has to pass the
+ * token in the URL instead. Never use this where a header is an option. */
+export function getAccessTokenForUrl(): string | null {
+  return getToken();
 }
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {

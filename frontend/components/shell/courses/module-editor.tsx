@@ -6,18 +6,19 @@ import { Switch } from "@/components/ui/switch";
 import { useSkills } from "@/lib/hooks/use-skills";
 import { useBadges } from "@/lib/hooks/use-badges";
 import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
-import { useUploadModuleFile, useRemoveModuleFile } from "@/lib/hooks/use-courses";
+import { useUploadModuleFile, useRemoveModuleFile, useUploadScormPackage } from "@/lib/hooks/use-courses";
 import { ApiError } from "@/lib/api-client";
 import type { Module, ModuleType, QuizQuestion } from "@/lib/types";
 
 const moduleTypeLabel: Record<ModuleType, string> = {
-  watch: "Watch video", quiz: "Pass quiz", read: "Read & acknowledge", manual: "Manual sign-off",
+  watch: "Watch video", quiz: "Pass quiz", read: "Read & acknowledge", manual: "Manual sign-off", scorm: "SCORM package",
 };
 
 function moduleSummary(m: Module) {
   if (m.type === "watch") return `Watch ≥${m.threshold}%`;
   if (m.type === "quiz") return `Quiz ≥${m.threshold}%`;
   if (m.type === "read") return "Marked as read";
+  if (m.type === "scorm") return m.scorm_version ? `SCORM ${m.scorm_version}` : "SCORM package";
   return "Instructor sign-off";
 }
 
@@ -69,6 +70,65 @@ function FileMetaField({
         <input
           type="file"
           accept={accept}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            setError(null);
+            upload.mutate({ moduleId, file: f }, {
+              onError: (err) => setError(err instanceof ApiError ? err.message : "Upload failed."),
+            });
+          }}
+        />
+      </label>
+      {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
+    </div>
+  );
+}
+
+// Same shape of control as FileMetaField, but for a SCORM .zip — the
+// response carries scorm_launch_path/scorm_version once the backend has
+// unpacked it and parsed imsmanifest.xml, not just a filename.
+function ScormUploadField({
+  courseId, moduleId, fileName, fileSizeLabel, scormVersion, onRemove,
+}: {
+  courseId: string; moduleId: string; fileName: string | null; fileSizeLabel: string | null;
+  scormVersion: string | null; onRemove: () => void;
+}) {
+  const upload = useUploadScormPackage(courseId);
+  const [error, setError] = useState<string | null>(null);
+
+  if (upload.isPending) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-2.5">
+        <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-ink-faint" />
+        <span className="text-xs text-ink-soft">Unpacking package…</span>
+      </div>
+    );
+  }
+
+  if (fileName) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-success-soft px-3 py-2.5">
+        <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-success" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs text-ink">{fileName}</div>
+          <div className="text-[10px] text-ink-faint">
+            SCORM {scormVersion ?? "1.2"}{fileSizeLabel && ` · ${fileSizeLabel}`}
+          </div>
+        </div>
+        <button onClick={onRemove} className="flex-shrink-0"><X className="h-3.5 w-3.5 text-ink-faint" /></button>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <label className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-line py-3">
+        <Upload className="h-3.5 w-3.5 text-ink-faint" />
+        <span className="text-xs text-ink-soft">Upload SCORM package (.zip)</span>
+        <input
+          type="file"
+          accept=".zip"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -147,7 +207,9 @@ export function ModuleEditorRow({
   const { data: badges } = useBadges();
   const { data: certTemplates } = useCertTemplates();
 
-  const hasContent = m.type === "manual" ? !!m.instructions : m.type === "quiz" ? m.questions.length > 0 : !!m.file_name;
+  const hasContent =
+    m.type === "manual" ? !!m.instructions : m.type === "quiz" ? m.questions.length > 0 : !!m.file_name;
+  const removeFile = useRemoveModuleFile(courseId);
 
   const toggleSkill = (id: string) =>
     onChange({ skill_ids: m.skill_ids.includes(id) ? m.skill_ids.filter((x) => x !== id) : [...m.skill_ids, id] });
@@ -225,6 +287,12 @@ export function ModuleEditorRow({
               <FileMetaField
                 courseId={courseId} moduleId={m.id} label="Upload document (PDF/DOC/PPT)" accept=".pdf,.doc,.docx,.ppt,.pptx"
                 fileName={m.file_name} fileSizeLabel={m.file_size_label} fileUrl={m.file_url}
+              />
+            )}
+            {m.type === "scorm" && (
+              <ScormUploadField
+                courseId={courseId} moduleId={m.id} fileName={m.file_name} fileSizeLabel={m.file_size_label}
+                scormVersion={m.scorm_version} onRemove={() => removeFile.mutate(m.id)}
               />
             )}
             {m.type === "quiz" && <QuizBuilder questions={m.questions} onChange={(qs) => onChange({ questions: qs })} />}

@@ -1,14 +1,16 @@
+import mimetypes
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy import select
+from fastapi.responses import Response
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, get_current_user_via_header_or_query, require_role
 from app.core.database import get_db
 from app.models.category import Category
 from app.models.course import Course
-from app.models.module import Module
+from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
 from app.schemas.course import (
     CourseAssignRequest, CourseCreate, CourseListItem, CourseOut, CourseUpdate,
@@ -16,10 +18,12 @@ from app.schemas.course import (
 )
 from app.schemas.learn import CompleteResult, QuizResult, QuizSubmit
 from app.services.course_service import (
-    add_module, assign_course, get_course_or_404, get_my_course, list_courses, list_enrolled,
+    _assigned_to, add_module, assign_course, get_course_or_404, get_my_course, list_courses, list_enrolled,
     list_my_courses, remove_module_content, reorder_modules, update_module, upload_module_content,
+    upload_scorm_package,
 )
 from app.services import learn_service as progress_svc
+from app.services import storage_service
 
 router = APIRouter(prefix="/api/v1/courses", tags=["courses"])
 
@@ -190,6 +194,49 @@ async def delete_module_file(
     await get_course_or_404(db, course_id, current_user.org_id)
     module = await _get_module_or_404(db, module_id, course_id)
     await remove_module_content(db, module)
+
+
+@router.post("/{course_id}/modules/{module_id}/scorm-upload", response_model=ModuleOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def upload_scorm(
+    course_id: uuid.UUID, module_id: uuid.UUID, file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Unpacks a SCORM 1.2/2004 .zip and points the module at its launch
+    file — see scorm_service.unpack_and_upload for the manifest parsing."""
+    await get_course_or_404(db, course_id, current_user.org_id)
+    module = await _get_module_or_404(db, module_id, course_id)
+    if module.type != ModuleType.SCORM:
+        raise HTTPException(status_code=400, detail="This module isn't a SCORM module")
+    return await upload_scorm_package(db, module, file)
+
+
+@router.get("/{course_id}/modules/{module_id}/scorm-content/{file_path:path}")
+async def get_scorm_content(
+    course_id: uuid.UUID, module_id: uuid.UUID, file_path: str,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user_via_header_or_query),
+):
+    """Streams one file out of a module's unpacked SCORM package. Loaded as
+    a plain browser navigation (the player's <iframe src=...>, and every
+    relative asset request the package's own JS/HTML makes from inside
+    it), so auth comes via get_current_user_via_header_or_query rather
+    than the usual header-only dependency — see that function's note."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    module = await _get_module_or_404(db, module_id, course_id)
+    if module.type != ModuleType.SCORM or not module.file_key:
+        raise HTTPException(status_code=404, detail="No SCORM package on this module")
+
+    # Org Admin / Team Lead can always preview; a Learner only if this
+    # course is actually assigned to them (same rule get_my_course uses).
+    if current_user.role == RoleName.LEARNER:
+        result = await db.execute(select(Course.id).where(Course.id == course_id, or_(*_assigned_to(current_user))))
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Course not found")
+
+    data = storage_service.get_bytes(module.file_key + file_path)
+    if data is None:
+        raise HTTPException(status_code=404, detail="File not found in this package")
+    content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    return Response(content=data, media_type=content_type)
 
 
 async def _get_module_or_404(db: AsyncSession, module_id: uuid.UUID, course_id: uuid.UUID) -> Module:

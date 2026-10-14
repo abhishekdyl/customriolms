@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.badge import Badge
 from app.models.category import Category
 from app.models.course import Course
-from app.models.module import Module, ModuleQuizQuestion
+from app.models.module import Module, ModuleQuizQuestion, ModuleType
 from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User
@@ -21,7 +21,7 @@ from app.schemas.course import (
 # course list/detail views and the /api/v1/learn/* endpoints never
 # disagree about what "completed" means.
 from app.services import learn_service as progress_svc
-from app.services import storage_service
+from app.services import scorm_service, storage_service
 
 
 async def _validate_ids_belong_to_org(db: AsyncSession, model, ids: list[uuid.UUID], org_id: uuid.UUID, label: str) -> None:
@@ -117,8 +117,9 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
     modules = [
         LearnerModuleOut(
             id=m.id, title=m.title, type=m.type, position=m.position, required=m.required, threshold=m.threshold,
-            file_url=storage_service.presigned_get_url(m.file_key) if m.file_key else m.file_url,
+            file_url=storage_service.presigned_get_url(m.file_key) if (m.file_key and m.type != ModuleType.SCORM) else m.file_url,
             file_name=m.file_name, file_size_label=m.file_size_label,
+            scorm_launch_path=m.scorm_launch_path, scorm_version=m.scorm_version,
             instructions=m.instructions, skill_count=len(m.skill_ids or []),
             questions=[LearnerQuizQuestionOut(id=q.id, text=q.text, options=list(q.options)) for q in (m.questions or [])],
             completed=m.id in done,
@@ -230,13 +231,45 @@ async def upload_module_content(db: AsyncSession, module: Module, file) -> Modul
 
 async def remove_module_content(db: AsyncSession, module: Module) -> None:
     old_key = module.file_key
+    is_scorm = module.type == ModuleType.SCORM
     module.file_key = None
     module.file_name = None
     module.file_size_label = None
     module.file_url = None
+    module.scorm_launch_path = None
+    module.scorm_version = None
     await db.commit()
     if old_key:
-        storage_service.delete_object(old_key)
+        # For SCORM, file_key holds the package's folder *prefix*, not a
+        # single object, so every file under it needs clearing — not just
+        # the one key a plain video/doc upload would have.
+        storage_service.delete_prefix(old_key) if is_scorm else storage_service.delete_object(old_key)
+
+
+async def upload_scorm_package(db: AsyncSession, module: Module, file) -> Module:
+    """Unpacks a SCORM .zip into object storage and points the module at
+    its launch file. Replaces any package the module already had — the
+    old one's files are best-effort deleted so re-uploads don't pile up."""
+    file.file.seek(0, 2)
+    size = file.file.tell()
+    file.file.seek(0)
+    if not (file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="SCORM packages must be uploaded as a .zip")
+
+    old_prefix = module.file_key
+    package = scorm_service.unpack_and_upload(module.id, file, size)
+
+    module.file_key = package.prefix
+    module.scorm_launch_path = package.launch_path
+    module.scorm_version = package.version
+    module.file_name = file.filename
+    module.file_size_label = storage_service.size_label(size)
+    await db.commit()
+
+    if old_prefix and old_prefix != package.prefix:
+        storage_service.delete_prefix(old_prefix)
+
+    return await _get_module_with_questions(db, module.id)
 
 
 async def reorder_modules(db: AsyncSession, course: Course, ordered_ids: list[uuid.UUID]) -> None:
