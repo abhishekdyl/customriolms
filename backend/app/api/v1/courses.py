@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ from app.schemas.course import (
 from app.schemas.learn import CompleteResult, QuizResult, QuizSubmit
 from app.services.course_service import (
     add_module, assign_course, get_course_or_404, get_my_course, list_courses, list_enrolled,
-    list_my_courses, reorder_modules, update_module,
+    list_my_courses, remove_module_content, reorder_modules, update_module, upload_module_content,
 )
 from app.services import learn_service as progress_svc
 
@@ -166,6 +166,30 @@ async def delete_module(course_id: uuid.UUID, module_id: uuid.UUID, db: AsyncSes
 async def reorder(course_id: uuid.UUID, body: ModuleReorderRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     await reorder_modules(db, course, body.module_ids)
+
+
+@router.post("/{course_id}/modules/{module_id}/upload", response_model=ModuleOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def upload_module_file(
+    course_id: uuid.UUID, module_id: uuid.UUID, file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Real file upload for a WATCH (video) or READ (PDF/DOC/PPT) module —
+    stored in object storage (R2 in production), validated by type/size
+    for the module's kind. Replaces any file the module already had."""
+    await get_course_or_404(db, course_id, current_user.org_id)
+    module = await _get_module_or_404(db, module_id, course_id)
+    if module.type.value not in ("watch", "read"):
+        raise HTTPException(status_code=400, detail="This module type doesn't accept a file upload")
+    return await upload_module_content(db, module, file)
+
+
+@router.delete("/{course_id}/modules/{module_id}/file", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def delete_module_file(
+    course_id: uuid.UUID, module_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    await get_course_or_404(db, course_id, current_user.org_id)
+    module = await _get_module_or_404(db, module_id, course_id)
+    await remove_module_content(db, module)
 
 
 async def _get_module_or_404(db: AsyncSession, module_id: uuid.UUID, course_id: uuid.UUID) -> Module:

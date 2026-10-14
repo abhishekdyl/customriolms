@@ -1,11 +1,13 @@
 "use client";
 import { useState } from "react";
-import { ChevronDown, CheckCircle2, Circle, Trash2, Plus, Upload, X, Award } from "lucide-react";
+import { ChevronDown, CheckCircle2, Circle, Trash2, Plus, Upload, X, Award, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useSkills } from "@/lib/hooks/use-skills";
 import { useBadges } from "@/lib/hooks/use-badges";
 import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
+import { useUploadModuleFile, useRemoveModuleFile } from "@/lib/hooks/use-courses";
+import { ApiError } from "@/lib/api-client";
 import type { Module, ModuleType, QuizQuestion } from "@/lib/types";
 
 const moduleTypeLabel: Record<ModuleType, string> = {
@@ -19,41 +21,67 @@ function moduleSummary(m: Module) {
   return "Instructor sign-off";
 }
 
-// Content isn't actually uploaded to a server yet (no file-storage backend
-// wired up) — this just records the file's name/size the way the
-// prototype does, as a placeholder for real storage later.
+// Uploads straight to object storage (R2) through the backend's upload
+// endpoint — the module's file_name/file_size_label/file_url come back
+// real once the upload succeeds, rather than being guessed client-side.
 function FileMetaField({
-  fileName, fileSizeLabel, accept, label, onSet, onRemove,
+  courseId, moduleId, fileName, fileSizeLabel, fileUrl, accept, label,
 }: {
-  fileName: string | null; fileSizeLabel: string | null; accept: string; label: string;
-  onSet: (name: string, sizeLabel: string) => void; onRemove: () => void;
+  courseId: string; moduleId: string; fileName: string | null; fileSizeLabel: string | null;
+  fileUrl: string | null; accept: string; label: string;
 }) {
+  const upload = useUploadModuleFile(courseId);
+  const remove = useRemoveModuleFile(courseId);
+  const [error, setError] = useState<string | null>(null);
+
+  if (upload.isPending) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-2.5">
+        <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-ink-faint" />
+        <span className="text-xs text-ink-soft">Uploading…</span>
+      </div>
+    );
+  }
+
   if (fileName) {
     return (
       <div className="flex items-center gap-2 rounded-lg bg-success-soft px-3 py-2.5">
         <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-success" />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-xs text-ink">{fileName}</div>
+          {fileUrl ? (
+            <a href={fileUrl} target="_blank" rel="noreferrer" className="truncate text-xs text-ink underline">{fileName}</a>
+          ) : (
+            <div className="truncate text-xs text-ink">{fileName}</div>
+          )}
           {fileSizeLabel && <div className="text-[10px] text-ink-faint">{fileSizeLabel}</div>}
         </div>
-        <button onClick={onRemove} className="flex-shrink-0"><X className="h-3.5 w-3.5 text-ink-faint" /></button>
+        <button onClick={() => remove.mutate(moduleId)} disabled={remove.isPending} className="flex-shrink-0">
+          <X className="h-3.5 w-3.5 text-ink-faint" />
+        </button>
       </div>
     );
   }
   return (
-    <label className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-line py-3">
-      <Upload className="h-3.5 w-3.5 text-ink-faint" />
-      <span className="text-xs text-ink-soft">{label}</span>
-      <input
-        type="file"
-        accept={accept}
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onSet(f.name, `${(f.size / 1_000_000).toFixed(1)} MB`);
-        }}
-      />
-    </label>
+    <div>
+      <label className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-line py-3">
+        <Upload className="h-3.5 w-3.5 text-ink-faint" />
+        <span className="text-xs text-ink-soft">{label}</span>
+        <input
+          type="file"
+          accept={accept}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            setError(null);
+            upload.mutate({ moduleId, file: f }, {
+              onError: (err) => setError(err instanceof ApiError ? err.message : "Upload failed."),
+            });
+          }}
+        />
+      </label>
+      {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
+    </div>
   );
 }
 
@@ -104,10 +132,12 @@ function QuizBuilder({ questions, onChange }: { questions: QuizQuestion[]; onCha
 }
 
 export function ModuleEditorRow({
+  courseId,
   module: m,
   onChange,
   onDelete,
 }: {
+  courseId: string;
   module: Module;
   onChange: (patch: Partial<Module>) => void;
   onDelete: () => void;
@@ -186,14 +216,16 @@ export function ModuleEditorRow({
           <div>
             <p className="mb-1.5 text-[11px] text-ink-soft">Content</p>
             {m.type === "watch" && (
-              <FileMetaField label="Upload video" accept="video/*" fileName={m.file_name} fileSizeLabel={m.file_size_label}
-                onSet={(name, size) => onChange({ file_name: name, file_size_label: size })}
-                onRemove={() => onChange({ file_name: null, file_size_label: null })} />
+              <FileMetaField
+                courseId={courseId} moduleId={m.id} label="Upload video" accept="video/mp4,video/webm,video/quicktime,video/x-matroska"
+                fileName={m.file_name} fileSizeLabel={m.file_size_label} fileUrl={m.file_url}
+              />
             )}
             {m.type === "read" && (
-              <FileMetaField label="Upload document (PDF/DOC)" accept=".pdf,.doc,.docx" fileName={m.file_name} fileSizeLabel={m.file_size_label}
-                onSet={(name, size) => onChange({ file_name: name, file_size_label: size })}
-                onRemove={() => onChange({ file_name: null, file_size_label: null })} />
+              <FileMetaField
+                courseId={courseId} moduleId={m.id} label="Upload document (PDF/DOC/PPT)" accept=".pdf,.doc,.docx,.ppt,.pptx"
+                fileName={m.file_name} fileSizeLabel={m.file_size_label} fileUrl={m.file_url}
+              />
             )}
             {m.type === "quiz" && <QuizBuilder questions={m.questions} onChange={(qs) => onChange({ questions: qs })} />}
             {m.type === "manual" && (

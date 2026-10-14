@@ -223,6 +223,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
             </div>
             <div className="flex-1">
               <ModuleEditorRow
+                courseId={id}
                 module={m}
                 onChange={(patch) => patchModule(m.id, patch)}
                 onDelete={() => { if (confirm("Remove this module?")) deleteModule.mutate(m.id); }}

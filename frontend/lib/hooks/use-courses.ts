@@ -83,6 +83,29 @@ export function useUpdateModule(courseId: string) {
   });
 }
 
+/** Real file upload for a WATCH (video) or READ (PDF/DOC/PPT) module — the
+ * returned Module carries a fresh presigned file_url, file_name, and
+ * file_size_label straight from object storage. */
+export function useUploadModuleFile(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ moduleId, file }: { moduleId: string; file: File }) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return api.upload<Module>(`/api/v1/courses/${courseId}/modules/${moduleId}/upload`, formData);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+  });
+}
+
+export function useRemoveModuleFile(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (moduleId: string) => api.delete(`/api/v1/courses/${courseId}/modules/${moduleId}/file`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+  });
+}
+
 export function useDeleteModule(courseId: string) {
   const qc = useQueryClient();
   return useMutation({

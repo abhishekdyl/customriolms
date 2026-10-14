@@ -43,7 +43,15 @@ class Module(Base):
     threshold: Mapped[int] = mapped_column(Integer, default=90)  # min % watched (WATCH) or min score (QUIZ)
 
     # WATCH / READ content
+    # file_url is never written directly anymore — it's recomputed from
+    # file_key as a fresh presigned R2 URL every time a module is
+    # serialized (see ModuleOut's model_validator in schemas/course.py),
+    # since a stored signed URL would just expire. file_key is the
+    # permanent, non-expiring object key and is what actually matters;
+    # the column stays in case any pre-upload-feature row still has a
+    # plain legacy URL in it.
     file_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    file_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     file_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
     file_size_label: Mapped[str | None] = mapped_column(String(20), nullable=True)  # display string e.g. "45.1 MB"
 

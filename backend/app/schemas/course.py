@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.module import ModuleType
+from app.services import storage_service
 
 
 # ---------- Quiz questions (authoring content, not attempts) ----------
@@ -33,9 +34,9 @@ class ModuleUpdate(BaseModel):
     type: ModuleType | None = None
     required: bool | None = None
     threshold: int | None = None
-    file_url: str | None = None
-    file_name: str | None = None
-    file_size_label: str | None = None
+    # file_url/file_name/file_size_label are deliberately not here — a
+    # module's file is only ever set by the real upload endpoint (and
+    # cleared by the matching delete endpoint), never by a free-text PATCH.
     instructions: str | None = None
     skill_ids: list[uuid.UUID] | None = None
     badge_ids: list[uuid.UUID] | None = None
@@ -55,6 +56,12 @@ class ModuleOut(BaseModel):
     file_url: str | None
     file_name: str | None
     file_size_label: str | None
+    # Not sent to the client (exclude=True) — it's the storage object key,
+    # only used below to recompute a fresh file_url. Including it in the
+    # schema at all (rather than reading straight off the ORM object) is
+    # what lets the model_validator below see it after from_attributes
+    # has already converted everything else.
+    file_key: str | None = Field(default=None, exclude=True)
     instructions: str | None
     skill_ids: list[uuid.UUID]
     badge_ids: list[uuid.UUID]
@@ -65,6 +72,16 @@ class ModuleOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="after")
+    def _resolve_file_url(self):
+        # A presigned URL expires, so it's never stored — it's generated
+        # fresh on every read from the permanent file_key. Falls back to
+        # whatever's in file_url for the rare pre-upload-feature row that
+        # has a legacy value and no key.
+        if self.file_key:
+            self.file_url = storage_service.presigned_get_url(self.file_key)
+        return self
 
 
 class ModuleReorderRequest(BaseModel):

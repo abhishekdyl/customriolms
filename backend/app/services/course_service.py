@@ -21,6 +21,7 @@ from app.schemas.course import (
 # course list/detail views and the /api/v1/learn/* endpoints never
 # disagree about what "completed" means.
 from app.services import learn_service as progress_svc
+from app.services import storage_service
 
 
 async def _validate_ids_belong_to_org(db: AsyncSession, model, ids: list[uuid.UUID], org_id: uuid.UUID, label: str) -> None:
@@ -116,7 +117,8 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
     modules = [
         LearnerModuleOut(
             id=m.id, title=m.title, type=m.type, position=m.position, required=m.required, threshold=m.threshold,
-            file_url=m.file_url, file_name=m.file_name, file_size_label=m.file_size_label,
+            file_url=storage_service.presigned_get_url(m.file_key) if m.file_key else m.file_url,
+            file_name=m.file_name, file_size_label=m.file_size_label,
             instructions=m.instructions, skill_count=len(m.skill_ids or []),
             questions=[LearnerQuizQuestionOut(id=q.id, text=q.text, options=list(q.options)) for q in (m.questions or [])],
             completed=m.id in done,
@@ -199,6 +201,42 @@ async def update_module(db: AsyncSession, module: Module, body: ModuleUpdate, or
 async def _get_module_with_questions(db: AsyncSession, module_id: uuid.UUID) -> Module:
     result = await db.execute(select(Module).where(Module.id == module_id))
     return result.scalar_one()
+
+
+async def upload_module_content(db: AsyncSession, module: Module, file) -> Module:
+    """Uploads a WATCH (video) or READ (PDF/DOC/PPT) module's real file to
+    object storage and points the module at it. Replaces whatever file the
+    module already had — the old object is best-effort deleted so storage
+    doesn't quietly accumulate orphans every time someone re-uploads."""
+    file.file.seek(0, 2)
+    size = file.file.tell()
+    file.file.seek(0)
+    storage_service.validate_upload(file, module.type.value, size)
+
+    old_key = module.file_key
+    key = storage_service.build_key(module.id, file.filename or "file")
+    storage_service.upload_fileobj(key, file)
+
+    module.file_key = key
+    module.file_name = file.filename
+    module.file_size_label = storage_service.size_label(size)
+    await db.commit()
+
+    if old_key and old_key != key:
+        storage_service.delete_object(old_key)
+
+    return await _get_module_with_questions(db, module.id)
+
+
+async def remove_module_content(db: AsyncSession, module: Module) -> None:
+    old_key = module.file_key
+    module.file_key = None
+    module.file_name = None
+    module.file_size_label = None
+    module.file_url = None
+    await db.commit()
+    if old_key:
+        storage_service.delete_object(old_key)
 
 
 async def reorder_modules(db: AsyncSession, course: Course, ordered_ids: list[uuid.UUID]) -> None:
