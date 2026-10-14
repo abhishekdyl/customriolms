@@ -15,11 +15,13 @@ from app.schemas.user import (
     AcceptInviteRequest,
     BulkInviteResult,
     InviteUserRequest,
+    LearnerProgressOut,
     UpdateRoleRequest,
     UpdateTeamRequest,
     UpdateUserStatusRequest,
     UserOut,
 )
+from app.services import dashboard_service
 from app.services.invite_service import bulk_invite_from_csv, invite_user
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
@@ -47,6 +49,16 @@ async def list_users(db: AsyncSession = Depends(get_db), current_user: User = De
         UserOut.model_validate({**user.__dict__, "team_name": team_name})
         for user, team_name in result.all()
     ]
+
+
+@router.get("/progress", response_model=list[LearnerProgressOut], dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))])
+async def get_learner_progress(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Every active/invited learner's own average progress, org-wide — the
+    real numbers behind the Org Admin / Team Lead dashboards' completion
+    stats and per-member rows. A Team Lead gets the whole org's list too
+    (same as GET /users) and filters to their own team client-side."""
+    progress = await dashboard_service.learner_progress_map(db, current_user.org_id)
+    return [LearnerProgressOut(user_id=uid, **data) for uid, data in progress.items()]
 
 
 @router.post("/invite", response_model=UserOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))])

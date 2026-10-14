@@ -8,9 +8,22 @@ from app.api.deps import get_current_user, require_role
 from app.core.database import get_db
 from app.models.team import Team
 from app.models.user import RoleName, User
-from app.schemas.team import TeamCreate, TeamOut, TeamUpdate
+from app.schemas.team import TeamCreate, TeamOut, TeamSkillCoverage, TeamUpdate
+from app.services import dashboard_service
 
 router = APIRouter(prefix="/api/v1/teams", tags=["teams"])
+
+
+@router.get(
+    "/skill-coverage", response_model=list[TeamSkillCoverage],
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
+async def get_skill_coverage(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Average %-built per skill, per team — backs the Org Admin dashboard's
+    skill-coverage heatmap. Declared before "/{team_id}" routes so FastAPI
+    doesn't try to parse "skill-coverage" as a team id."""
+    coverage = await dashboard_service.team_skill_coverage(db, current_user.org_id)
+    return [TeamSkillCoverage(team_id=tid, scores=scores) for tid, scores in coverage.items()]
 
 
 @router.get("", response_model=list[TeamOut], dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))])

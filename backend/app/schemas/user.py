@@ -57,3 +57,12 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class LearnerProgressOut(BaseModel):
+    """One learner's rolled-up progress, for the Org Admin / Team Lead
+    dashboards — see dashboard_service.learner_progress_map."""
+    user_id: uuid.UUID
+    progress_pct: int
+    assigned_count: int
+    not_started_count: int

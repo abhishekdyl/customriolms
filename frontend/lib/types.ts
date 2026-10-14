@@ -196,3 +196,28 @@ export interface LearnerCourse extends MyCourse {
   modules: LearnerModule[];
   completed_module_count: number;
 }
+
+/** Response from POST /courses/mine/{course_id}/modules/{module_id}/complete. */
+export interface CompleteResult {
+  progress: number;
+  course_completed: boolean;
+  certificate_code: string | null;
+}
+
+export interface QuizQuestionResult {
+  question_id: string;
+  picked: number | null;
+  correct_index: number;
+  correct: boolean;
+}
+
+/** Response from POST /courses/mine/{course_id}/modules/{module_id}/quiz. */
+export interface QuizResult {
+  score: number;
+  passed: boolean;
+  threshold: number;
+  results: QuizQuestionResult[];
+  progress: number;
+  course_completed: boolean;
+  certificate_code: string | null;
+}

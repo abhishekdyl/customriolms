@@ -2,17 +2,19 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, TrendingUp, TrendingDown, Plus } from "lucide-react";
+import { Sparkles, Plus } from "lucide-react";
 import { Topbar } from "@/components/shell/topbar";
 import { useTeams } from "@/lib/hooks/use-teams";
 import { useUsers } from "@/lib/hooks/use-users";
 import { useSkills } from "@/lib/hooks/use-skills";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
-import { heatColor, heatValue } from "@/lib/sample-data";
+import { useLearnerProgress, useTeamSkillCoverage } from "@/lib/hooks/use-progress";
+import { heatColor } from "@/lib/sample-data";
+import type { AppUser } from "@/lib/types";
 
 function StatBlock({
-  label, value, suffix, delta, positive,
-}: { label: string; value: string | number; suffix?: string; delta?: string; positive?: boolean }) {
+  label, value, suffix,
+}: { label: string; value: string | number; suffix?: string }) {
   return (
     <div className="px-4 py-4 bg-surface border border-line rounded-lg">
       <div className="text-[12px] text-ink-soft">{label}</div>
@@ -20,92 +22,99 @@ function StatBlock({
         <span className="font-head text-[24px] text-ink tabular-nums">{value}</span>
         {suffix && <span className="text-[13px] text-ink-faint">{suffix}</span>}
       </div>
-      {delta && (
-        <div className={`flex items-center gap-1 mt-1.5 text-[11px] ${positive ? "text-success" : "text-danger"}`}>
-          {positive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-          <span>{delta}</span>
-        </div>
-      )}
     </div>
   );
 }
 
-// Static sample data — no progress tracking exists in the backend yet.
-const SAMPLE_TEAMS = ["Assembly Line Ops", "Quality & Compliance", "Warehouse & Logistics", "Maintenance"];
-const SAMPLE_SKILLS = ["Safety", "Quality Systems", "Data Privacy", "Leadership"];
-const ROW_PATTERN = [
-  { completion: 86, overdue: 4, trend: 5 },
-  { completion: 91, overdue: 2, trend: 3 },
-  { completion: 64, overdue: 9, trend: -4 },
-  { completion: 78, overdue: 3, trend: 2 },
-];
+/** Average progress_pct across a set of learners — 0 if none have anything assigned. */
+function avgProgress(members: AppUser[], progressById: Map<string, { progress_pct: number }>): number {
+  const pcts = members.map((m) => progressById.get(m.id)?.progress_pct ?? 0);
+  return pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length) : 0;
+}
 
 function OrgAdminDashboard() {
   const { data: teamsData } = useTeams();
   const { data: users } = useUsers();
   const { data: skillsData } = useSkills();
+  const { data: progressData } = useLearnerProgress();
+  const { data: coverageData } = useTeamSkillCoverage();
   const [search, setSearch] = useState("");
 
-  const teams = useMemo(
-    () =>
-      teamsData && teamsData.length > 0
-        ? teamsData.map((t) => ({ id: t.id, name: t.name, members: t.member_count }))
-        : SAMPLE_TEAMS.map((n, i) => ({ id: `s${i}`, name: n, members: [42, 28, 51, 19][i] })),
-    [teamsData],
+  const progressById = useMemo(
+    () => new Map((progressData ?? []).map((p) => [p.user_id, p])),
+    [progressData],
   );
-  const skills = useMemo(
-    () =>
-      skillsData && skillsData.length > 0
-        ? skillsData.slice(0, 8).map((s) => ({ id: s.id, name: s.name }))
-        : SAMPLE_SKILLS.map((n, i) => ({ id: `k${i}`, name: n })),
-    [skillsData],
+  const coverageByTeam = useMemo(
+    () => new Map((coverageData ?? []).map((c) => [c.team_id, c.scores])),
+    [coverageData],
   );
+  const learnersByTeam = useMemo(() => {
+    const map = new Map<string, AppUser[]>();
+    for (const u of users ?? []) {
+      if (u.role !== "learner" || !u.team_id) continue;
+      map.set(u.team_id, [...(map.get(u.team_id) ?? []), u]);
+    }
+    return map;
+  }, [users]);
 
-  const activeLearners = (users ?? []).filter((u) => u.role === "learner" && u.status === "active").length;
+  const allLearners = (users ?? []).filter((u) => u.role === "learner");
+  const activeLearners = allLearners.filter((u) => u.status === "active").length;
+  const orgCompletion = avgProgress(allLearners, progressById);
+  const notStarted = allLearners.reduce((n, u) => n + (progressById.get(u.id)?.not_started_count ?? 0), 0);
+
+  const teams = teamsData ?? [];
+  const skills = (skillsData ?? []).slice(0, 8);
+
+  const rows = teams.map((t) => {
+    const members = learnersByTeam.get(t.id) ?? [];
+    return { id: t.id, name: t.name, members: t.member_count, completion: avgProgress(members, progressById) };
+  });
+
+  // The team furthest behind — a real, computed fact rather than a canned
+  // "AI insight": lowest completion among teams that actually have a learner.
+  const laggingTeam = rows.filter((r) => r.members > 0).sort((a, b) => a.completion - b.completion)[0];
 
   const q = search.trim().toLowerCase();
-  const rows = teams.map((t, i) => ({ ...t, ...ROW_PATTERN[i % 4], idx: i }));
   const teamMatches = (name: string) => name.toLowerCase().includes(q);
   const skillMatch = q ? skills.some((s) => s.name.toLowerCase().includes(q)) : false;
 
-  // Search matches team names; if it matches a skill name instead, show all teams and focus those skill columns.
   const filteredRows = !q ? rows : rows.filter((r) => teamMatches(r.name)).length > 0 || !skillMatch
     ? rows.filter((r) => teamMatches(r.name))
     : rows;
-  const visibleSkills = !q ? skills.map((s, i) => ({ ...s, i }))
-    : skills.map((s, i) => ({ ...s, i })).filter((s) => !skillMatch || s.name.toLowerCase().includes(q));
+  const visibleSkills = !q ? skills : skills.filter((s) => !skillMatch || s.name.toLowerCase().includes(q));
 
   return (
     <div className="flex flex-col h-screen min-w-0 flex-1">
       <Topbar title="Organization dashboard" search={search} onSearch={setSearch} placeholder="Search teams, skills…" />
 
       <div className="p-5 md:p-8 overflow-auto flex-1">
-        <div className="grid gap-3 mb-6 grid-cols-2 md:grid-cols-4">
-          <StatBlock label="Active learners" value={activeLearners} delta="+8 this month" positive />
-          <StatBlock label="Org completion" value="79" suffix="%" delta="+3pts vs last qtr" positive />
-          <StatBlock label="Overdue trainings" value="18" delta="+6 vs last week" positive={false} />
-          <StatBlock label="AI-flagged gaps" value="3" delta="new this week" positive={false} />
+        <div className="grid gap-3 mb-6 grid-cols-2 md:grid-cols-3">
+          <StatBlock label="Active learners" value={activeLearners} />
+          <StatBlock label="Org completion" value={orgCompletion} suffix="%" />
+          <StatBlock label="Not started" value={notStarted} />
         </div>
 
-        <div className="flex items-start gap-3 px-4 py-4 mb-6 bg-primary-soft border-l-[3px] border-primary rounded-md">
-          <Sparkles size={16} className="text-primary mt-0.5 shrink-0" />
-          <div>
-            <div className="text-[13px] text-ink font-medium">AI insight</div>
-            <div className="text-[13px] text-ink-soft mt-0.5">
-              Assembly Line Ops is trailing on Data Privacy Basics — mostly learners hired in the last 60 days. Consider assigning the refresher module before month end.
+        {laggingTeam && laggingTeam.completion < 100 && (
+          <div className="flex items-start gap-3 px-4 py-4 mb-6 bg-primary-soft border-l-[3px] border-primary rounded-md">
+            <Sparkles size={16} className="text-primary mt-0.5 shrink-0" />
+            <div>
+              <div className="text-[13px] text-ink font-medium">Lowest completion</div>
+              <div className="text-[13px] text-ink-soft mt-0.5">
+                {laggingTeam.name} is at {laggingTeam.completion}% average course completion — the lowest of any team with members.
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         <div className="mb-6 bg-surface border border-line rounded-lg">
           <div className="px-4 md:px-5 py-3.5 border-b border-line-soft">
             <span className="font-head text-[14.5px] text-ink">Team performance</span>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse min-w-[520px]">
+            <table className="w-full border-collapse min-w-[420px]">
               <thead>
                 <tr>
-                  {["Team", "Members", "Completion", "Overdue", "Trend"].map((h) => (
+                  {["Team", "Members", "Completion"].map((h) => (
                     <th key={h} className="text-left px-5 py-2.5 text-[11.5px] text-ink-faint font-medium border-b border-line-soft">{h}</th>
                   ))}
                 </tr>
@@ -123,14 +132,12 @@ function OrgAdminDashboard() {
                         <span className="text-[12.5px] text-ink-soft">{t.completion}%</span>
                       </div>
                     </td>
-                    <td className={`px-5 py-3 text-[13px] border-b border-line-soft ${t.overdue > 5 ? "text-danger" : "text-ink-soft"}`}>{t.overdue}</td>
-                    <td className={`px-5 py-3 text-[12.5px] border-b border-line-soft ${t.trend >= 0 ? "text-success" : "text-danger"}`}>
-                      {t.trend >= 0 ? `+${t.trend}` : t.trend}pts
-                    </td>
                   </tr>
                 ))}
                 {filteredRows.length === 0 && (
-                  <tr><td colSpan={5} className="px-5 py-6 text-center text-[13px] text-ink-faint">No teams match "{search}".</td></tr>
+                  <tr><td colSpan={3} className="px-5 py-6 text-center text-[13px] text-ink-faint">
+                    {teams.length === 0 ? "No teams yet." : `No teams match "${search}".`}
+                  </td></tr>
                 )}
               </tbody>
             </table>
@@ -143,7 +150,9 @@ function OrgAdminDashboard() {
           </div>
           <div className="p-4 md:p-5 overflow-x-auto">
             {filteredRows.length === 0 || visibleSkills.length === 0 ? (
-              <div className="py-4 text-center text-[13px] text-ink-faint">No results for "{search}".</div>
+              <div className="py-4 text-center text-[13px] text-ink-faint">
+                {skills.length === 0 ? "No skills defined yet." : `No results for "${search}".`}
+              </div>
             ) : (
               <div
                 className="grid gap-1.5 min-w-[500px] md:min-w-0"
@@ -157,7 +166,7 @@ function OrgAdminDashboard() {
                   <Fragment key={t.id}>
                     <div className="text-[12.5px] text-ink flex items-center">{t.name}</div>
                     {visibleSkills.map((s) => {
-                      const v = heatValue(t.idx, s.i);
+                      const v = coverageByTeam.get(t.id)?.[s.id] ?? 0;
                       return (
                         <div key={s.id} className="rounded-[5px] h-[34px] flex items-center justify-center" style={{ background: heatColor(v) }}>
                           <span className={`text-[11.5px] tabular-nums ${v > 55 ? "text-white" : "text-ink"}`}>{v}</span>
@@ -176,29 +185,31 @@ function OrgAdminDashboard() {
   );
 }
 
-// Per-member completion % — same "no real progress tracking yet" placeholder
-// pattern as the Org Admin dashboard above, just cycled per team member
-// instead of per team. Swap for real numbers once module_progress exists.
-const MEMBER_PROGRESS_PATTERN = [40, 75, 90, 20, 60, 85, 15, 55];
-
 function TeamLeadDashboard() {
   const router = useRouter();
   const { data: currentUser } = useCurrentUser();
   const { data: teamsData } = useTeams();
   const { data: users } = useUsers();
+  const { data: progressData } = useLearnerProgress();
 
+  const progressById = useMemo(
+    () => new Map((progressData ?? []).map((p) => [p.user_id, p])),
+    [progressData],
+  );
   const myTeam = teamsData?.find((t) => t.name === currentUser?.team_name);
   const myMembers = useMemo(
     () => (users ?? []).filter((u) => u.team_name === currentUser?.team_name),
     [users, currentUser?.team_name],
   );
+  const myLearners = useMemo(() => myMembers.filter((u) => u.role === "learner"), [myMembers]);
 
   const memberCount = myTeam?.member_count ?? myMembers.length;
-  // Static, same placeholder convention as the Org Admin dashboard — no
-  // per-user completion/overdue tracking exists in the backend yet.
-  const completion = 61;
-  const trend = -4;
-  const overdue = 12;
+  const completion = avgProgress(myLearners, progressById);
+  const notStarted = myLearners.reduce((n, u) => n + (progressById.get(u.id)?.not_started_count ?? 0), 0);
+  const notStartedLearners = myLearners.filter((u) => {
+    const p = progressById.get(u.id);
+    return p && p.assigned_count > 0 && p.progress_pct === 0;
+  });
 
   return (
     <div className="flex flex-col h-screen min-w-0 flex-1">
@@ -207,15 +218,15 @@ function TeamLeadDashboard() {
       <div className="p-5 md:p-8 overflow-auto flex-1">
         <div className="grid gap-3 mb-6 grid-cols-2 md:grid-cols-3">
           <StatBlock label="Team members" value={memberCount} />
-          <StatBlock label="Team completion" value={completion} suffix="%" delta={`${trend >= 0 ? "+" : ""}${trend}pts this month`} positive={trend >= 0} />
-          <StatBlock label="Overdue trainings" value={overdue} />
+          <StatBlock label="Team completion" value={completion} suffix="%" />
+          <StatBlock label="Not started" value={notStarted} />
         </div>
 
-        {memberCount > 0 && (
+        {notStartedLearners.length > 0 && (
           <div className="flex items-start gap-3 px-4 py-4 mb-6 bg-amber-soft border-l-[3px] border-amber rounded-md">
             <Sparkles size={16} className="text-amber mt-0.5 shrink-0" />
             <div className="text-[13px] text-ink-soft">
-              2 of {memberCount} learners haven&apos;t started an assigned course in over a week — a nudge is suggested.
+              {notStartedLearners.length} of {memberCount} learners haven&apos;t started any assigned course yet — a nudge is suggested.
             </div>
           </div>
         )}
@@ -232,8 +243,8 @@ function TeamLeadDashboard() {
         </div>
 
         <div className="flex flex-col gap-2">
-          {myMembers.map((u, i) => {
-            const progress = MEMBER_PROGRESS_PATTERN[i % MEMBER_PROGRESS_PATTERN.length];
+          {myMembers.map((u) => {
+            const progress = progressById.get(u.id)?.progress_pct ?? 0;
             return (
               <div key={u.id} className="flex items-center gap-3 p-3 bg-surface border border-line rounded-lg">
                 <div className="w-8 h-8 rounded-full bg-primary-soft flex items-center justify-center shrink-0">
@@ -245,15 +256,19 @@ function TeamLeadDashboard() {
                   <div className="text-[13px] text-ink font-medium">{u.name}</div>
                   <div className="text-[11.5px] text-ink-faint capitalize">{u.role.replace("_", " ")}</div>
                 </div>
-                <div className="w-[70px] flex items-center gap-1.5">
-                  <div className="flex-1 h-[5px] bg-line-soft rounded-[3px]">
-                    <div
-                      className={`h-[5px] rounded-[3px] ${progress < 30 ? "bg-danger" : "bg-success"}`}
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                </div>
-                <span className="text-[11.5px] text-ink-faint w-[34px] text-right">{progress}%</span>
+                {u.role === "learner" && (
+                  <>
+                    <div className="w-[70px] flex items-center gap-1.5">
+                      <div className="flex-1 h-[5px] bg-line-soft rounded-[3px]">
+                        <div
+                          className={`h-[5px] rounded-[3px] ${progress < 30 ? "bg-danger" : "bg-success"}`}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                    </div>
+                    <span className="text-[11.5px] text-ink-faint w-[34px] text-right">{progress}%</span>
+                  </>
+                )}
               </div>
             );
           })}
