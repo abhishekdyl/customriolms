@@ -72,7 +72,7 @@ async def invite_single_user(body: InviteUserRequest, db: AsyncSession = Depends
     try:
         user = await invite_user(
             db, org_id=org.id, email=body.email.lower(),
-            name=body.email.split("@")[0], role=body.role, team_id=body.team_id,
+            name=(body.name or "").strip() or body.email.split("@")[0], role=body.role, team_id=body.team_id,
         )
         await db.commit()
     except ValueError as e:

@@ -10,7 +10,8 @@ export function useUsers() {
 export function useInviteUser() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { email: string; team_id: string | null }) => api.post<AppUser>("/api/v1/users/invite", body),
+    mutationFn: (body: { name: string; email: string; team_id: string | null; role: RoleName }) =>
+      api.post<AppUser>("/api/v1/users/invite", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
 }

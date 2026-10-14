@@ -9,6 +9,10 @@ class InviteUserRequest(BaseModel):
     email: EmailStr
     team_id: uuid.UUID | None = None
     role: RoleName = RoleName.LEARNER
+    # Optional only for backward compatibility with any existing caller that
+    # doesn't send it — the UI always sends it now. Falls back to the email
+    # prefix (see invite_user) when omitted or blank.
+    name: str | None = None
 
 
 class BulkInviteRow(BaseModel):

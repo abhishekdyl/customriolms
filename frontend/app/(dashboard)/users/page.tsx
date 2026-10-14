@@ -40,8 +40,10 @@ export default function UsersPage() {
   const updateStatus = useUpdateUserStatus();
   const remove = useRemoveUser();
 
+  const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteTeamId, setInviteTeamId] = useState("");
+  const [inviteRole, setInviteRole] = useState<RoleName>("learner");
   const [inviteSuccess, setInviteSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [bulkResult, setBulkResult] = useState<BulkInviteResult | null>(null);
@@ -61,10 +63,10 @@ export default function UsersPage() {
 
   const submitInvite = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteEmail.trim() || atLimit) return;
+    if (!inviteName.trim() || !inviteEmail.trim() || atLimit) return;
     invite.mutate(
-      { email: inviteEmail.trim(), team_id: inviteTeamId || null },
-      { onSuccess: () => { setInviteEmail(""); setInviteSuccess(true); } }
+      { name: inviteName.trim(), email: inviteEmail.trim(), team_id: inviteTeamId || null, role: inviteRole },
+      { onSuccess: () => { setInviteName(""); setInviteEmail(""); setInviteTeamId(""); setInviteRole("learner"); setInviteSuccess(true); } }
     );
   };
 
@@ -197,20 +199,36 @@ export default function UsersPage() {
           )}
         </div>
 
-        {/* Invite one */}
+        {/* Create one user */}
         <form onSubmit={submitInvite} className="rounded-xl border border-line bg-surface p-5">
-          <div className="mb-1 font-head text-sm text-ink">Invite one person</div>
+          <div className="mb-1 font-head text-sm text-ink">Create a user</div>
           {domainRestricted && (
             <div className="mb-2.5 text-[11px] text-ink-faint">Only {org!.allowed_domains.map((d) => "@" + d).join(", ")} emails allowed</div>
           )}
           <div className="flex flex-col gap-2.5">
             <Input
+              placeholder="Full name"
+              value={inviteName}
+              disabled={atLimit}
+              onChange={(e) => { setInviteName(e.target.value); setInviteSuccess(false); }}
+            />
+            <Input
               placeholder="Work email"
               type="email"
               value={inviteEmail}
               disabled={atLimit}
-              onChange={(e) => setInviteEmail(e.target.value)}
+              onChange={(e) => { setInviteEmail(e.target.value); setInviteSuccess(false); }}
             />
+            <select
+              value={inviteRole}
+              onChange={(e) => setInviteRole(e.target.value as RoleName)}
+              disabled={atLimit}
+              className="h-10 rounded-lg border border-line bg-surface px-3 text-sm outline-none disabled:opacity-50"
+            >
+              {roleOptions.map((r) => (
+                <option key={r} value={r}>{roleLabel[r]}</option>
+              ))}
+            </select>
             <select
               value={inviteTeamId}
               onChange={(e) => setInviteTeamId(e.target.value)}
@@ -222,12 +240,12 @@ export default function UsersPage() {
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
-            <Button type="submit" disabled={atLimit || invite.isPending} className="self-start">
-              {invite.isPending ? "Sending…" : "Send invite"}
+            <Button type="submit" disabled={atLimit || !inviteName.trim() || !inviteEmail.trim() || invite.isPending} className="self-start">
+              {invite.isPending ? "Creating…" : "Create user"}
             </Button>
             {invite.isError && (
               <span className="text-[11.5px] text-danger">
-                {invite.error instanceof ApiError ? invite.error.message : "Couldn't send that invite."}
+                {invite.error instanceof ApiError ? invite.error.message : "Couldn't create that user."}
               </span>
             )}
             {inviteSuccess && !invite.isError && (
