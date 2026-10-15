@@ -50,13 +50,42 @@ def _counted_modules(course: Course) -> list[Module]:
 
 
 def course_progress(course: Course, done: dict) -> tuple[int, int, int]:
-    """(percent, completed_modules, total_counted_modules) — only required modules count
-    (all of them if none are flagged required)."""
+    """(percent, completed_modules, total_counted_modules) — only required
+    modules count (all of them if none are flagged required).
+
+    If the course has a completion_module_id set, that overrides the
+    "every required module" rule entirely: the course is 100% complete
+    the moment THAT module is done, whatever state anything else is in
+    (e.g. "passing the quiz completes the course" even with a required
+    video still unwatched). completed_modules/total still reflect the
+    normal required-module count underneath, so the progress bar/matrix
+    numbers stay meaningful even when the gate hasn't fired yet."""
     counted = _counted_modules(course)
     if not counted:
         return 0, 0, 0
     n = sum(1 for m in counted if m.id in done)
+    if course.completion_module_id is not None and course.completion_module_id in done:
+        return 100, n, len(counted)
     return round(100 * n / len(counted)), n, len(counted)
+
+
+def ordered_modules(course: Course) -> list[Module]:
+    return sorted(course.modules, key=lambda m: m.position)
+
+
+def module_locked(course: Course, module: Module, done: dict) -> bool:
+    """True if `module` isn't reachable yet under sequential_unlock — every
+    module before it in position order must be done first (the
+    "video > scorm > quiz > certificate" chain). Always False when
+    sequential_unlock is off, which is the default, so an existing
+    course's modules stay exactly as open as before this existed."""
+    if not course.sequential_unlock:
+        return False
+    ordered = ordered_modules(course)
+    idx = next((i for i, m in enumerate(ordered) if m.id == module.id), None)
+    if idx is None or idx == 0:
+        return False
+    return ordered[idx - 1].id not in done
 
 
 def status_for(pct: int) -> str:
@@ -177,6 +206,17 @@ async def _finish_course_if_done(db: AsyncSession, user: User, course: Course) -
     return pct, completed, code
 
 
+async def _assert_module_unlocked(db: AsyncSession, user: User, course: Course, module: Module) -> None:
+    if not course.sequential_unlock:
+        return
+    done = await completed_map(db, user.id)
+    if module_locked(course, module, done):
+        ordered = ordered_modules(course)
+        idx = next(i for i, m in enumerate(ordered) if m.id == module.id)
+        prev_title = ordered[idx - 1].title
+        raise HTTPException(status_code=403, detail=f"Finish \"{prev_title}\" first to unlock this module.")
+
+
 async def complete_module(
     db: AsyncSession, user: User, module_id: uuid.UUID, watched_pct: int | None = None,
 ) -> tuple[int, bool, str | None]:
@@ -184,6 +224,7 @@ async def complete_module(
     if module.type == ModuleType.QUIZ:
         raise HTTPException(status_code=400, detail="Quiz modules are completed by passing the quiz")
     assert_course_open(course)
+    await _assert_module_unlocked(db, user, course, module)
 
     score = None
     if module.type == ModuleType.WATCH:
@@ -233,6 +274,7 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
     if module.type != ModuleType.QUIZ or not module.questions:
         raise HTTPException(status_code=400, detail="This module has no quiz")
     assert_course_open(course)
+    await _assert_module_unlocked(db, user, course, module)
     answers_by_question = {a.question_id: a for a in answers}
     results = []
     snapshot = []  # same data as `results`, plus the question/option text — stored on

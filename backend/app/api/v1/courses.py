@@ -114,7 +114,14 @@ async def get_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), c
 @router.patch("/{course_id}", response_model=CourseOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
 async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
-    for key, value in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    if "completion_module_id" in data and data["completion_module_id"] is not None:
+        # The courses->modules FK only guarantees the id exists SOMEWHERE,
+        # not that it's a module on THIS course — check that explicitly,
+        # the same way module/badge/skill ids get validated elsewhere.
+        if not any(m.id == data["completion_module_id"] for m in course.modules):
+            raise HTTPException(status_code=400, detail="That module isn't on this course")
+    for key, value in data.items():
         setattr(course, key, value)
     await db.commit()
     return await get_course_or_404(db, course_id, current_user.org_id)
@@ -261,6 +268,13 @@ async def get_scorm_content(
         result = await db.execute(select(Course.id).where(Course.id == course_id, or_(*_assigned_to(current_user))))
         if result.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="Course not found")
+        # Same sequential_unlock gate as get_my_course's stripped file_url
+        # — a learner who already has (or guesses) the content URL from a
+        # prior unlocked state can't keep hitting it after a course gets
+        # locked out from under them, or by typing the path directly.
+        done = await progress_svc.completed_map(db, current_user.id)
+        if progress_svc.module_locked(course, module, done):
+            raise HTTPException(status_code=403, detail="This module is locked until an earlier one is completed.")
 
     data = storage_service.get_bytes(module.file_key + file_path)
     if data is None:

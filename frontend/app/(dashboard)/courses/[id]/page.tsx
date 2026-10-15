@@ -180,6 +180,37 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
       <QuizAttemptsSection courseId={id} />
 
+      <div className="mb-6 rounded-xl border border-line bg-surface p-4">
+        <p className="mb-3 text-xs font-medium text-ink-faint">Course completion rules</p>
+
+        <div className="mb-3">
+          <p className="mb-1 text-[10.5px] text-ink-faint">Course completes when…</p>
+          <select
+            value={course.completion_module_id ?? ""}
+            onChange={(e) => updateCourse.mutate({ completion_module_id: e.target.value || null })}
+            className="w-full rounded-md border border-line px-2 py-1.5 text-xs"
+          >
+            <option value="">All required modules are done (default)</option>
+            {modules.map((m) => (
+              <option key={m.id} value={m.id}>Just this module is passed: "{m.title}"</option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-ink-faint">
+            {course.completion_module_id
+              ? "Picking one module here means the course finishes the instant that module is passed — other required modules can stay unfinished."
+              : "Leave this on default to require every module marked \"required\" below."}
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-line-soft pt-3">
+          <div>
+            <span className="text-sm text-ink">Lock modules in order</span>
+            <p className="text-[11px] text-ink-faint">A learner must finish each module before the next one (by the order below) unlocks.</p>
+          </div>
+          <Switch checked={course.sequential_unlock} onCheckedChange={(v) => updateCourse.mutate({ sequential_unlock: v })} />
+        </div>
+      </div>
+
       <div className="mb-3 flex items-center justify-between">
         <span className="font-head text-sm text-ink">Modules ({modules.length})</span>
       </div>

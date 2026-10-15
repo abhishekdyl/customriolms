@@ -102,6 +102,11 @@ class CourseUpdate(BaseModel):
     certificate_name: str | None = None
     certificate_org_name: str | None = None
     badge_ids: list[uuid.UUID] | None = None
+    # null clears the rule ("every required module" again); any other
+    # value must be one of this course's own module ids — validated in
+    # the endpoint, not here, since that needs the course loaded.
+    completion_module_id: uuid.UUID | None = None
+    sequential_unlock: bool | None = None
 
 
 class CourseAssignRequest(BaseModel):
@@ -205,6 +210,8 @@ class CourseOut(BaseModel):
     certificate_name: str | None
     certificate_org_name: str | None
     badge_ids: list[uuid.UUID]
+    completion_module_id: uuid.UUID | None = None
+    sequential_unlock: bool = False
     modules: list[ModuleOut] = []
 
     class Config:
@@ -263,6 +270,12 @@ class LearnerModuleOut(BaseModel):
     # until there's a passing attempt, since an in-progress/failed try
     # isn't persisted as module progress at all (see learn_service).
     score: int | None = None
+    # True only when the course has sequential_unlock on AND the module
+    # immediately before this one (by position) isn't done yet — always
+    # False otherwise. file_url/questions are already stripped when this
+    # is true (see get_my_course), so the frontend just needs this to
+    # show the locked state, not to re-derive it.
+    locked: bool = False
 
 
 class LearnerCourseOut(MyCourseItem):

@@ -181,6 +181,12 @@ export interface Course extends CourseListItem {
   certificate_name: string | null;
   certificate_org_name: string | null;
   badge_ids: string[];
+  /** When set, this one module completing finishes the whole course,
+   * instead of the default "every required module done" rule. */
+  completion_module_id: string | null;
+  /** When true, modules unlock one at a time in position order — a
+   * learner can't open/complete module N+1 until module N is done. */
+  sequential_unlock: boolean;
   modules: Module[];
 }
 
@@ -283,6 +289,10 @@ export interface LearnerModule {
   /** Best score (QUIZ) or furthest watched-% (WATCH) recorded so far —
    * null until there's a qualifying attempt. */
   score: number | null;
+  /** True only when the course has sequential_unlock on AND the module
+   * right before this one (by position) isn't done yet. file_url/
+   * questions are already stripped by the backend when this is true. */
+  locked: boolean;
 }
 
 /** One assigned course, learner-safe. From GET /api/v1/courses/mine/{id}. */

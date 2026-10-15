@@ -117,19 +117,27 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
 
     done = await progress_svc.completed_map(db, user.id)
     pct, completed_count, _ = progress_svc.course_progress(course, done)
-    modules = [
-        LearnerModuleOut(
+    modules = []
+    for m in course.modules:
+        # sequential_unlock gates actual content, not just the "mark
+        # complete" click — a locked module shows up in the list (so the
+        # learner can see what's coming and why it's locked) but with no
+        # file to open and no quiz questions to answer.
+        locked = progress_svc.module_locked(course, m, done)
+        modules.append(LearnerModuleOut(
             id=m.id, title=m.title, type=m.type, position=m.position, required=m.required, threshold=m.threshold,
-            file_url=storage_service.presigned_get_url(m.file_key) if (m.file_key and m.type != ModuleType.SCORM) else m.file_url,
+            file_url=(
+                None if locked else
+                storage_service.presigned_get_url(m.file_key) if (m.file_key and m.type != ModuleType.SCORM) else m.file_url
+            ),
             file_name=m.file_name, file_size_label=m.file_size_label,
-            scorm_launch_path=m.scorm_launch_path, scorm_version=m.scorm_version,
+            scorm_launch_path=None if locked else m.scorm_launch_path, scorm_version=m.scorm_version,
             instructions=m.instructions, skill_count=len(m.skill_ids or []),
-            questions=[QuestionLearnerOut.model_validate(q) for q in (m.questions or [])],
+            questions=[] if locked else [QuestionLearnerOut.model_validate(q) for q in (m.questions or [])],
             completed=m.id in done,
             score=done[m.id].score if m.id in done else None,
-        )
-        for m in course.modules
-    ]
+            locked=locked,
+        ))
     return LearnerCourseOut(
         id=course.id, title=course.title, description=course.description,
         category_id=course.category_id, category_name=course.category.name if course.category else None,

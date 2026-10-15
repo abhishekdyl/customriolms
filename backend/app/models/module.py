@@ -90,7 +90,7 @@ class Module(Base):
     certificate_template_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cert_templates.id"), nullable=True)
     certificate_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
-    course: Mapped["Course"] = relationship(back_populates="modules")
+    course: Mapped["Course"] = relationship(back_populates="modules", foreign_keys="Module.course_id")
     # Same reasoning as Course.modules/category above — ModuleOut always
     # includes questions, so it must be loaded within the awaited query,
     # not lazily on synchronous attribute access.

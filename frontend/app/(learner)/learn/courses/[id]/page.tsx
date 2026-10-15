@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  ArrowLeft, BookOpen, CheckCircle2, Circle, HelpCircle, Loader2, PlayCircle, Sparkles, XCircle,
+  ArrowLeft, BookOpen, CheckCircle2, Circle, HelpCircle, Loader2, Lock, PlayCircle, Sparkles, XCircle,
 } from "lucide-react";
 import { useCompleteModule, useMyCourse, useSubmitQuiz } from "@/lib/hooks/use-my-courses";
 import { MODULE_TYPE_LABEL } from "@/lib/learner-courses";
@@ -103,13 +103,36 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
   );
 }
 
+/** A module the course's "lock modules in order" setting hasn't unlocked
+ * yet — no player, no quiz, no "mark complete", just what it is and what
+ * finishing first. The backend already strips file_url/questions for a
+ * locked module, so there's nothing to render even if this didn't exist;
+ * this is purely the honest, greyed-out explanation of why. */
+function LockedRow({ module: m, previousTitle }: { module: LearnerModule; previousTitle: string | null }) {
+  return (
+    <div className="flex items-center gap-3 border-b border-line-soft py-3 opacity-50">
+      <Lock size={18} color="var(--color-ink-faint)" />
+      <div className="flex-1">
+        <div className="text-[13.5px] text-ink-faint">{m.title}</div>
+        <div className="text-[11px] text-ink-faint">
+          {MODULE_TYPE_LABEL[m.type]} · {previousTitle ? `Finish "${previousTitle}" first to unlock this` : "Locked"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Row for a non-quiz module — shows a "Mark complete" button until done.
  * WATCH and SCORM are the exceptions: a WATCH module expands into a real
  * player with watch-% tracking (WatchPlayer, above), and a SCORM module's
  * own package decides when it's done (via the JS API shim), so both show
  * the actual player inline instead of a bare button. */
-function ModuleRow({ module: m, courseId }: { module: LearnerModule; courseId: string }) {
+function ModuleRow({ module: m, courseId, previousTitle }: { module: LearnerModule; courseId: string; previousTitle: string | null }) {
   const complete = useCompleteModule(courseId);
+
+  if (m.locked) {
+    return <LockedRow module={m} previousTitle={previousTitle} />;
+  }
 
   if (m.type === "watch") {
     return <WatchPlayer module={m} courseId={courseId} />;
@@ -397,8 +420,8 @@ export default function CourseViewPage() {
         <div className="py-4">
           {tab === "content" && (
             <div className="flex flex-col gap-0.5">
-              {mods.map((m) => (
-                <ModuleRow key={m.id} module={m} courseId={course.id} />
+              {mods.map((m, i) => (
+                <ModuleRow key={m.id} module={m} courseId={course.id} previousTitle={i > 0 ? mods[i - 1].title : null} />
               ))}
               {mods.length === 0 && (
                 <div className="text-[13px] text-ink-faint">No modules published for this course yet.</div>
@@ -417,7 +440,20 @@ export default function CourseViewPage() {
 
           {tab === "quiz" &&
             (quizModule ? (
-              <QuizPanel module={quizModule} courseId={course.id} />
+              quizModule.locked ? (
+                <div className="flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-6">
+                  <Lock size={14} color="var(--color-ink-faint)" />
+                  <span className="text-[12.5px] text-ink-faint">
+                    {(() => {
+                      const qi = mods.findIndex((m) => m.id === quizModule.id);
+                      const prev = qi > 0 ? mods[qi - 1].title : null;
+                      return prev ? `Finish "${prev}" first to unlock this quiz.` : "This quiz is locked.";
+                    })()}
+                  </span>
+                </div>
+              ) : (
+                <QuizPanel module={quizModule} courseId={course.id} />
+              )
             ) : (
               <div className="text-[13px] text-ink-faint">No quiz on this course yet.</div>
             ))}
