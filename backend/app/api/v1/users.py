@@ -21,7 +21,9 @@ from app.schemas.user import (
     UpdateUserStatusRequest,
     UserOut,
 )
+from app.schemas.profile_field import ProfileFieldValueOut, ProfileFieldValuesUpdate
 from app.services import dashboard_service
+from app.services import profile_field_service
 from app.services.invite_service import bulk_invite_from_csv, invite_user
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
@@ -183,3 +185,30 @@ async def _get_user_or_404(db: AsyncSession, user_id: uuid.UUID, org_id: uuid.UU
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+@router.get(
+    "/{user_id}/custom-fields", response_model=list[ProfileFieldValueOut],
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+)
+async def get_user_custom_fields(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """An admin viewing one user's custom-field answers — same shape as
+    the user's own GET /auth/me/custom-fields, scoped to this org."""
+    user = await _get_user_or_404(db, user_id, current_user.org_id)
+    return await profile_field_service.get_values_for_user(db, current_user.org_id, user.id)
+
+
+@router.patch(
+    "/{user_id}/custom-fields", response_model=list[ProfileFieldValueOut],
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
+async def update_user_custom_fields(
+    user_id: uuid.UUID, body: ProfileFieldValuesUpdate,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Org Admin setting/correcting a user's custom-field answers on
+    their behalf — e.g. filling in "Employee ID" for someone bulk-invited
+    via CSV, who hasn't logged in yet to fill it in themselves."""
+    user = await _get_user_or_404(db, user_id, current_user.org_id)
+    await profile_field_service.set_values_for_user(db, current_user.org_id, user.id, body.values)
+    return await profile_field_service.get_values_for_user(db, current_user.org_id, user.id)

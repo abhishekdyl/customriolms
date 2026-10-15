@@ -10,6 +10,7 @@ import { ApiError } from "@/lib/api-client";
 import { useChangePassword, useCurrentUser, useLogoutAll, useUpdateProfile, useUploadAvatar } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { useLearnerProfile, useUpdateLearnerProfile } from "@/lib/hooks/use-learner-profile";
+import { useMyCustomFields, useUpdateMyCustomFields } from "@/lib/hooks/use-profile-fields";
 
 const ROLE_LABEL: Record<string, string> = {
   super_admin: "Super Admin",
@@ -215,6 +216,108 @@ function DetailsCard() {
   );
 }
 
+function CustomFieldsCard() {
+  const { data: fields, isLoading } = useMyCustomFields();
+  const update = useUpdateMyCustomFields();
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (fields) {
+      const seeded: Record<string, string> = {};
+      for (const f of fields) seeded[f.shortname] = f.value ?? "";
+      setDraft(seeded);
+    }
+  }, [fields]);
+
+  if (isLoading || !fields || fields.length === 0) return null; // nothing the org admin has defined yet
+
+  const setValue = (shortname: string, value: string) => {
+    setDraft((d) => ({ ...d, [shortname]: value }));
+    setSaved(false);
+  };
+
+  const dirty = fields.some((f) => draft[f.shortname] !== (f.value ?? ""));
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const missing = fields.find((f) => f.required && !draft[f.shortname]?.trim());
+    if (missing) return;
+    update.mutate(
+      Object.fromEntries(fields.map((f) => [f.shortname, draft[f.shortname]?.trim() || null])),
+      { onSuccess: () => setSaved(true) }
+    );
+  };
+
+  const missingRequired = fields.find((f) => f.required && !draft[f.shortname]?.trim());
+
+  return (
+    <Card title="Additional details" hint="Set by your organization.">
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        {fields.map((f) => (
+          <div key={f.id}>
+            <Label htmlFor={f.shortname}>
+              {f.name} {f.required && <span className="text-danger">*</span>}
+            </Label>
+            {f.field_type === "textarea" ? (
+              <textarea
+                id={f.shortname}
+                value={draft[f.shortname] ?? ""}
+                onChange={(e) => setValue(f.shortname, e.target.value)}
+                className="mt-1.5 w-full rounded-md border border-line bg-surface px-2.5 py-2 text-[13px] outline-none focus-visible:border-primary"
+                rows={3}
+              />
+            ) : f.field_type === "checkbox" ? (
+              <label className="mt-1.5 flex items-center gap-2 text-[13px] text-ink-soft">
+                <input
+                  type="checkbox"
+                  checked={draft[f.shortname] === "true"}
+                  onChange={(e) => setValue(f.shortname, e.target.checked ? "true" : "false")}
+                />
+                Yes
+              </label>
+            ) : f.field_type === "radio" ? (
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                {f.options.map((opt) => (
+                  <label key={opt} className="flex items-center gap-2 text-[13px] text-ink-soft">
+                    <input
+                      type="radio"
+                      name={f.shortname}
+                      checked={draft[f.shortname] === opt}
+                      onChange={() => setValue(f.shortname, opt)}
+                    />
+                    {opt}
+                  </label>
+                ))}
+              </div>
+            ) : f.field_type === "select" ? (
+              <select
+                id={f.shortname}
+                value={draft[f.shortname] ?? ""}
+                onChange={(e) => setValue(f.shortname, e.target.value)}
+                className="mt-1.5 h-10 w-full rounded-md border border-line bg-surface px-2.5 text-[13px] outline-none focus-visible:border-primary"
+              >
+                <option value="">Select…</option>
+                {f.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+              </select>
+            ) : (
+              <Input id={f.shortname} value={draft[f.shortname] ?? ""} onChange={(e) => setValue(f.shortname, e.target.value)} className="mt-1.5" />
+            )}
+          </div>
+        ))}
+
+        <div className="flex items-center gap-3">
+          <Button type="submit" disabled={!dirty || update.isPending || !!missingRequired}>
+            {update.isPending ? "Saving…" : "Save changes"}
+          </Button>
+          {saved && !dirty && <Message kind="ok">Saved</Message>}
+          {update.isError && <Message kind="error">{errorText(update.error, "Couldn’t save. Please try again.")}</Message>}
+        </div>
+      </form>
+    </Card>
+  );
+}
+
 function PasswordCard() {
   const change = useChangePassword({ redirectAfter: false });
   const [current, setCurrent] = useState("");
@@ -336,6 +439,7 @@ export default function ProfilePage() {
         </div>
 
         <DetailsCard />
+        <CustomFieldsCard />
         <PasswordCard />
         <SessionsCard />
       </div>

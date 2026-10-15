@@ -1,12 +1,157 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, ShieldCheck, AlertCircle } from "lucide-react";
+import { Building2, ShieldCheck, AlertCircle, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMyOrg, useUpdateMyOrg, useDeactivateMyOrg } from "@/lib/hooks/use-orgs";
+import {
+  useProfileFields, useCreateProfileField, useUpdateProfileField, useDeleteProfileField,
+} from "@/lib/hooks/use-profile-fields";
+import type { ProfileFieldType } from "@/lib/types";
 import { ApiError } from "@/lib/api-client";
+
+const fieldTypeOptions: { value: ProfileFieldType; label: string }[] = [
+  { value: "input", label: "Short text" },
+  { value: "textarea", label: "Long text" },
+  { value: "checkbox", label: "Checkbox" },
+  { value: "radio", label: "Radio buttons" },
+  { value: "select", label: "Dropdown" },
+];
+
+function CustomFieldsCard() {
+  const { data: fields = [], isLoading } = useProfileFields();
+  const create = useCreateProfileField();
+  const del = useDeleteProfileField();
+  const [adding, setAdding] = useState(false);
+  const [shortname, setShortname] = useState("");
+  const [name, setName] = useState("");
+  const [fieldType, setFieldType] = useState<ProfileFieldType>("input");
+  const [options, setOptions] = useState("");
+  const [required, setRequired] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const needsOptions = fieldType === "radio" || fieldType === "select";
+
+  const reset = () => {
+    setAdding(false); setShortname(""); setName(""); setFieldType("input");
+    setOptions(""); setRequired(false); setLocalError(null);
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanShortname = shortname.trim().toLowerCase().replace(/\s+/g, "_");
+    if (!cleanShortname || !name.trim()) {
+      setLocalError("Shortname and label are both required.");
+      return;
+    }
+    const optionList = options.split(",").map((o) => o.trim()).filter(Boolean);
+    if (needsOptions && optionList.length === 0) {
+      setLocalError("Add at least one option (comma-separated) for radio/dropdown fields.");
+      return;
+    }
+    setLocalError(null);
+    create.mutate(
+      { shortname: cleanShortname, name: name.trim(), field_type: fieldType, options: optionList, required },
+      { onSuccess: reset, onError: (err) => setLocalError(err instanceof ApiError ? err.message : "Couldn't create field.") }
+    );
+  };
+
+  return (
+    <section className="mb-6 rounded-[14px] border border-line bg-surface p-5">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="font-head text-[14.5px] text-ink">Custom profile fields</h2>
+        {!adding && (
+          <button type="button" onClick={() => setAdding(true)} className="flex items-center gap-1 text-[12.5px] font-medium text-primary">
+            <Plus size={14} /> Add field
+          </button>
+        )}
+      </div>
+      <p className="mb-4 text-[12px] text-ink-faint">
+        Extra questions every user in your org sees on their own profile, beyond the built-in fields.
+      </p>
+
+      {isLoading ? (
+        <p className="text-[12.5px] text-ink-faint">Loading…</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {fields.map((f) => (
+            <div key={f.id} className="flex items-center justify-between gap-3 rounded-md border border-line px-3 py-2.5">
+              <div>
+                <div className="text-[13px] text-ink">
+                  {f.name} {f.required && <span className="text-danger">*</span>}
+                </div>
+                <div className="text-[11px] text-ink-faint">
+                  {fieldTypeOptions.find((o) => o.value === f.field_type)?.label} · {f.shortname}
+                  {f.options.length > 0 && ` · ${f.options.join(", ")}`}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => del.mutate(f.id)}
+                disabled={del.isPending}
+                className="flex-shrink-0 rounded-md p-1.5 text-ink-faint hover:bg-danger-soft hover:text-danger"
+                aria-label={`Delete ${f.name}`}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+          {fields.length === 0 && !adding && <p className="text-[12.5px] text-ink-faint">No custom fields yet.</p>}
+        </div>
+      )}
+
+      {adding && (
+        <form onSubmit={submit} className="mt-4 flex flex-col gap-3 rounded-md border border-line-soft bg-bg-soft p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-[12.5px] font-medium text-ink">New field</span>
+            <button type="button" onClick={reset} className="text-ink-faint"><X size={14} /></button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="mb-1 block text-[11.5px] text-ink-soft">Label</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Employee ID" maxLength={200} />
+            </div>
+            <div>
+              <Label className="mb-1 block text-[11.5px] text-ink-soft">Shortname (key)</Label>
+              <Input value={shortname} onChange={(e) => setShortname(e.target.value)} placeholder="e.g. employee_id" maxLength={100} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="mb-1 block text-[11.5px] text-ink-soft">Field type</Label>
+              <select
+                value={fieldType}
+                onChange={(e) => setFieldType(e.target.value as ProfileFieldType)}
+                className="h-10 w-full rounded-md border border-line bg-surface px-2.5 text-[13px] outline-none focus-visible:border-primary"
+              >
+                {fieldTypeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div className="flex items-end pb-2">
+              <label className="flex items-center gap-2 text-[12.5px] text-ink-soft">
+                <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} />
+                Required
+              </label>
+            </div>
+          </div>
+          {needsOptions && (
+            <div>
+              <Label className="mb-1 block text-[11.5px] text-ink-soft">Options (comma-separated)</Label>
+              <Input value={options} onChange={(e) => setOptions(e.target.value)} placeholder="e.g. Morning, Evening, Night" />
+            </div>
+          )}
+          {localError && <p className="text-[12px] text-danger">{localError}</p>}
+          <div className="flex items-center gap-2">
+            <Button type="submit" disabled={create.isPending}>{create.isPending ? "Adding…" : "Add field"}</Button>
+            <button type="button" onClick={reset} className="text-[12.5px] text-ink-faint">Cancel</button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
 
 const industryOptions = ["Manufacturing", "Automotive", "Logistics", "Retail", "Healthcare", "Technology", "Other"];
 const timezoneOptions = ["Asia/Kolkata", "America/New_York", "America/Sao_Paulo", "Europe/London", "UTC"];
@@ -215,6 +360,8 @@ export default function OrgSettingsPage() {
           </button>
         </div>
       </div>
+
+      <CustomFieldsCard />
 
       {/* Danger zone */}
       <div className="rounded-[10px] border border-danger/20 bg-danger-soft p-5">

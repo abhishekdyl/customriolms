@@ -11,7 +11,9 @@ from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.team import Team
 from app.models.user import RoleName, User, UserStatus, split_full_name
 from app.services import storage_service
+from app.services import profile_field_service
 from app.schemas.auth import ChangePasswordRequest, LoginRequest, RegisterRequest, TokenResponse, UpdateProfileRequest, UserOut
+from app.schemas.profile_field import ProfileFieldValueOut, ProfileFieldValuesUpdate
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -202,3 +204,18 @@ async def upload_avatar(
     await db.commit()
     await db.refresh(current_user)
     return await _user_out(db, current_user)
+
+
+@router.get("/me/custom-fields", response_model=list[ProfileFieldValueOut])
+async def get_my_custom_fields(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Every custom field the Org Admin has defined for this org, with
+    this user's own current value for each (see profile_field_service)."""
+    return await profile_field_service.get_values_for_user(db, current_user.org_id, current_user.id)
+
+
+@router.patch("/me/custom-fields", response_model=list[ProfileFieldValueOut])
+async def update_my_custom_fields(
+    body: ProfileFieldValuesUpdate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    await profile_field_service.set_values_for_user(db, current_user.org_id, current_user.id, body.values)
+    return await profile_field_service.get_values_for_user(db, current_user.org_id, current_user.id)

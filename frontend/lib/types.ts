@@ -414,3 +414,23 @@ export interface QuizAttempt {
   created_at: string;
   answers: QuizAttemptAnswer[];
 }
+
+export type ProfileFieldType = "input" | "textarea" | "checkbox" | "radio" | "select";
+
+/** Org-admin-defined custom profile field. Mirrors ProfileFieldOut. */
+export interface ProfileField {
+  id: string;
+  shortname: string;
+  name: string;
+  field_type: ProfileFieldType;
+  options: string[];
+  required: boolean;
+  sortorder: number;
+}
+
+/** A field definition plus one user's current value for it. Mirrors
+ * ProfileFieldValueOut — used both for a user's own custom-field form
+ * and an admin's "view this user" screen. */
+export interface ProfileFieldValue extends ProfileField {
+  value: string | null;
+}
