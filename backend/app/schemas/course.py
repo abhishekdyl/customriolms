@@ -122,6 +122,39 @@ class EnrolledLearnerOut(BaseModel):
     completed: bool
 
 
+class ModuleSummaryOut(BaseModel):
+    """Just enough to label a column in the module-progress matrix below —
+    not a full ModuleOut, which also carries quiz questions/answer keys
+    this view has no business returning."""
+    id: uuid.UUID
+    title: str
+    type: str
+    required: bool
+
+
+class ModuleProgressCellOut(BaseModel):
+    module_id: uuid.UUID
+    completed: bool
+    score: int | None = None  # quiz score or watched-% where that applies, else null
+
+
+class LearnerModuleProgressOut(BaseModel):
+    user_id: uuid.UUID
+    name: str
+    email: str
+    team_name: str | None
+    course_completed: bool
+    cells: list[ModuleProgressCellOut]  # same order as CourseModuleProgressOut.modules
+
+
+class CourseModuleProgressOut(BaseModel):
+    """The Moodle-style "who completed which module" matrix (GET
+    /courses/{id}/module-progress, Org Admin / Team Lead) — modules as
+    columns, learners as rows, backing list_module_progress."""
+    modules: list[ModuleSummaryOut]
+    learners: list[LearnerModuleProgressOut]
+
+
 class QuizAttemptAnswerOut(BaseModel):
     """One question's answer on one attempt, as it was snapshotted at
     submit time — see QuizAttempt's docstring for why this isn't a live
@@ -225,7 +258,11 @@ class LearnerModuleOut(BaseModel):
     instructions: str | None = None
     skill_count: int = 0
     questions: list[QuestionLearnerOut] = []
-    completed: bool = False  # always False until module progress tracking exists
+    completed: bool = False
+    # Best score/watched-% recorded so far (ModuleProgress.score) — null
+    # until there's a passing attempt, since an in-progress/failed try
+    # isn't persisted as module progress at all (see learn_service).
+    score: int | None = None
 
 
 class LearnerCourseOut(MyCourseItem):

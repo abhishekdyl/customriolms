@@ -13,8 +13,8 @@ from app.models.course import Course
 from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.learn import (
-    CertDetail, CompleteResult, LearnCourseDetail, LearnCourseItem, LearnModule, LearnNotification, LearnProgress,
-    LearnSummary, LeaderRow, ProfileOut, ProfileUpdate, QuizResult, QuizSubmit,
+    CertDetail, CompleteRequest, CompleteResult, LearnCourseDetail, LearnCourseItem, LearnModule, LearnNotification,
+    LearnProgress, LearnSummary, LeaderRow, ProfileOut, ProfileUpdate, QuizResult, QuizSubmit,
 )
 from app.schemas.question import QuestionLearnerOut
 from app.services import learn_service as svc
@@ -87,8 +87,11 @@ async def course_detail(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/modules/{module_id}/complete", response_model=CompleteResult)
-async def complete(module_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    pct, completed, code = await svc.complete_module(db, user, module_id)
+async def complete(
+    module_id: uuid.UUID, body: CompleteRequest | None = None,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    pct, completed, code = await svc.complete_module(db, user, module_id, (body.watched_pct if body else None))
     return CompleteResult(progress=pct, course_completed=completed, certificate_code=code)
 
 

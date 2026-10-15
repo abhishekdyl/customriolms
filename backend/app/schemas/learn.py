@@ -60,6 +60,16 @@ class LearnCourseDetail(BaseModel):
     modules: list[LearnModule]
 
 
+class CompleteRequest(BaseModel):
+    """Body for POST .../modules/{id}/complete. Only WATCH modules actually
+    use watched_pct — it's how far through the video the player tracked the
+    learner reaching (the running max, not just wherever playback currently
+    sits, so scrubbing to the end doesn't let someone skip the real
+    watch-through). Every other module type ignores it; omit it entirely
+    and the call still works for them."""
+    watched_pct: int | None = None
+
+
 class CompleteResult(BaseModel):
     progress: int
     course_completed: bool

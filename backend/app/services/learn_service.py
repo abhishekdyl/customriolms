@@ -177,12 +177,33 @@ async def _finish_course_if_done(db: AsyncSession, user: User, course: Course) -
     return pct, completed, code
 
 
-async def complete_module(db: AsyncSession, user: User, module_id: uuid.UUID) -> tuple[int, bool, str | None]:
+async def complete_module(
+    db: AsyncSession, user: User, module_id: uuid.UUID, watched_pct: int | None = None,
+) -> tuple[int, bool, str | None]:
     module, course = await _module_in_assigned_course(db, user, module_id)
     if module.type == ModuleType.QUIZ:
         raise HTTPException(status_code=400, detail="Quiz modules are completed by passing the quiz")
     assert_course_open(course)
-    await _mark_done(db, user, course, module, None)
+
+    score = None
+    if module.type == ModuleType.WATCH:
+        # Mirrors the QUIZ gate below — a WATCH module's own `threshold` is
+        # its pass mark too ("min % watched (WATCH) or min score (QUIZ)",
+        # see Module's docstring), just not enforced here until now. The
+        # player tracks the furthest point reached and sends it as
+        # watched_pct; a module with threshold 0 (the common case before
+        # this existed) still passes with no video played at all, so this
+        # never breaks an already-authored module that wasn't set up to
+        # require real watch-through.
+        pct = watched_pct or 0
+        if pct < module.threshold:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Watch at least {module.threshold}% of the video first — you're at {pct}%.",
+            )
+        score = pct
+
+    await _mark_done(db, user, course, module, score)
     await db.commit()
     return await _finish_course_if_done(db, user, course)
 

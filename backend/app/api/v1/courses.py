@@ -13,15 +13,15 @@ from app.models.course import Course
 from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    CourseAssignRequest, CourseCreate, CourseListItem, CourseOut, CourseUpdate,
+    CourseAssignRequest, CourseCreate, CourseListItem, CourseModuleProgressOut, CourseOut, CourseUpdate,
     EnrolledLearnerOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem,
     QuizAttemptOut,
 )
-from app.schemas.learn import CompleteResult, QuizResult, QuizSubmit
+from app.schemas.learn import CompleteRequest, CompleteResult, QuizResult, QuizSubmit
 from app.services.course_service import (
     _assigned_to, add_module, assign_course, get_course_or_404, get_my_course, list_courses, list_enrolled,
-    list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules, update_module, upload_module_content,
-    upload_scorm_package,
+    list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules, update_module,
+    upload_module_content, upload_scorm_package,
 )
 from app.services import learn_service as progress_svc
 from app.services import storage_service
@@ -59,13 +59,15 @@ async def _module_belongs_to_course(module_id: uuid.UUID, course_id: uuid.UUID, 
 
 @router.post("/mine/{course_id}/modules/{module_id}/complete", response_model=CompleteResult)
 async def complete_my_module(
-    course_id: uuid.UUID, module_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+    course_id: uuid.UUID, module_id: uuid.UUID, body: CompleteRequest | None = None,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
     """Marks a non-quiz module done for the caller. 404s if the module isn't
     on this course, or the course isn't assigned to them (checked inside
-    complete_module via assigned_courses)."""
+    complete_module via assigned_courses). body.watched_pct only matters
+    for a WATCH module — see complete_module's docstring."""
     await _module_belongs_to_course(module_id, course_id, db)
-    pct, completed, code = await progress_svc.complete_module(db, current_user, module_id)
+    pct, completed, code = await progress_svc.complete_module(db, current_user, module_id, (body.watched_pct if body else None))
     return CompleteResult(progress=pct, course_completed=completed, certificate_code=code)
 
 
@@ -141,6 +143,19 @@ async def get_enrolled(course_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     their own team's members (enforced in list_enrolled)."""
     course = await get_course_or_404(db, course_id, current_user.org_id)
     return await list_enrolled(db, course, current_user)
+
+
+@router.get(
+    "/{course_id}/module-progress", response_model=CourseModuleProgressOut,
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+)
+async def get_module_progress(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The module-by-module completion matrix — every enrolled learner as a
+    row, every module on the course as a column, so an admin can see
+    exactly which modules each learner has (and hasn't) cleared, not just
+    their rolled-up course %. A Team Lead only sees their own team."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    return await list_module_progress(db, course, current_user)
 
 
 @router.get(

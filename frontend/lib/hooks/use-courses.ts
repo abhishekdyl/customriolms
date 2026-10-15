@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { Course, CourseListItem, EnrolledLearner, Module, QuestionInput, QuizAttempt } from "@/lib/types";
+import type { Course, CourseListItem, CourseModuleProgress, EnrolledLearner, Module, QuestionInput, QuizAttempt } from "@/lib/types";
 
 export function useCourses() {
   return useQuery({ queryKey: ["courses"], queryFn: () => api.get<CourseListItem[]>("/api/v1/courses") });
@@ -156,6 +156,17 @@ export function useQuizAttempts(courseId: string) {
   return useQuery({
     queryKey: ["courses", courseId, "quiz-attempts"],
     queryFn: () => api.get<QuizAttempt[]>(`/api/v1/courses/${courseId}/quiz-attempts`),
+    enabled: !!courseId,
+  });
+}
+
+/** The module-by-module completion matrix — every enrolled learner as a
+ * row, every module as a column. Org Admin sees everyone; Team Lead sees
+ * only their own team. From GET /courses/{id}/module-progress. */
+export function useModuleProgress(courseId: string) {
+  return useQuery({
+    queryKey: ["courses", courseId, "module-progress"],
+    queryFn: () => api.get<CourseModuleProgress>(`/api/v1/courses/${courseId}/module-progress`),
     enabled: !!courseId,
   });
 }

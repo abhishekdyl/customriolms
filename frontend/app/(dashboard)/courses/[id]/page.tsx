@@ -14,6 +14,7 @@ import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
 import { ModuleEditorRow } from "@/components/shell/courses/module-editor";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
 import { QuizAttemptsSection } from "@/components/shell/courses/quiz-attempts";
+import { ModuleProgressMatrix } from "@/components/shell/courses/module-progress-matrix";
 import { toQuestionInput } from "@/lib/quiz-utils";
 import type { Module } from "@/lib/types";
 
@@ -143,51 +144,6 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
           </div>
         </div>
 
-        <p className="mb-3 text-xs font-medium text-ink-faint">Course-level completion</p>
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-sm text-ink">Certificate on course completion</span>
-          <Switch checked={course.certificate_enabled} onCheckedChange={(v) => updateCourse.mutate({ certificate_enabled: v })} />
-        </div>
-        {course.certificate_enabled && (
-          <div className="mb-3 grid grid-cols-2 gap-2">
-            <div>
-              <p className="mb-1 text-[10.5px] text-ink-faint">Template</p>
-              <select
-                value={course.certificate_template_id ?? ""}
-                onChange={(e) => updateCourse.mutate({ certificate_template_id: e.target.value || null })}
-                className="w-full rounded-md border border-line px-2 py-1.5 text-xs"
-              >
-                <option value="">Select…</option>
-                {certTemplates?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <p className="mb-1 text-[10.5px] text-ink-faint">Certification name</p>
-              <Input defaultValue={course.certificate_name ?? course.title} onBlur={(e) => updateCourse.mutate({ certificate_name: e.target.value })} className="h-7 text-xs" />
-            </div>
-          </div>
-        )}
-
-        {(badges?.length ?? 0) > 0 && (
-          <div className="border-t border-line-soft pt-3">
-            <p className="mb-1.5 text-[11px] text-ink-soft">Badge on completing this course</p>
-            <div className="flex flex-wrap gap-1.5">
-              {badges!.map((b) => {
-                const active = course.badge_ids.includes(b.id);
-                return (
-                  <button
-                    key={b.id}
-                    onClick={() => toggleCourseBadge(b.id)}
-                    className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px]"
-                    style={{ borderColor: active ? b.color : "var(--color-line)", background: active ? `${b.color}1a` : "transparent", color: active ? b.color : undefined }}
-                  >
-                    <Award className="h-3 w-3" /> {b.name}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="mb-6 rounded-xl border border-line bg-surface p-4">
@@ -219,6 +175,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
           </div>
         )}
       </div>
+
+      <ModuleProgressMatrix courseId={id} />
 
       <QuizAttemptsSection courseId={id} />
 
@@ -252,6 +210,64 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
         <Input placeholder="New module title" value={newModuleTitle} onChange={(e) => setNewModuleTitle(e.target.value)} />
         <Button type="submit" disabled={addModule.isPending}><Plus className="h-4 w-4" /> Add module</Button>
       </form>
+
+      {/* Certificate is the course's real final step — it only shows up for
+          a learner once every required module above is done (see
+          learn_service._finish_course_if_done), so it's positioned here,
+          after the module list, rather than up with the other settings. */}
+      <div className="mt-6 rounded-xl border border-line bg-surface p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Award className="h-4 w-4 text-amber" />
+          <p className="text-xs font-medium text-ink-faint">Final step — certificate (optional)</p>
+        </div>
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-sm text-ink">Issue a certificate when the course is completed</span>
+          <Switch checked={course.certificate_enabled} onCheckedChange={(v) => updateCourse.mutate({ certificate_enabled: v })} />
+        </div>
+        {course.certificate_enabled && (
+          <div className="mb-3 grid grid-cols-2 gap-2">
+            <div>
+              <p className="mb-1 text-[10.5px] text-ink-faint">Template</p>
+              <select
+                value={course.certificate_template_id ?? ""}
+                onChange={(e) => updateCourse.mutate({ certificate_template_id: e.target.value || null })}
+                className="w-full rounded-md border border-line px-2 py-1.5 text-xs"
+              >
+                <option value="">Select…</option>
+                {certTemplates?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <p className="mb-1 text-[10.5px] text-ink-faint">Certification name</p>
+              <Input defaultValue={course.certificate_name ?? course.title} onBlur={(e) => updateCourse.mutate({ certificate_name: e.target.value })} className="h-7 text-xs" />
+            </div>
+          </div>
+        )}
+        <p className="mb-3 text-[11px] text-ink-faint">
+          A learner only sees this on their Progress page once every required module above is done — never before.
+        </p>
+
+        {(badges?.length ?? 0) > 0 && (
+          <div className="border-t border-line-soft pt-3">
+            <p className="mb-1.5 text-[11px] text-ink-soft">Badge on completing this course</p>
+            <div className="flex flex-wrap gap-1.5">
+              {badges!.map((b) => {
+                const active = course.badge_ids.includes(b.id);
+                return (
+                  <button
+                    key={b.id}
+                    onClick={() => toggleCourseBadge(b.id)}
+                    className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px]"
+                    style={{ borderColor: active ? b.color : "var(--color-line)", background: active ? `${b.color}1a` : "transparent", color: active ? b.color : undefined }}
+                  >
+                    <Award className="h-3 w-3" /> {b.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
       {assigning && <AssignModal courseId={id} onClose={() => setAssigning(false)} />}
     </div>

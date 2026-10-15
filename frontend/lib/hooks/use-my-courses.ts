@@ -21,12 +21,14 @@ export function useMyCourse(id: string) {
   });
 }
 
-/** Marks a non-quiz module (watch/read/manual) done for the caller. */
+/** Marks a non-quiz module (watch/read/manual/scorm) done for the caller.
+ * watched_pct only matters for a WATCH module — the backend 400s if it's
+ * below that module's threshold (see learn_service.complete_module). */
 export function useCompleteModule(courseId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (moduleId: string) =>
-      api.post<CompleteResult>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/complete`, {}),
+    mutationFn: ({ moduleId, watched_pct }: { moduleId: string; watched_pct?: number }) =>
+      api.post<CompleteResult>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/complete`, { watched_pct }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["courses", "mine", courseId] });
       qc.invalidateQueries({ queryKey: ["courses", "mine"] });

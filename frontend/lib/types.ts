@@ -141,6 +141,37 @@ export interface EnrolledLearner {
   completed: boolean;
 }
 
+/** One column of the module-progress matrix — just enough to label it. */
+export interface ModuleSummary {
+  id: string;
+  title: string;
+  type: ModuleType;
+  required: boolean;
+}
+
+export interface ModuleProgressCell {
+  module_id: string;
+  completed: boolean;
+  score: number | null;
+}
+
+export interface LearnerModuleProgress {
+  user_id: string;
+  name: string;
+  email: string;
+  team_name: string | null;
+  course_completed: boolean;
+  /** Same order as CourseModuleProgress.modules. */
+  cells: ModuleProgressCell[];
+}
+
+/** The Moodle-style "who completed which module" matrix. From
+ * GET /courses/{id}/module-progress (Org Admin / Team Lead). */
+export interface CourseModuleProgress {
+  modules: ModuleSummary[];
+  learners: LearnerModuleProgress[];
+}
+
 export interface Course extends CourseListItem {
   description: string | null;
   assigned_team_ids: string[];
@@ -249,6 +280,9 @@ export interface LearnerModule {
     options: QuestionOption[];
   }[];
   completed: boolean;
+  /** Best score (QUIZ) or furthest watched-% (WATCH) recorded so far —
+   * null until there's a qualifying attempt. */
+  score: number | null;
 }
 
 /** One assigned course, learner-safe. From GET /api/v1/courses/mine/{id}. */

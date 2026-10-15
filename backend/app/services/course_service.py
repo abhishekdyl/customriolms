@@ -14,8 +14,9 @@ from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    CourseListItem, EnrolledLearnerOut, LearnerCourseOut, LearnerModuleOut,
-    ModuleCreate, ModuleUpdate, MyCourseItem, QuizAttemptOut,
+    CourseListItem, CourseModuleProgressOut, EnrolledLearnerOut, LearnerCourseOut, LearnerModuleOut,
+    LearnerModuleProgressOut, ModuleCreate, ModuleProgressCellOut, ModuleSummaryOut, ModuleUpdate, MyCourseItem,
+    QuizAttemptOut,
 )
 from app.schemas.question import QuestionLearnerOut
 # Real per-learner progress (ModuleProgress-backed) lives in
@@ -125,6 +126,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
             instructions=m.instructions, skill_count=len(m.skill_ids or []),
             questions=[QuestionLearnerOut.model_validate(q) for q in (m.questions or [])],
             completed=m.id in done,
+            score=done[m.id].score if m.id in done else None,
         )
         for m in course.modules
     ]
@@ -340,6 +342,44 @@ async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[
         ))
     out.sort(key=lambda r: r.name.lower())
     return out
+
+
+async def list_module_progress(db: AsyncSession, course: Course, viewer: User) -> CourseModuleProgressOut:
+    """The Moodle-style "who completed which module" matrix — same
+    enrolled-learner resolution and Team Lead scoping as list_enrolled,
+    just shaped as a row per learner with one cell per module instead of
+    a single rolled-up progress_pct, so an admin can see exactly which
+    modules a given learner has and hasn't cleared, not just their overall
+    percentage."""
+    modules = sorted(course.modules, key=lambda m: m.position)
+    module_summaries = [
+        ModuleSummaryOut(id=m.id, title=m.title, type=m.type.value, required=m.required) for m in modules
+    ]
+
+    rows = await db.execute(
+        select(User, Team.name).outerjoin(Team, Team.id == User.team_id)
+        .where(User.org_id == course.org_id, User.role == RoleName.LEARNER)
+    )
+    learners: list[LearnerModuleProgressOut] = []
+    for user, team_name in rows.all():
+        if viewer.role == RoleName.TEAM_LEAD and user.team_id != viewer.team_id:
+            continue
+        via_direct = user.id in (course.assigned_user_ids or [])
+        via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
+        if not via_direct and not via_team:
+            continue
+        done = await progress_svc.completed_map(db, user.id)
+        pct, _, _ = progress_svc.course_progress(course, done)
+        cells = [
+            ModuleProgressCellOut(module_id=m.id, completed=m.id in done, score=done[m.id].score if m.id in done else None)
+            for m in modules
+        ]
+        learners.append(LearnerModuleProgressOut(
+            user_id=user.id, name=user.name, email=user.email, team_name=team_name,
+            course_completed=pct >= 100, cells=cells,
+        ))
+    learners.sort(key=lambda r: r.name.lower())
+    return CourseModuleProgressOut(modules=module_summaries, learners=learners)
 
 
 async def list_quiz_attempts(db: AsyncSession, course: Course, viewer: User) -> list[QuizAttemptOut]:

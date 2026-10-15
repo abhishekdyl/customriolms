@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -28,12 +28,92 @@ function BackLink({ label }: { label: string }) {
   );
 }
 
+/** A WATCH module's inline video — tracks the furthest point the learner
+ * has actually reached (not just where the scrubber currently sits, so
+ * jumping straight to the end can't fake a full watch-through) and only
+ * lets "Mark complete" fire once that reaches the module's threshold.
+ * The backend re-checks this anyway (learn_service.complete_module) —
+ * this is just what keeps the button honestly disabled until then. */
+function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId: string }) {
+  const complete = useCompleteModule(courseId);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [watchedPct, setWatchedPct] = useState(m.score ?? 0);
+
+  const onTimeUpdate = () => {
+    const v = videoRef.current;
+    if (!v || !v.duration) return;
+    const pct = Math.round((v.currentTime / v.duration) * 100);
+    setWatchedPct((prev) => Math.max(prev, pct));
+  };
+
+  const needsMore = watchedPct < m.threshold;
+
+  return (
+    <div className="border-b border-line-soft py-3">
+      <div className="mb-2 flex items-center gap-3">
+        {m.completed ? (
+          <CheckCircle2 size={18} color="var(--color-success)" />
+        ) : (
+          <Circle size={18} color="var(--color-ink-faint)" />
+        )}
+        <div className="flex-1">
+          <div className="text-[13.5px] text-ink">{m.title}</div>
+          <div className="text-[11px] text-ink-faint">
+            {MODULE_TYPE_LABEL[m.type]}
+            {m.skill_count > 0 && ` · builds ${m.skill_count} skill${m.skill_count > 1 ? "s" : ""}`}
+          </div>
+        </div>
+        {m.completed && <span className="text-[11.5px] font-medium text-success">Completed</span>}
+      </div>
+
+      {m.file_url ? (
+        // eslint-disable-next-line jsx-a11y/media-has-caption
+        <video
+          ref={videoRef} src={m.file_url} controls onTimeUpdate={onTimeUpdate}
+          className="mb-2 max-h-[280px] w-full rounded-lg bg-ink"
+        />
+      ) : (
+        <div className="mb-2 flex h-[140px] items-center justify-center rounded-lg bg-ink">
+          <PlayCircle size={32} color="rgba(255,255,255,0.5)" />
+        </div>
+      )}
+
+      {!m.completed && (
+        <>
+          <div className="mb-1.5 text-[11.5px] text-ink-faint">
+            Watched {watchedPct}% · need {m.threshold}% to mark this complete
+          </div>
+          {complete.isError && (
+            <div className="mb-1.5 text-[11px] text-danger">
+              {(complete.error as Error)?.message || "Couldn't mark this complete. Try again."}
+            </div>
+          )}
+          <button
+            onClick={() => complete.mutate({ moduleId: m.id, watched_pct: watchedPct })}
+            disabled={needsMore || complete.isPending}
+            title={needsMore ? `Keep watching — ${m.threshold - watchedPct}% to go` : undefined}
+            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+          >
+            {complete.isPending && <Loader2 size={12} className="animate-spin" />}
+            Mark complete
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** Row for a non-quiz module — shows a "Mark complete" button until done.
- * A SCORM module is the exception: its own package decides when it's
- * done (via the JS API shim), so instead of a button it expands into
- * the actual player right in the list. */
+ * WATCH and SCORM are the exceptions: a WATCH module expands into a real
+ * player with watch-% tracking (WatchPlayer, above), and a SCORM module's
+ * own package decides when it's done (via the JS API shim), so both show
+ * the actual player inline instead of a bare button. */
 function ModuleRow({ module: m, courseId }: { module: LearnerModule; courseId: string }) {
   const complete = useCompleteModule(courseId);
+
+  if (m.type === "watch") {
+    return <WatchPlayer module={m} courseId={courseId} />;
+  }
 
   if (m.type === "scorm") {
     return (
@@ -55,7 +135,7 @@ function ModuleRow({ module: m, courseId }: { module: LearnerModule; courseId: s
         {m.scorm_launch_path ? (
           <ScormPlayer
             courseId={courseId} moduleId={m.id} launchPath={m.scorm_launch_path} version={m.scorm_version}
-            completed={m.completed} onComplete={() => complete.mutate(m.id)}
+            completed={m.completed} onComplete={() => complete.mutate({ moduleId: m.id })}
           />
         ) : (
           <div className="text-[12.5px] text-ink-faint">This module's SCORM package isn't ready yet.</div>
@@ -88,7 +168,7 @@ function ModuleRow({ module: m, courseId }: { module: LearnerModule; courseId: s
           <span className="text-[11.5px] font-medium text-success">Completed</span>
         ) : (
           <button
-            onClick={() => complete.mutate(m.id)}
+            onClick={() => complete.mutate({ moduleId: m.id })}
             disabled={complete.isPending}
             className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-white disabled:opacity-60"
           >
@@ -298,11 +378,6 @@ export default function CourseViewPage() {
       </div>
 
       <div className="flex-1 px-4 pb-6 md:px-0">
-        {/* video area — static placeholder, same as the prototype, until content playback is wired */}
-        <div className="mb-3 flex h-[190px] items-center justify-center rounded-lg bg-ink">
-          <PlayCircle size={40} color="rgba(255,255,255,0.6)" />
-        </div>
-
         <div className="flex border-b border-line-soft">
           {TABS.map((t) => (
             <button
