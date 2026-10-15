@@ -119,11 +119,12 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
     pct, completed_count, _ = progress_svc.course_progress(course, done)
     modules = []
     for m in course.modules:
-        # sequential_unlock gates actual content, not just the "mark
-        # complete" click — a locked module shows up in the list (so the
-        # learner can see what's coming and why it's locked) but with no
-        # file to open and no quiz questions to answer.
-        locked = progress_svc.module_locked(course, m, done)
+        # sequential_unlock and this module's own restrictions both gate
+        # actual content, not just the "mark complete" click — a locked
+        # module shows up in the list (so the learner can see what's
+        # coming and why it's locked) but with no file to open and no
+        # quiz questions to answer.
+        locked, lock_reason = progress_svc.module_locked(course, m, done, user)
         modules.append(LearnerModuleOut(
             id=m.id, title=m.title, type=m.type, position=m.position, required=m.required, threshold=m.threshold,
             file_url=(
@@ -137,6 +138,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
             completed=m.id in done,
             score=done[m.id].score if m.id in done else None,
             locked=locked,
+            lock_reason=lock_reason,
         ))
     return LearnerCourseOut(
         id=course.id, title=course.title, description=course.description,
@@ -195,9 +197,16 @@ async def update_module(db: AsyncSession, module: Module, body: ModuleUpdate, or
     if body.badge_ids is not None:
         await _validate_ids_belong_to_org(db, Badge, body.badge_ids, org_id, "badge")
 
-    data = body.model_dump(exclude_unset=True, exclude={"questions"})
+    data = body.model_dump(exclude_unset=True, exclude={"questions", "restrictions"})
     for key, value in data.items():
         setattr(module, key, value)
+
+    if body.restrictions is not None:
+        # mode="json" so each restriction's opens_at/closes_at/module_id
+        # land as plain JSON-safe strings in the JSONB column — see
+        # ModuleRestrictionIn's docstring for the shapes this stores, and
+        # learn_service._restriction_reason for how they're read back.
+        module.restrictions = [r.model_dump(mode="json", exclude_none=True) for r in body.restrictions]
 
     if body.questions is not None:
         # Replace the full question set rather than diffing — authoring UI always

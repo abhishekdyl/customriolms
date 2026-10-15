@@ -57,16 +57,15 @@ class Course(Base):
     # Completion rules — both optional, both off by default so an existing
     # course's behavior never changes until an admin opts in.
     #
-    # completion_module_id: when set, the course counts as complete the
-    # moment THIS one module is done, instead of the default "every
-    # required module done" rule (see learn_service.course_progress) —
-    # e.g. "passing the quiz completes the course" even if a video or
-    # SCORM module is still sitting there required but unfinished.
-    # ondelete="SET NULL" so deleting that module un-sets the rule rather
-    # than orphaning a dangling id or blocking the delete.
-    completion_module_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("modules.id", ondelete="SET NULL"), nullable=True
-    )
+    # completion_module_ids: when non-empty, the course counts as complete
+    # the moment EVERY module in this list is done, instead of the default
+    # "every required module done" rule (see learn_service.course_progress)
+    # — e.g. "video + quiz together complete the course" even if a 3rd,
+    # required SCORM module is still sitting there unfinished. A plain
+    # UUID array, not a join table or FK, same reasoning as
+    # skill_ids/badge_ids below — validated at the API layer (courses.py),
+    # which drops any id for a module that gets deleted.
+    completion_module_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)
     # sequential_unlock: when true, a learner must finish module N (by
     # position order) before module N+1's content or completion becomes
     # reachable at all — the "video > scorm > quiz > certificate" chain.
@@ -85,10 +84,5 @@ class Course(Base):
     # (synchronous) touches them.
     category: Mapped["Category | None"] = relationship(lazy="selectin")
     modules: Mapped[list["Module"]] = relationship(
-        back_populates="course", cascade="all, delete-orphan", order_by="Module.position", lazy="selectin",
-        # Explicit because completion_module_id is now a second FK from
-        # courses to modules — without this SQLAlchemy can't tell which
-        # one defines "this course's modules" vs. "the one completion
-        # module", and refuses to configure the mapper at all.
-        foreign_keys="Module.course_id",
+        back_populates="course", cascade="all, delete-orphan", order_by="Module.position", lazy="selectin"
     )

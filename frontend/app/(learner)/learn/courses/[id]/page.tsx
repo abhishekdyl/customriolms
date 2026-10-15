@@ -103,19 +103,21 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
   );
 }
 
-/** A module the course's "lock modules in order" setting hasn't unlocked
- * yet — no player, no quiz, no "mark complete", just what it is and what
- * finishing first. The backend already strips file_url/questions for a
- * locked module, so there's nothing to render even if this didn't exist;
- * this is purely the honest, greyed-out explanation of why. */
-function LockedRow({ module: m, previousTitle }: { module: LearnerModule; previousTitle: string | null }) {
+/** A module this course's sequential-unlock order, or one of the
+ * module's own restrictions (a date window, a profile match, a prior
+ * module's score), hasn't opened up yet — no player, no quiz, no "mark
+ * complete", just what it is and why not. The backend already strips
+ * file_url/questions for a locked module, so there's nothing to render
+ * even if this didn't exist; this is purely the honest, greyed-out
+ * explanation of why, straight from lock_reason rather than guessed here. */
+function LockedRow({ module: m }: { module: LearnerModule }) {
   return (
     <div className="flex items-center gap-3 border-b border-line-soft py-3 opacity-50">
       <Lock size={18} color="var(--color-ink-faint)" />
       <div className="flex-1">
         <div className="text-[13.5px] text-ink-faint">{m.title}</div>
         <div className="text-[11px] text-ink-faint">
-          {MODULE_TYPE_LABEL[m.type]} · {previousTitle ? `Finish "${previousTitle}" first to unlock this` : "Locked"}
+          {MODULE_TYPE_LABEL[m.type]} · {m.lock_reason ?? "Locked"}
         </div>
       </div>
     </div>
@@ -127,11 +129,11 @@ function LockedRow({ module: m, previousTitle }: { module: LearnerModule; previo
  * player with watch-% tracking (WatchPlayer, above), and a SCORM module's
  * own package decides when it's done (via the JS API shim), so both show
  * the actual player inline instead of a bare button. */
-function ModuleRow({ module: m, courseId, previousTitle }: { module: LearnerModule; courseId: string; previousTitle: string | null }) {
+function ModuleRow({ module: m, courseId }: { module: LearnerModule; courseId: string }) {
   const complete = useCompleteModule(courseId);
 
   if (m.locked) {
-    return <LockedRow module={m} previousTitle={previousTitle} />;
+    return <LockedRow module={m} />;
   }
 
   if (m.type === "watch") {
@@ -420,8 +422,8 @@ export default function CourseViewPage() {
         <div className="py-4">
           {tab === "content" && (
             <div className="flex flex-col gap-0.5">
-              {mods.map((m, i) => (
-                <ModuleRow key={m.id} module={m} courseId={course.id} previousTitle={i > 0 ? mods[i - 1].title : null} />
+              {mods.map((m) => (
+                <ModuleRow key={m.id} module={m} courseId={course.id} />
               ))}
               {mods.length === 0 && (
                 <div className="text-[13px] text-ink-faint">No modules published for this course yet.</div>
@@ -443,13 +445,7 @@ export default function CourseViewPage() {
               quizModule.locked ? (
                 <div className="flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-6">
                   <Lock size={14} color="var(--color-ink-faint)" />
-                  <span className="text-[12.5px] text-ink-faint">
-                    {(() => {
-                      const qi = mods.findIndex((m) => m.id === quizModule.id);
-                      const prev = qi > 0 ? mods[qi - 1].title : null;
-                      return prev ? `Finish "${prev}" first to unlock this quiz.` : "This quiz is locked.";
-                    })()}
-                  </span>
+                  <span className="text-[12.5px] text-ink-faint">{quizModule.lock_reason ?? "This quiz is locked."}</span>
                 </div>
               ) : (
                 <QuizPanel module={quizModule} courseId={course.id} />

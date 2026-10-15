@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -14,6 +15,50 @@ class ModuleCreate(BaseModel):
     type: ModuleType = ModuleType.WATCH
     required: bool = True
     threshold: int = 90
+
+
+class ModuleRestrictionIn(BaseModel):
+    """One access condition on a module (Module.restrictions) — admin
+    authoring shape, validated here; what's actually true-or-false at
+    runtime for a given learner is learn_service.module_locked. ALL of a
+    module's restrictions must pass (AND) before it's reachable; this is
+    independent of (and stacks with) the course-wide sequential_unlock
+    position-order lock.
+
+    - date_window: opens_at/closes_at bound WHEN this module is reachable
+      — e.g. "only between 15 and 20 Oct", separate from the course's own
+      opens_at/closes_at.
+    - profile_field: the learner's own profile field (country / location /
+      job_title — the free-text fields on User) must equal `value`.
+    - module_score: an earlier module (`module_id`) must already have a
+      recorded score of at least `min_score`.
+    """
+    type: Literal["date_window", "profile_field", "module_score"]
+    opens_at: datetime | None = None
+    closes_at: datetime | None = None
+    field: str | None = None
+    value: str | None = None
+    module_id: uuid.UUID | None = None
+    min_score: int | None = None
+
+    @model_validator(mode="after")
+    def _check_shape(self):
+        if self.type == "date_window":
+            if self.opens_at is None and self.closes_at is None:
+                raise ValueError("A date window restriction needs an opens_at, a closes_at, or both")
+            if self.opens_at and self.closes_at and self.closes_at <= self.opens_at:
+                raise ValueError("closes_at must be after opens_at")
+        elif self.type == "profile_field":
+            if self.field not in ("country", "location", "job_title"):
+                raise ValueError('field must be one of "country", "location", "job_title"')
+            if not (self.value or "").strip():
+                raise ValueError("A profile_field restriction needs a value to match")
+        elif self.type == "module_score":
+            if self.module_id is None:
+                raise ValueError("A module_score restriction needs module_id")
+            if self.min_score is None or not (0 <= self.min_score <= 100):
+                raise ValueError("min_score must be between 0 and 100")
+        return self
 
 
 class ModuleUpdate(BaseModel):
@@ -31,6 +76,9 @@ class ModuleUpdate(BaseModel):
     certificate_template_id: uuid.UUID | None = None
     certificate_name: str | None = None
     questions: list[QuestionIn] | None = None  # replaces the full question set when provided
+    # Replaces the full restriction set when provided, same as questions
+    # above — the authoring UI always sends the complete list back.
+    restrictions: list[ModuleRestrictionIn] | None = None
 
 
 class ModuleOut(BaseModel):
@@ -58,6 +106,11 @@ class ModuleOut(BaseModel):
     certificate_template_id: uuid.UUID | None
     certificate_name: str | None
     questions: list[QuestionOut] = []
+    # Plain JSON passthrough of what's stored — already in the
+    # ModuleRestrictionIn shape (opens_at/closes_at as ISO strings,
+    # module_id as a string), so the authoring UI reads it with the same
+    # shape it writes.
+    restrictions: list[dict] = []
 
     class Config:
         from_attributes = True
@@ -102,10 +155,12 @@ class CourseUpdate(BaseModel):
     certificate_name: str | None = None
     certificate_org_name: str | None = None
     badge_ids: list[uuid.UUID] | None = None
-    # null clears the rule ("every required module" again); any other
-    # value must be one of this course's own module ids — validated in
-    # the endpoint, not here, since that needs the course loaded.
-    completion_module_id: uuid.UUID | None = None
+    # [] or null clears the rule ("every required module" again);
+    # otherwise every id must be one of this course's own module ids —
+    # validated in the endpoint, not here, since that needs the course
+    # loaded. Non-empty means "every module in this list must be done",
+    # not just one — see learn_service.course_progress.
+    completion_module_ids: list[uuid.UUID] | None = None
     sequential_unlock: bool | None = None
 
 
@@ -210,7 +265,7 @@ class CourseOut(BaseModel):
     certificate_name: str | None
     certificate_org_name: str | None
     badge_ids: list[uuid.UUID]
-    completion_module_id: uuid.UUID | None = None
+    completion_module_ids: list[uuid.UUID] = []
     sequential_unlock: bool = False
     modules: list[ModuleOut] = []
 
@@ -270,12 +325,17 @@ class LearnerModuleOut(BaseModel):
     # until there's a passing attempt, since an in-progress/failed try
     # isn't persisted as module progress at all (see learn_service).
     score: int | None = None
-    # True only when the course has sequential_unlock on AND the module
-    # immediately before this one (by position) isn't done yet — always
-    # False otherwise. file_url/questions are already stripped when this
-    # is true (see get_my_course), so the frontend just needs this to
-    # show the locked state, not to re-derive it.
+    # True when sequential_unlock blocks this module OR any one of its
+    # own restrictions isn't satisfied yet — see learn_service.module_locked.
+    # file_url/questions are already stripped when this is true (see
+    # get_my_course), so the frontend just needs this to show the locked
+    # state, not to re-derive it.
     locked: bool = False
+    # Human-readable reason for the lock above (null when not locked) —
+    # e.g. "Finish \"X\" first…", "Opens on 15 Oct 2026", "Score at least
+    # 60% on \"Y\" first." Comes straight from module_locked so the
+    # frontend never has to guess which rule fired.
+    lock_reason: str | None = None
 
 
 class LearnerCourseOut(MyCourseItem):

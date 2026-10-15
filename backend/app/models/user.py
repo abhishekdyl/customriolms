@@ -46,6 +46,10 @@ class User(Base):
     job_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
     location: Mapped[str | None] = mapped_column(String(120), nullable=True)
     bio: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Free-text, not a fixed country list — just what a module's
+    # profile_field restriction (see Module.restrictions) can match
+    # against, e.g. "only learners whose country is China".
+    country: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     org: Mapped["Org"] = relationship(back_populates="users")
     team: Mapped["Team | None"] = relationship(back_populates="users")

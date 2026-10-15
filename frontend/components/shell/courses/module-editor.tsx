@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, CheckCircle2, Circle, Trash2, Plus, Upload, X, Award, Loader2, Image as ImageIcon, Library } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -10,7 +10,7 @@ import { useUploadModuleFile, useRemoveModuleFile, useUploadScormPackage } from 
 import { useQuestionBanks, useQuestionBank, useImportBankQuestions, useUploadQuestionImage } from "@/lib/hooks/use-question-banks";
 import { newQuestion, tempId } from "@/lib/quiz-utils";
 import { ApiError } from "@/lib/api-client";
-import type { Module, ModuleType, QuestionType, QuizQuestion } from "@/lib/types";
+import type { Module, ModuleRestriction, ModuleType, QuestionType, QuizQuestion } from "@/lib/types";
 
 const moduleTypeLabel: Record<ModuleType, string> = {
   watch: "Watch video", quiz: "Pass quiz", read: "Read & acknowledge", manual: "Manual sign-off", scorm: "SCORM package",
@@ -362,14 +362,157 @@ function QuizBuilder({
   );
 }
 
+const RESTRICTION_TYPE_LABEL: Record<ModuleRestriction["type"], string> = {
+  date_window: "Date window", profile_field: "Learner profile", module_score: "Prior module score",
+};
+
+// "YYYY-MM-DDTHH:MM:SS+00:00" -> "YYYY-MM-DD", for a <input type="date"> value.
+function toDateInputValue(iso: string | null): string {
+  return iso ? iso.slice(0, 10) : "";
+}
+
+function restrictionValid(r: ModuleRestriction): boolean {
+  if (r.type === "date_window") return !!(r.opens_at || r.closes_at) && (!r.opens_at || !r.closes_at || r.closes_at > r.opens_at);
+  if (r.type === "profile_field") return !!r.value.trim();
+  if (r.type === "module_score") return !!r.module_id && r.min_score >= 0 && r.min_score <= 100;
+  return true;
+}
+
+/** One card per restriction — editable in place. `otherModules` is every
+ * other module on this course, in position order, for the module_score
+ * type's "which earlier module" picker. */
+function RestrictionCard({
+  restriction: r, otherModules, onChange, onDelete,
+}: { restriction: ModuleRestriction; otherModules: Module[]; onChange: (next: ModuleRestriction) => void; onDelete: () => void }) {
+  return (
+    <div className="rounded-lg border border-line-soft bg-paper p-2.5">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[11px] font-medium text-ink-soft">{RESTRICTION_TYPE_LABEL[r.type]}</span>
+        <button onClick={onDelete}><X className="h-3 w-3 text-ink-faint" /></button>
+      </div>
+
+      {r.type === "date_window" && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <p className="mb-1 text-[10px] text-ink-faint">Opens (optional)</p>
+            <input
+              type="date" value={toDateInputValue(r.opens_at)}
+              onChange={(e) => onChange({ ...r, opens_at: e.target.value || null })}
+              className="h-7 w-full rounded-md border border-line px-1.5 text-[11px]"
+            />
+          </div>
+          <div>
+            <p className="mb-1 text-[10px] text-ink-faint">Closes (optional)</p>
+            <input
+              type="date" value={toDateInputValue(r.closes_at)}
+              onChange={(e) => onChange({ ...r, closes_at: e.target.value || null })}
+              className="h-7 w-full rounded-md border border-line px-1.5 text-[11px]"
+            />
+          </div>
+        </div>
+      )}
+
+      {r.type === "profile_field" && (
+        <div className="grid grid-cols-2 gap-2">
+          <select
+            value={r.field} onChange={(e) => onChange({ ...r, field: e.target.value as typeof r.field })}
+            className="h-7 rounded-md border border-line px-1.5 text-[11px]"
+          >
+            <option value="country">Country</option>
+            <option value="location">Location</option>
+            <option value="job_title">Job title</option>
+          </select>
+          <input
+            value={r.value} onChange={(e) => onChange({ ...r, value: e.target.value })}
+            placeholder="e.g. China" className="h-7 rounded-md border border-line px-1.5 text-[11px]"
+          />
+        </div>
+      )}
+
+      {r.type === "module_score" && (
+        <div className="grid grid-cols-2 gap-2">
+          <select
+            value={r.module_id} onChange={(e) => onChange({ ...r, module_id: e.target.value })}
+            className="h-7 rounded-md border border-line px-1.5 text-[11px]"
+          >
+            <option value="">Choose a module…</option>
+            {otherModules.map((om) => <option key={om.id} value={om.id}>{om.title}</option>)}
+          </select>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number" min={0} max={100} value={r.min_score}
+              onChange={(e) => onChange({ ...r, min_score: Number(e.target.value) || 0 })}
+              className="h-7 w-16 rounded-md border border-line px-1.5 text-[11px]"
+            />
+            <span className="text-[10px] text-ink-faint">% min</span>
+          </div>
+        </div>
+      )}
+      {!restrictionValid(r) && <p className="mt-1.5 text-[10.5px] text-amber">Finish setting this up — it won't be saved until it's valid.</p>}
+    </div>
+  );
+}
+
+/** Access restrictions section — this module's own gates, independent of
+ * (and stacking with) the course-wide "lock modules in order" setting.
+ * Mirrors the question-list pattern elsewhere in this file: edits flow up
+ * through onChange immediately, but a restriction only actually gets
+ * saved to the server once it's complete (see restrictionValid) — an
+ * admin mid-edit (e.g. just clicked "+ Prior score" and hasn't picked the
+ * module yet) never gets a save error for the incomplete entry. */
+function RestrictionsEditor({
+  restrictions, otherModules, onChange,
+}: { restrictions: ModuleRestriction[]; otherModules: Module[]; onChange: (next: ModuleRestriction[]) => void }) {
+  const update = (i: number, next: ModuleRestriction) => onChange(restrictions.map((r, ri) => (ri === i ? next : r)));
+  const remove = (i: number) => onChange(restrictions.filter((_, ri) => ri !== i));
+
+  return (
+    <div className="border-t border-line-soft pt-3">
+      <p className="mb-1.5 text-[11px] text-ink-soft">
+        Access restrictions (optional) — ALL must pass before a learner can open this module
+      </p>
+      {restrictions.length > 0 && (
+        <div className="mb-2 flex flex-col gap-2">
+          {restrictions.map((r, i) => (
+            <RestrictionCard key={i} restriction={r} otherModules={otherModules} onChange={(next) => update(i, next)} onDelete={() => remove(i)} />
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        <button
+          onClick={() => onChange([...restrictions, { type: "date_window", opens_at: null, closes_at: null }])}
+          className="rounded-md border border-dashed border-line px-2 py-1 text-[10.5px] font-medium text-primary"
+        >
+          + Date window
+        </button>
+        <button
+          onClick={() => onChange([...restrictions, { type: "profile_field", field: "country", value: "" }])}
+          className="rounded-md border border-dashed border-line px-2 py-1 text-[10.5px] font-medium text-primary"
+        >
+          + Learner profile
+        </button>
+        <button
+          disabled={otherModules.length === 0}
+          onClick={() => onChange([...restrictions, { type: "module_score", module_id: otherModules[0]?.id ?? "", min_score: 60 }])}
+          className="rounded-md border border-dashed border-line px-2 py-1 text-[10.5px] font-medium text-primary disabled:opacity-40"
+        >
+          + Prior module score
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ModuleEditorRow({
   courseId,
   module: m,
+  allModules,
   onChange,
   onDelete,
 }: {
   courseId: string;
   module: Module;
+  allModules: Module[];
   onChange: (patch: Partial<Module>) => void;
   onDelete: () => void;
 }) {
@@ -377,6 +520,24 @@ export function ModuleEditorRow({
   const { data: skills } = useSkills();
   const { data: badges } = useBadges();
   const { data: certTemplates } = useCertTemplates();
+
+  // Restrictions get their own local draft + debounce, decoupled from the
+  // parent's instant per-field patch (used by every other field here) —
+  // an in-progress restriction (e.g. "+ Learner profile" just clicked,
+  // no value typed yet) needs to stay on screen without ever being sent
+  // to the server, which the parent's generic patch doesn't support.
+  // Resynced only on module identity change, not on every re-render, so
+  // mid-edit typing survives this module's own debounced saves.
+  const [restrictionsDraft, setRestrictionsDraft] = useState<Module["restrictions"]>(m.restrictions);
+  const restrictionsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => { setRestrictionsDraft(m.restrictions); }, [m.id]);
+  const updateRestrictions = (next: Module["restrictions"]) => {
+    setRestrictionsDraft(next);
+    if (restrictionsTimer.current) clearTimeout(restrictionsTimer.current);
+    restrictionsTimer.current = setTimeout(() => {
+      onChange({ restrictions: next.filter(restrictionValid) });
+    }, 500);
+  };
 
   const hasContent =
     m.type === "manual" ? !!m.instructions : m.type === "quiz" ? m.questions.length > 0 : !!m.file_name;
@@ -493,6 +654,12 @@ export function ModuleEditorRow({
             <span className="text-xs text-ink-soft">Required for course completion</span>
             <Switch checked={m.required} onCheckedChange={(v) => onChange({ required: v })} />
           </div>
+
+          <RestrictionsEditor
+            restrictions={restrictionsDraft}
+            otherModules={allModules.filter((om) => om.id !== m.id)}
+            onChange={updateRestrictions}
+          />
 
           {(badges?.length ?? 0) > 0 && (
             <div className="border-t border-line-soft pt-3">

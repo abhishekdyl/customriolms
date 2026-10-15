@@ -117,6 +117,7 @@ async def _profile(db: AsyncSession, user: User) -> ProfileOut:
     return ProfileOut(
         name=user.name, email=user.email, team_name=team_name, role=user.role.value,
         phone=user.phone, job_title=user.job_title, location=user.location, bio=user.bio,
+        country=user.country,
     )
 
 

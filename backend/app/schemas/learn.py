@@ -158,6 +158,9 @@ class ProfileOut(BaseModel):
     job_title: str | None
     location: str | None
     bio: str | None
+    # Free text — what a module's "profile_field" restriction can match
+    # against (see schemas/course.py's ModuleRestrictionIn).
+    country: str | None = None
 
 
 class ProfileUpdate(BaseModel):
@@ -168,6 +171,7 @@ class ProfileUpdate(BaseModel):
     job_title: str | None = Field(default=None, max_length=120)
     location: str | None = Field(default=None, max_length=120)
     bio: str | None = Field(default=None, max_length=500)
+    country: str | None = Field(default=None, max_length=100)
 
 
 class LearnNotification(BaseModel):

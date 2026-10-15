@@ -15,6 +15,22 @@ export interface User {
   team_name?: string | null;
 }
 
+/** GET/PATCH /api/v1/learn/profile — the learner's own extended profile
+ * fields (name/email/role/team come from User already; these are the
+ * free-text ones, currently only surfaced so a module's "profile_field"
+ * restriction (see ModuleRestriction) has something real to match). */
+export interface LearnerProfile {
+  name: string;
+  email: string;
+  team_name: string | null;
+  role: string;
+  phone: string | null;
+  job_title: string | null;
+  location: string | null;
+  bio: string | null;
+  country: string | null;
+}
+
 export interface TokenResponse {
   access_token: string;
   refresh_token: string;
@@ -96,6 +112,14 @@ export interface QuestionInput {
   accepted_answers: string[];
 }
 
+/** One access condition on a module (Module.restrictions) — ALL of a
+ * module's restrictions must pass before a learner can see/complete it.
+ * Mirrors backend/app/schemas/course.py's ModuleRestrictionIn exactly. */
+export type ModuleRestriction =
+  | { type: "date_window"; opens_at: string | null; closes_at: string | null }
+  | { type: "profile_field"; field: "country" | "location" | "job_title"; value: string }
+  | { type: "module_score"; module_id: string; min_score: number };
+
 export interface Module {
   id: string;
   title: string;
@@ -115,6 +139,7 @@ export interface Module {
   certificate_template_id: string | null;
   certificate_name: string | null;
   questions: QuizQuestion[];
+  restrictions: ModuleRestriction[];
 }
 
 export interface CourseListItem {
@@ -181,9 +206,10 @@ export interface Course extends CourseListItem {
   certificate_name: string | null;
   certificate_org_name: string | null;
   badge_ids: string[];
-  /** When set, this one module completing finishes the whole course,
-   * instead of the default "every required module done" rule. */
-  completion_module_id: string | null;
+  /** When non-empty, the course completes the moment EVERY module in
+   * this list is done, instead of the default "every required module
+   * done" rule — can be one module or several. */
+  completion_module_ids: string[];
   /** When true, modules unlock one at a time in position order — a
    * learner can't open/complete module N+1 until module N is done. */
   sequential_unlock: boolean;
@@ -289,10 +315,13 @@ export interface LearnerModule {
   /** Best score (QUIZ) or furthest watched-% (WATCH) recorded so far —
    * null until there's a qualifying attempt. */
   score: number | null;
-  /** True only when the course has sequential_unlock on AND the module
-   * right before this one (by position) isn't done yet. file_url/
-   * questions are already stripped by the backend when this is true. */
+  /** True when sequential_unlock blocks this module OR any of its own
+   * restrictions isn't satisfied yet. file_url/questions are already
+   * stripped by the backend when this is true. */
   locked: boolean;
+  /** Human-readable reason for the lock above (null when not locked) —
+   * comes straight from the backend, so the frontend never re-derives it. */
+  lock_reason: string | null;
 }
 
 /** One assigned course, learner-safe. From GET /api/v1/courses/mine/{id}. */

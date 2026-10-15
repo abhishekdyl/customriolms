@@ -185,19 +185,48 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
         <div className="mb-3">
           <p className="mb-1 text-[10.5px] text-ink-faint">Course completes when…</p>
-          <select
-            value={course.completion_module_id ?? ""}
-            onChange={(e) => updateCourse.mutate({ completion_module_id: e.target.value || null })}
-            className="w-full rounded-md border border-line px-2 py-1.5 text-xs"
-          >
-            <option value="">All required modules are done (default)</option>
-            {modules.map((m) => (
-              <option key={m.id} value={m.id}>Just this module is passed: "{m.title}"</option>
-            ))}
-          </select>
-          <p className="mt-1 text-[11px] text-ink-faint">
-            {course.completion_module_id
-              ? "Picking one module here means the course finishes the instant that module is passed — other required modules can stay unfinished."
+          <div className="mb-1.5 flex items-center gap-2">
+            <input
+              type="radio" id="gate-default" checked={course.completion_module_ids.length === 0}
+              onChange={() => updateCourse.mutate({ completion_module_ids: [] })}
+            />
+            <label htmlFor="gate-default" className="text-xs text-ink">All required modules are done (default)</label>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="radio" id="gate-custom" checked={course.completion_module_ids.length > 0}
+              onChange={() => {
+                if (course.completion_module_ids.length === 0 && modules[0]) {
+                  updateCourse.mutate({ completion_module_ids: [modules[0].id] });
+                }
+              }}
+            />
+            <label htmlFor="gate-custom" className="text-xs text-ink">Only these specific modules are passed:</label>
+          </div>
+          {course.completion_module_ids.length > 0 && (
+            <div className="mt-1.5 ml-5 flex flex-col gap-1">
+              {modules.map((m) => {
+                const checked = course.completion_module_ids.includes(m.id);
+                return (
+                  <label key={m.id} className="flex items-center gap-2 text-xs text-ink-soft">
+                    <input
+                      type="checkbox" checked={checked}
+                      onChange={() => {
+                        const next = checked
+                          ? course.completion_module_ids.filter((x) => x !== m.id)
+                          : [...course.completion_module_ids, m.id];
+                        updateCourse.mutate({ completion_module_ids: next });
+                      }}
+                    />
+                    {m.title}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+          <p className="mt-1.5 text-[11px] text-ink-faint">
+            {course.completion_module_ids.length > 0
+              ? "Picking modules here means the course finishes the instant ALL of them are passed — any other required module can stay unfinished."
               : "Leave this on default to require every module marked \"required\" below."}
           </p>
         </div>
@@ -226,6 +255,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
               <ModuleEditorRow
                 courseId={id}
                 module={m}
+                allModules={modules}
                 onChange={(patch) => patchModule(m.id, patch)}
                 onDelete={() => { if (confirm("Remove this module?")) deleteModule.mutate(m.id); }}
               />

@@ -90,7 +90,19 @@ class Module(Base):
     certificate_template_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cert_templates.id"), nullable=True)
     certificate_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
-    course: Mapped["Course"] = relationship(back_populates="modules", foreign_keys="Module.course_id")
+    # Per-module access conditions, on top of (and independent from) the
+    # course-wide sequential_unlock ordering — see
+    # learn_service.module_locked for how they're evaluated and
+    # schemas/course.py's ModuleRestrictionIn for the shapes this holds:
+    #   {"type": "date_window", "opens_at": "<iso>"|null, "closes_at": "<iso>"|null}
+    #   {"type": "profile_field", "field": "country"|"location"|"job_title", "value": "<string>"}
+    #   {"type": "module_score", "module_id": "<uuid str>", "min_score": <0-100>}
+    # ALL entries must pass for the module to be reachable. Plain JSON,
+    # not a join table, same reasoning as skill_ids/badge_ids above —
+    # validated at the API layer, not here.
+    restrictions: Mapped[list[dict]] = mapped_column(JSONB, default=list)
+
+    course: Mapped["Course"] = relationship(back_populates="modules")
     # Same reasoning as Course.modules/category above — ModuleOut always
     # includes questions, so it must be loaded within the awaited query,
     # not lazily on synchronous attribute access.

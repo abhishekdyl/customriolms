@@ -53,18 +53,20 @@ def course_progress(course: Course, done: dict) -> tuple[int, int, int]:
     """(percent, completed_modules, total_counted_modules) — only required
     modules count (all of them if none are flagged required).
 
-    If the course has a completion_module_id set, that overrides the
+    If the course has completion_module_ids set, that overrides the
     "every required module" rule entirely: the course is 100% complete
-    the moment THAT module is done, whatever state anything else is in
-    (e.g. "passing the quiz completes the course" even with a required
-    video still unwatched). completed_modules/total still reflect the
-    normal required-module count underneath, so the progress bar/matrix
-    numbers stay meaningful even when the gate hasn't fired yet."""
+    the moment EVERY module in that list is done, whatever state anything
+    else is in (e.g. "video + quiz together complete the course" even
+    with a required, still-unwatched 3rd module). completed_modules/total
+    still reflect the normal required-module count underneath, so the
+    progress bar/matrix numbers stay meaningful even when the gate hasn't
+    fired yet."""
     counted = _counted_modules(course)
     if not counted:
         return 0, 0, 0
     n = sum(1 for m in counted if m.id in done)
-    if course.completion_module_id is not None and course.completion_module_id in done:
+    gate_ids = course.completion_module_ids or []
+    if gate_ids and all(gid in done for gid in gate_ids):
         return 100, n, len(counted)
     return round(100 * n / len(counted)), n, len(counted)
 
@@ -73,19 +75,76 @@ def ordered_modules(course: Course) -> list[Module]:
     return sorted(course.modules, key=lambda m: m.position)
 
 
-def module_locked(course: Course, module: Module, done: dict) -> bool:
-    """True if `module` isn't reachable yet under sequential_unlock — every
-    module before it in position order must be done first (the
-    "video > scorm > quiz > certificate" chain). Always False when
-    sequential_unlock is off, which is the default, so an existing
-    course's modules stay exactly as open as before this existed."""
-    if not course.sequential_unlock:
-        return False
-    ordered = ordered_modules(course)
-    idx = next((i for i, m in enumerate(ordered) if m.id == module.id), None)
-    if idx is None or idx == 0:
-        return False
-    return ordered[idx - 1].id not in done
+def _restriction_reason(course: Course, restriction: dict, done: dict, user: User) -> str | None:
+    """None if this one restriction (one entry of Module.restrictions) is
+    satisfied; otherwise the human-readable reason it isn't. Unknown
+    restriction types never block — forward-compatible with whatever gets
+    added later rather than locking everyone out of an old module."""
+    rtype = restriction.get("type")
+
+    if rtype == "date_window":
+        now = datetime.now(timezone.utc)
+        opens_at, closes_at = restriction.get("opens_at"), restriction.get("closes_at")
+        if opens_at:
+            dt = datetime.fromisoformat(opens_at) if isinstance(opens_at, str) else opens_at
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if now < dt:
+                return f"Opens on {dt.strftime('%d %b %Y')}."
+        if closes_at:
+            dt = datetime.fromisoformat(closes_at) if isinstance(closes_at, str) else closes_at
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if now > dt:
+                return f"Was only available until {dt.strftime('%d %b %Y')}."
+        return None
+
+    if rtype == "profile_field":
+        field, wanted = restriction.get("field"), (restriction.get("value") or "").strip().lower()
+        actual = (getattr(user, field, None) or "").strip().lower()
+        if actual != wanted:
+            return f'Only available to learners whose {field} is "{restriction.get("value")}".'
+        return None
+
+    if rtype == "module_score":
+        ref_id = restriction.get("module_id")
+        ref_uuid = ref_id if isinstance(ref_id, uuid.UUID) else uuid.UUID(str(ref_id))
+        min_score = restriction.get("min_score") or 0
+        mp = done.get(ref_uuid)
+        if mp is None or mp.score is None or mp.score < min_score:
+            ref = next((m for m in course.modules if m.id == ref_uuid), None)
+            ref_title = ref.title if ref else "an earlier module"
+            return f'Score at least {min_score}% on "{ref_title}" first.'
+        return None
+
+    return None
+
+
+def module_locked(course: Course, module: Module, done: dict, user: User) -> tuple[bool, str | None]:
+    """(locked, reason) — (False, None) when nothing blocks this module.
+
+    Two independent gates, checked in order, either of which can lock it:
+    1. sequential_unlock (course-wide, position order) — every module
+       before this one must be done first (the "video > scorm > quiz >
+       certificate" chain).
+    2. module.restrictions (this module's own list — date windows, a
+       learner profile field, or a minimum score on another module). ALL
+       of them must pass; the first failing one's reason is returned.
+
+    Both default to "nothing extra", so an existing module/course stays
+    exactly as open as before either of these existed."""
+    if course.sequential_unlock:
+        ordered = ordered_modules(course)
+        idx = next((i for i, m in enumerate(ordered) if m.id == module.id), None)
+        if idx is not None and idx > 0 and ordered[idx - 1].id not in done:
+            return True, f'Finish "{ordered[idx - 1].title}" first to unlock this module.'
+
+    for restriction in (module.restrictions or []):
+        reason = _restriction_reason(course, restriction, done, user)
+        if reason:
+            return True, reason
+
+    return False, None
 
 
 def status_for(pct: int) -> str:
@@ -207,14 +266,10 @@ async def _finish_course_if_done(db: AsyncSession, user: User, course: Course) -
 
 
 async def _assert_module_unlocked(db: AsyncSession, user: User, course: Course, module: Module) -> None:
-    if not course.sequential_unlock:
-        return
     done = await completed_map(db, user.id)
-    if module_locked(course, module, done):
-        ordered = ordered_modules(course)
-        idx = next(i for i, m in enumerate(ordered) if m.id == module.id)
-        prev_title = ordered[idx - 1].title
-        raise HTTPException(status_code=403, detail=f"Finish \"{prev_title}\" first to unlock this module.")
+    locked, reason = module_locked(course, module, done, user)
+    if locked:
+        raise HTTPException(status_code=403, detail=reason or "This module is locked.")
 
 
 async def complete_module(

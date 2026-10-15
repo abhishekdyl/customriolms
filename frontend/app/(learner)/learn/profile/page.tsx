@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api-client";
 import { useChangePassword, useCurrentUser, useLogoutAll, useUpdateProfile } from "@/lib/hooks/use-auth";
+import { useLearnerProfile, useUpdateLearnerProfile } from "@/lib/hooks/use-learner-profile";
 
 const ROLE_LABEL: Record<string, string> = {
   super_admin: "Super Admin",
@@ -42,18 +43,25 @@ function errorText(e: unknown, fallback: string) {
 
 function DetailsCard() {
   const { data: user } = useCurrentUser();
+  const { data: profile } = useLearnerProfile();
   const update = useUpdateProfile();
+  const updateProfile = useUpdateLearnerProfile();
   const [name, setName] = useState("");
+  const [country, setCountry] = useState("");
   const [saved, setSaved] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  // Seed the field once the profile has loaded.
+  // Seed the fields once the profile has loaded.
   useEffect(() => {
     if (user) setName(user.name);
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (profile) setCountry(profile.country ?? "");
+  }, [profile?.country]);
 
   const clean = name.trim().replace(/\s+/g, " ");
-  const dirty = !!user && clean !== user.name;
+  const cleanCountry = country.trim();
+  const dirty = (!!user && clean !== user.name) || (!!profile && cleanCountry !== (profile.country ?? ""));
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,7 +71,13 @@ function DetailsCard() {
       return;
     }
     setLocalError(null);
-    update.mutate({ name: clean }, { onSuccess: (me) => { setName(me.name); setSaved(true); } });
+    if (user && clean !== user.name) {
+      update.mutate({ name: clean }, { onSuccess: (me) => setName(me.name) });
+    }
+    if (profile && cleanCountry !== (profile.country ?? "")) {
+      updateProfile.mutate({ country: cleanCountry || null }, { onSuccess: (p) => setCountry(p.country ?? "") });
+    }
+    setSaved(true);
   };
 
   return (
@@ -97,13 +111,26 @@ function DetailsCard() {
           </div>
         </div>
 
+        <div>
+          <Label htmlFor="country">Country</Label>
+          <Input
+            id="country"
+            value={country}
+            maxLength={100}
+            placeholder="e.g. China"
+            onChange={(e) => { setCountry(e.target.value); setSaved(false); setLocalError(null); }}
+            className="mt-1.5"
+          />
+          <p className="mt-1 text-[11.5px] text-ink-faint">Some course modules are only available to learners from a specific country.</p>
+        </div>
+
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={!dirty || update.isPending}>
-            {update.isPending ? "Saving…" : "Save changes"}
+          <Button type="submit" disabled={!dirty || update.isPending || updateProfile.isPending}>
+            {update.isPending || updateProfile.isPending ? "Saving…" : "Save changes"}
           </Button>
           {saved && !dirty && <Message kind="ok">Saved</Message>}
-          {(localError || update.isError) && (
-            <Message kind="error">{localError ?? errorText(update.error, "Couldn’t save. Please try again.")}</Message>
+          {(localError || update.isError || updateProfile.isError) && (
+            <Message kind="error">{localError ?? errorText(update.error ?? updateProfile.error, "Couldn’t save. Please try again.")}</Message>
           )}
         </div>
       </form>

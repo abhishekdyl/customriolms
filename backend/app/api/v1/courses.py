@@ -115,12 +115,15 @@ async def get_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), c
 async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     data = body.model_dump(exclude_unset=True)
-    if "completion_module_id" in data and data["completion_module_id"] is not None:
-        # The courses->modules FK only guarantees the id exists SOMEWHERE,
-        # not that it's a module on THIS course — check that explicitly,
-        # the same way module/badge/skill ids get validated elsewhere.
-        if not any(m.id == data["completion_module_id"] for m in course.modules):
-            raise HTTPException(status_code=400, detail="That module isn't on this course")
+    if "completion_module_ids" in data:
+        ids = data["completion_module_ids"] or []
+        # completion_module_ids isn't a real FK array (see Course model's
+        # note) — check every id belongs to THIS course explicitly, the
+        # same way module/badge/skill ids get validated elsewhere.
+        valid_ids = {m.id for m in course.modules}
+        if any(i not in valid_ids for i in ids):
+            raise HTTPException(status_code=400, detail="One or more of those modules aren't on this course")
+        data["completion_module_ids"] = ids
     for key, value in data.items():
         setattr(course, key, value)
     await db.commit()
@@ -190,8 +193,13 @@ async def create_module(course_id: uuid.UUID, body: ModuleCreate, db: AsyncSessi
 
 @router.patch("/{course_id}/modules/{module_id}", response_model=ModuleOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
 async def patch_module(course_id: uuid.UUID, module_id: uuid.UUID, body: ModuleUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    await get_course_or_404(db, course_id, current_user.org_id)  # ownership check
+    course = await get_course_or_404(db, course_id, current_user.org_id)  # also doubles as the ownership check
     module = await _get_module_or_404(db, module_id, course_id)
+    if body.restrictions is not None:
+        other_ids = {m.id for m in course.modules if m.id != module_id}
+        for r in body.restrictions:
+            if r.type == "module_score" and r.module_id not in other_ids:
+                raise HTTPException(status_code=400, detail="That module_score restriction references a module that isn't on this course")
     return await update_module(db, module, body, current_user.org_id)
 
 
@@ -268,13 +276,14 @@ async def get_scorm_content(
         result = await db.execute(select(Course.id).where(Course.id == course_id, or_(*_assigned_to(current_user))))
         if result.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="Course not found")
-        # Same sequential_unlock gate as get_my_course's stripped file_url
-        # — a learner who already has (or guesses) the content URL from a
-        # prior unlocked state can't keep hitting it after a course gets
-        # locked out from under them, or by typing the path directly.
+        # Same lock gate as get_my_course's stripped file_url — a learner
+        # who already has (or guesses) the content URL from a prior
+        # unlocked state can't keep hitting it after a course gets locked
+        # out from under them, or by typing the path directly.
         done = await progress_svc.completed_map(db, current_user.id)
-        if progress_svc.module_locked(course, module, done):
-            raise HTTPException(status_code=403, detail="This module is locked until an earlier one is completed.")
+        locked, reason = progress_svc.module_locked(course, module, done, current_user)
+        if locked:
+            raise HTTPException(status_code=403, detail=reason or "This module is locked.")
 
     data = storage_service.get_bytes(module.file_key + file_path)
     if data is None:
