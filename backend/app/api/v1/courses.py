@@ -229,7 +229,7 @@ async def upload_module_file(
     module = await _get_module_or_404(db, module_id, course_id)
     if module.type.value not in ("watch", "read"):
         raise HTTPException(status_code=400, detail="This module type doesn't accept a file upload")
-    return await upload_module_content(db, module, file)
+    return await upload_module_content(db, module, file, current_user.org_id, current_user)
 
 
 @router.delete("/{course_id}/modules/{module_id}/file", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
@@ -247,12 +247,12 @@ async def upload_scorm(
     db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
     """Unpacks a SCORM 1.2/2004 .zip and points the module at its launch
-    file — see scorm_service.unpack_and_upload for the manifest parsing."""
+    file — see scorm_service.parse_zip for the manifest parsing."""
     await get_course_or_404(db, course_id, current_user.org_id)
     module = await _get_module_or_404(db, module_id, course_id)
     if module.type != ModuleType.SCORM:
         raise HTTPException(status_code=400, detail="This module isn't a SCORM module")
-    return await upload_scorm_package(db, module, file)
+    return await upload_scorm_package(db, module, file, current_user.org_id, current_user)
 
 
 @router.get("/{course_id}/modules/{module_id}/scorm-content/{file_path:path}")
@@ -285,7 +285,14 @@ async def get_scorm_content(
         if locked:
             raise HTTPException(status_code=403, detail=reason or "This module is locked.")
 
-    data = storage_service.get_bytes(module.file_key + file_path)
+    # Each file inside the package is its own `files` row, keyed by its
+    # relative path within the zip (see course_service.upload_scorm_package)
+    # — module.file_key is just a "content exists" marker now, not a
+    # concatenable object-storage prefix.
+    record = await storage_service.find_file(db, component="mod_scorm", filearea="package", itemid=module.id, filepath=file_path)
+    if record is None:
+        raise HTTPException(status_code=404, detail="File not found in this package")
+    data = storage_service.get_bytes(storage_service.file_key(record))
     if data is None:
         raise HTTPException(status_code=404, detail="File not found in this package")
     content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"

@@ -1,17 +1,19 @@
 """
-Unpacks an uploaded SCORM 1.2 / 2004 package (a .zip) into object storage
-and figures out the two things the player actually needs: which version
-of the SCORM JS API to expose, and which unpacked file to launch.
+Parses an uploaded SCORM 1.2 / 2004 package (a .zip) and figures out the
+two things the player actually needs: which version of the SCORM JS API
+to expose, and which unpacked file to launch — plus every individual
+file's bytes, for the caller to store (course_service.upload_scorm_package
+puts each one through the `files` dedup ledger; this module knows nothing
+about storage at all, only about reading the zip).
 
 A SCORM zip isn't one opaque asset — imsmanifest.xml's <resource href=...>
 is almost always relative ("index.html", "scormdriver/indexAPI.html",
 sometimes with "?query=params" SCORM content tools like to append), and
 that file in turn pulls in sibling JS/CSS/images by relative path too. So
-every file in the zip gets uploaded individually, under one shared
-prefix, preserving the zip's internal folder structure — the content-
-serving endpoint then just mirrors that structure back out.
+every file in the zip is returned individually, with its path preserved —
+the content-serving endpoint then just looks each one up by that same
+relative path.
 """
-import uuid
 import zipfile
 from dataclasses import dataclass
 from io import BytesIO
@@ -25,8 +27,8 @@ MAX_MANIFEST_SEARCH_DEPTH = 3  # imsmanifest.xml is almost always at the zip roo
 
 
 @dataclass
-class ScormPackage:
-    prefix: str
+class ScormManifest:
+    files: list[tuple[str, bytes]]  # (relative path inside the zip, raw bytes)
     launch_path: str
     version: str  # "1.2" | "2004"
 
@@ -84,7 +86,7 @@ def parse_manifest(manifest_xml: bytes) -> tuple[str, str]:
     return href, version
 
 
-def unpack_and_upload(module_id: uuid.UUID, file: UploadFile, size: int) -> ScormPackage:
+def parse_zip(file: UploadFile, size: int) -> ScormManifest:
     if size > storage_service.MAX_SCORM_ZIP_BYTES:
         raise HTTPException(status_code=400, detail=f"SCORM package too large — max {storage_service.MAX_SCORM_ZIP_BYTES // (1024 * 1024)} MB")
 
@@ -107,10 +109,10 @@ def unpack_and_upload(module_id: uuid.UUID, file: UploadFile, size: int) -> Scor
     manifest_dir = manifest_name.rsplit("/", 1)[0] + "/" if "/" in manifest_name else ""
     launch_path = manifest_dir + launch_href
 
-    prefix = f"modules/{module_id}/scorm/{uuid.uuid4().hex}/"
+    files = []
     for name in names:
         if ".." in name.split("/"):  # zip-slip guard
             continue
-        storage_service.upload_bytes(prefix + name, zf.read(name))
+        files.append((name, zf.read(name)))
 
-    return ScormPackage(prefix=prefix, launch_path=launch_path, version=version)
+    return ScormManifest(files=files, launch_path=launch_path, version=version)

@@ -16,11 +16,12 @@ async def get_file(key: str):
     with R2 configured, presigned_get_url() hands back a real R2 URL
     instead and nothing points here.
 
-    Not auth-gated: a key is an unguessable random-UUID path (see
-    build_key/build_image_key/scorm_service), the same trust model as a
-    short-lived S3 presigned URL — anyone with the link can view it —
-    just without an expiry. That's an acceptable floor for the
-    zero-setup local fallback; configure R2 for real expiring links.
+    Not auth-gated: a key is a content-addressed filedir/xx/yy/<sha256>
+    path (see storage_service._content_key) — unguessable in practice,
+    the same trust model as a short-lived S3 presigned URL (anyone with
+    the link can view it, just without an expiry). That's an acceptable
+    floor for the zero-setup local fallback; configure R2 for real
+    expiring links.
     """
     data = storage_service.get_bytes(key)
     if data is None:

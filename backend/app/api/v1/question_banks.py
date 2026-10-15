@@ -107,6 +107,15 @@ async def upload_question_image(
     size = file.file.tell()
     file.file.seek(0)
     storage_service.validate_image_upload(file, size)
-    key = storage_service.build_image_key(current_user.org_id, file.filename or "image")
-    storage_service.upload_fileobj(key, file)
+    # No owning question exists yet at upload time (the image is attached
+    # to a question/option afterward, client-side) — each upload is its
+    # own independent slot, never replaced in place, so filepath is a
+    # fresh id rather than a fixed "/" the way a module's one content
+    # slot uses. Content is still deduped: the identical image used on
+    # two different questions/options is written to storage once.
+    record = await storage_service.store_file(
+        db, file, org_id=current_user.org_id, component="question", filearea="image",
+        itemid=None, filepath=uuid.uuid4().hex, user=current_user,
+    )
+    key = storage_service.file_key(record)
     return ImageUploadOut(image_key=key, image_url=storage_service.presigned_get_url(key))

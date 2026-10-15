@@ -237,34 +237,37 @@ async def _get_module_with_questions(db: AsyncSession, module_id: uuid.UUID) -> 
     return module
 
 
-async def upload_module_content(db: AsyncSession, module: Module, file) -> Module:
-    """Uploads a WATCH (video) or READ (PDF/DOC/PPT) module's real file to
-    object storage and points the module at it. Replaces whatever file the
-    module already had — the old object is best-effort deleted so storage
-    doesn't quietly accumulate orphans every time someone re-uploads."""
+_MODULE_COMPONENT = {ModuleType.WATCH: "mod_watch", ModuleType.READ: "mod_read"}
+
+
+async def upload_module_content(db: AsyncSession, module: Module, file, org_id: uuid.UUID, user: User) -> Module:
+    """Uploads a WATCH (video) or READ (PDF/DOC/PPT) module's real file
+    through the `files` dedup ledger (storage_service.store_file) and
+    points the module at it. Replacing the file re-uses this module's one
+    content slot (component/filearea/itemid, not filename — see
+    storage_service._pathnamehash), so a re-upload updates the same
+    `files` row and the old content is garbage-collected if nothing else
+    references it, rather than silently piling up in riolmsdata."""
     file.file.seek(0, 2)
     size = file.file.tell()
     file.file.seek(0)
     storage_service.validate_upload(file, module.type.value, size)
 
-    old_key = module.file_key
-    key = storage_service.build_key(module.id, file.filename or "file")
-    storage_service.upload_fileobj(key, file)
-
-    module.file_key = key
+    record = await storage_service.store_file(
+        db, file, org_id=org_id, component=_MODULE_COMPONENT[module.type], filearea="content",
+        itemid=module.id, user=user,
+    )
+    module.file_key = storage_service.file_key(record)
     module.file_name = file.filename
     module.file_size_label = storage_service.size_label(size)
     await db.commit()
-
-    if old_key and old_key != key:
-        storage_service.delete_object(old_key)
 
     return await _get_module_with_questions(db, module.id)
 
 
 async def remove_module_content(db: AsyncSession, module: Module) -> None:
-    old_key = module.file_key
     is_scorm = module.type == ModuleType.SCORM
+    had_content = bool(module.file_key)
     module.file_key = None
     module.file_name = None
     module.file_size_label = None
@@ -272,35 +275,53 @@ async def remove_module_content(db: AsyncSession, module: Module) -> None:
     module.scorm_launch_path = None
     module.scorm_version = None
     await db.commit()
-    if old_key:
-        # For SCORM, file_key holds the package's folder *prefix*, not a
-        # single object, so every file under it needs clearing — not just
-        # the one key a plain video/doc upload would have.
-        storage_service.delete_prefix(old_key) if is_scorm else storage_service.delete_object(old_key)
+    if had_content:
+        # SCORM is a whole package's worth of `files` rows sharing this
+        # module's itemid (one per unpacked file, see upload_scorm_package);
+        # a plain watch/read module has exactly one. Either way
+        # delete_file_ref only physically removes a blob once no other
+        # row anywhere still references its content.
+        component = "mod_scorm" if is_scorm else _MODULE_COMPONENT[module.type]
+        await storage_service.delete_file_ref(db, component=component, filearea="content" if not is_scorm else "package", itemid=module.id)
 
 
-async def upload_scorm_package(db: AsyncSession, module: Module, file) -> Module:
-    """Unpacks a SCORM .zip into object storage and points the module at
-    its launch file. Replaces any package the module already had — the
-    old one's files are best-effort deleted so re-uploads don't pile up."""
+async def upload_scorm_package(db: AsyncSession, module: Module, file, org_id: uuid.UUID, user: User) -> Module:
+    """Unpacks a SCORM .zip and stores each unpacked file through the
+    `files` dedup ledger — one row per file inside the package, all
+    sharing this module's itemid, differentiated by filepath (its
+    relative path inside the zip). Replaces any package the module
+    already had: a re-upload's files overwrite the same slots where the
+    relative paths match, and whatever's no longer present (file
+    removed/renamed in the new package) is cleaned up explicitly below,
+    not left as an orphaned row from the old package."""
     file.file.seek(0, 2)
     size = file.file.tell()
     file.file.seek(0)
     if not (file.filename or "").lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="SCORM packages must be uploaded as a .zip")
 
-    old_prefix = module.file_key
-    package = scorm_service.unpack_and_upload(module.id, file, size)
+    old_paths = await storage_service.list_slot_paths(db, component="mod_scorm", filearea="package", itemid=module.id)
+    manifest = scorm_service.parse_zip(file, size)
 
-    module.file_key = package.prefix
-    module.scorm_launch_path = package.launch_path
-    module.scorm_version = package.version
+    for entry_path, data in manifest.files:
+        await storage_service.store_bytes(
+            db, data, org_id=org_id, component="mod_scorm", filearea="package", itemid=module.id,
+            filename=entry_path, filepath=entry_path, user=user,
+        )
+
+    # Any path the OLD package had that the NEW one doesn't gets dropped —
+    # otherwise a renamed/removed asset from a prior upload would linger
+    # in the ledger (and its blob, if nothing else references it) forever.
+    new_paths = {p for p, _ in manifest.files}
+    for stale_path in old_paths - new_paths:
+        await storage_service.delete_file_ref_at(db, component="mod_scorm", filearea="package", itemid=module.id, filepath=stale_path)
+
+    module.file_key = f"scorm/{module.id}"
+    module.scorm_launch_path = manifest.launch_path
+    module.scorm_version = manifest.version
     module.file_name = file.filename
     module.file_size_label = storage_service.size_label(size)
     await db.commit()
-
-    if old_prefix and old_prefix != package.prefix:
-        storage_service.delete_prefix(old_prefix)
 
     return await _get_module_with_questions(db, module.id)
 

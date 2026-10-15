@@ -19,9 +19,22 @@ it's rebuilt fresh every time the module is serialized (see ModuleOut's
 model_validator in schemas/course.py): a short-lived presigned GET URL
 on R2, or the local file-serving URL on disk storage. What *is*
 permanent is the object key, stored on Module.file_key.
+
+Every upload also lands in the `files` table (app/models/file.py) — a
+Moodle-style content-addressed registry. store_file()/store_bytes()
+below hash the upload (sha256) and write the physical blob under a
+deterministic filedir/xx/yy/<hash> key; if that exact content is
+already on disk/R2 (an identical video re-uploaded, a shared image used
+on two questions, ...) the write is skipped entirely — the `files` row
+still gets created/updated, but riolmsdata never grows a duplicate
+copy. delete_file_ref() is the matching cleanup: it only removes the
+physical blob once no other `files` row references that same
+contenthash, so dropping one use of a shared file never breaks another.
 """
+import hashlib
 import mimetypes
 import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,8 +44,11 @@ import boto3
 from botocore.client import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import HTTPException, UploadFile
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.file import FileRecord
 
 # type -> (allowed content-types/extensions, max size in bytes)
 _VIDEO_TYPES = {"video/mp4", "video/webm", "video/quicktime", "video/x-matroska"}
@@ -107,15 +123,10 @@ def _local_root() -> Path:
 
 
 def _local_path(key: str) -> Path:
-    # Keys are always forward-slash object paths (built by build_key /
-    # build_image_key / scorm_service, never from raw user input), so this
-    # never escapes _local_root() via ".." the way a user-supplied path could.
+    # Keys are always forward-slash object paths (content-addressed —
+    # see _content_key — never from raw user input), so this never
+    # escapes _local_root() via ".." the way a user-supplied path could.
     return _local_root() / key
-
-
-def build_key(module_id: uuid.UUID, filename: str) -> str:
-    safe_name = filename.replace("/", "_").replace("\\", "_")
-    return f"modules/{module_id}/{uuid.uuid4().hex}_{safe_name}"
 
 
 def validate_upload(file: UploadFile, module_type: str, size: int) -> UploadLimits:
@@ -140,33 +151,11 @@ def validate_image_upload(file: UploadFile, size: int) -> None:
         raise HTTPException(status_code=400, detail=f"Image is too large — max {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
 
 
-def build_image_key(org_id: uuid.UUID, filename: str) -> str:
-    safe_name = (filename or "image").replace("/", "_").replace("\\", "_")
-    return f"question-images/{org_id}/{uuid.uuid4().hex}_{safe_name}"
-
-
 def size_label(num_bytes: int) -> str:
     mb = num_bytes / 1_000_000
     if mb >= 1:
         return f"{mb:.1f} MB"
     return f"{num_bytes / 1_000:.0f} KB"
-
-
-def upload_fileobj(key: str, file: UploadFile) -> None:
-    if not _using_s3():
-        path = _local_path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("wb") as out:
-            shutil.copyfileobj(file.file, out)
-        return
-    client = _client()
-    try:
-        client.upload_fileobj(
-            file.file, settings.R2_BUCKET_NAME, key,
-            ExtraArgs={"ContentType": file.content_type} if file.content_type else {},
-        )
-    except (BotoCoreError, ClientError) as exc:
-        raise HTTPException(status_code=502, detail=f"Upload to object storage failed: {exc}") from exc
 
 
 def delete_object(key: str) -> None:
@@ -178,22 +167,6 @@ def delete_object(key: str) -> None:
         _client().delete_object(Bucket=settings.R2_BUCKET_NAME, Key=key)
     except (BotoCoreError, ClientError, HTTPException):
         pass
-
-
-def upload_bytes(key: str, data: bytes, content_type: str | None = None) -> None:
-    if not _using_s3():
-        path = _local_path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        return
-    client = _client()
-    try:
-        client.put_object(
-            Bucket=settings.R2_BUCKET_NAME, Key=key, Body=data,
-            **({"ContentType": content_type} if content_type else {}),
-        )
-    except (BotoCoreError, ClientError) as exc:
-        raise HTTPException(status_code=502, detail=f"Upload to object storage failed: {exc}") from exc
 
 
 def get_bytes(key: str) -> bytes | None:
@@ -208,24 +181,6 @@ def get_bytes(key: str) -> bytes | None:
         return obj["Body"].read()
     except (BotoCoreError, ClientError):
         return None
-
-
-def delete_prefix(prefix: str) -> None:
-    """Best-effort delete of every object under a SCORM package's folder —
-    used when a module's package is replaced or removed, so storage
-    doesn't quietly accumulate a full orphaned copy on every re-upload."""
-    if not _using_s3():
-        shutil.rmtree(_local_path(prefix), ignore_errors=True)
-        return
-    try:
-        client = _client()
-        paginator = client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=settings.R2_BUCKET_NAME, Prefix=prefix):
-            keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
-            if keys:
-                client.delete_objects(Bucket=settings.R2_BUCKET_NAME, Delete={"Objects": keys})
-    except (BotoCoreError, ClientError, HTTPException):
-        pass
 
 
 def presigned_get_url(key: str, expires_in: int = 3600) -> str | None:
@@ -274,3 +229,242 @@ def ensure_bucket() -> None:
             region_name="us-east-1", config=BotoConfig(s3={"addressing_style": "path"}),
         )
         test_client.create_bucket(Bucket=settings.R2_BUCKET_NAME)
+
+
+# ---------- content-addressed storage + the `files` dedup ledger ----------
+def _content_key(contenthash: str) -> str:
+    # filedir/xx/yy/<hash> — the exact layout Moodle's own dataroot uses,
+    # fanned out two levels so one folder never ends up with millions of
+    # entries. Deterministic: the same bytes always land at the same key,
+    # which IS the dedup mechanism at the storage layer — a second upload
+    # of identical content resolves to a key that's already there.
+    return f"filedir/{contenthash[:2]}/{contenthash[2:4]}/{contenthash}"
+
+
+def _object_exists(key: str) -> bool:
+    if not _using_s3():
+        return _local_path(key).exists()
+    try:
+        _client().head_object(Bucket=settings.R2_BUCKET_NAME, Key=key)
+        return True
+    except (BotoCoreError, ClientError):
+        return False
+
+
+def _put_path_at_key(key: str, local_path: Path, content_type: str | None) -> None:
+    """Writes local_path's bytes to `key`, but only if nothing's there
+    yet — the caller already looked up whether this exact content hash
+    exists; this just does the actual (possibly skipped) write."""
+    if _object_exists(key):
+        return
+    if not _using_s3():
+        dest = _local_path(key)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(local_path, dest)
+        return
+    client = _client()
+    try:
+        client.upload_file(
+            str(local_path), settings.R2_BUCKET_NAME, key,
+            ExtraArgs={"ContentType": content_type} if content_type else {},
+        )
+    except (BotoCoreError, ClientError) as exc:
+        raise HTTPException(status_code=502, detail=f"Upload to object storage failed: {exc}") from exc
+
+
+def _hash_and_store_fileobj(file: UploadFile) -> tuple[str, int, str | None]:
+    """Streams an UploadFile to a temp file while hashing it (so a 500MB
+    video is never fully buffered in memory), writes it to its
+    content-addressed key (skipped if that content's already stored),
+    and returns (contenthash, size, content_type)."""
+    file.file.seek(0)
+    hasher = hashlib.sha256()
+    size = 0
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+            size += len(chunk)
+            tmp.write(chunk)
+    try:
+        contenthash = hasher.hexdigest()
+        _put_path_at_key(_content_key(contenthash), tmp_path, file.content_type)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    file.file.seek(0)
+    return contenthash, size, file.content_type
+
+
+def _hash_and_store_bytes(data: bytes, content_type: str | None) -> tuple[str, int]:
+    """Same as _hash_and_store_fileobj but for in-memory bytes — used by
+    scorm_service, which already has each unpacked file's bytes in hand
+    from the opened zip."""
+    contenthash = hashlib.sha256(data).hexdigest()
+    key = _content_key(contenthash)
+    if not _object_exists(key):
+        if not _using_s3():
+            path = _local_path(key)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        else:
+            client = _client()
+            try:
+                client.put_object(
+                    Bucket=settings.R2_BUCKET_NAME, Key=key, Body=data,
+                    **({"ContentType": content_type} if content_type else {}),
+                )
+            except (BotoCoreError, ClientError) as exc:
+                raise HTTPException(status_code=502, detail=f"Upload to object storage failed: {exc}") from exc
+    return contenthash, len(data)
+
+
+async def _gc_if_orphaned(db: AsyncSession, contenthash: str) -> None:
+    """Deletes the physical blob for `contenthash` only if no `files` row
+    references it anymore — called after a row is removed/replaced, so a
+    file still shared by another module/question/avatar is never pulled
+    out from under it just because one of its uses went away."""
+    remaining = (await db.execute(select(func.count()).where(FileRecord.contenthash == contenthash))).scalar_one()
+    if remaining == 0:
+        delete_object(_content_key(contenthash))
+
+
+def _pathnamehash(component: str, filearea: str, itemid: uuid.UUID | None, filepath: str) -> str:
+    # Deliberately NOT filename — filename is free to change when a slot's
+    # content is replaced (e.g. re-uploading a module's video under a
+    # different filename must still update the SAME row, not orphan the
+    # old one). filepath is what actually discriminates slots: "/" for a
+    # single-file slot (a module's own content, an avatar), a fresh
+    # uuid4 per call for an independent upload with no replace semantics
+    # (a question image), or the file's own relative path for one entry
+    # inside a multi-file slot (a SCORM package, see scorm_service).
+    raw = f"{component}/{filearea}/{itemid or ''}/{filepath}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+async def _upsert_file_row(
+    db: AsyncSession, *, org_id: uuid.UUID, component: str, filearea: str, itemid: uuid.UUID | None,
+    filepath: str, filename: str, contenthash: str, size: int, mimetype: str | None,
+    user_id: uuid.UUID | None, user_name: str | None,
+) -> FileRecord:
+    pathnamehash = _pathnamehash(component, filearea, itemid, filepath)
+    existing = (await db.execute(select(FileRecord).where(FileRecord.pathnamehash == pathnamehash))).scalar_one_or_none()
+    old_contenthash = existing.contenthash if existing else None
+
+    row = existing or FileRecord(
+        org_id=org_id, pathnamehash=pathnamehash, component=component, filearea=filearea,
+        itemid=itemid, filepath=filepath,
+    )
+    row.filename = filename
+    row.contenthash = contenthash
+    row.filesize = size
+    row.mimetype = mimetype
+    row.userid = user_id
+    row.author = user_name
+    if existing is None:
+        db.add(row)
+    await db.flush()
+
+    if old_contenthash and old_contenthash != contenthash:
+        await _gc_if_orphaned(db, old_contenthash)
+
+    return row
+
+
+async def store_file(
+    db: AsyncSession, file: UploadFile, *, org_id: uuid.UUID, component: str, filearea: str,
+    itemid: uuid.UUID | None, user=None, filepath: str = "/", filename: str | None = None,
+) -> FileRecord:
+    """The main entry point for an UploadFile-backed upload (a module's
+    video/doc, a question image, an avatar, ...). Hashes + content-
+    addresses the bytes (real dedup — identical content is written to
+    storage once no matter how many times it's uploaded) and upserts the
+    `files` row for this exact (component, filearea, itemid, filepath,
+    filename) slot. The caller still stores the plain object key
+    (FileRecord's own `key` property) in its own file_key/image_key
+    column, same as before this table existed — this just adds the
+    ledger and the dedup underneath."""
+    name = filename or file.filename or "file"
+    contenthash, size, content_type = _hash_and_store_fileobj(file)
+    return await _upsert_file_row(
+        db, org_id=org_id, component=component, filearea=filearea, itemid=itemid,
+        filepath=filepath, filename=name, contenthash=contenthash, size=size, mimetype=content_type,
+        user_id=getattr(user, "id", None), user_name=getattr(user, "name", None),
+    )
+
+
+async def store_bytes(
+    db: AsyncSession, data: bytes, *, org_id: uuid.UUID, component: str, filearea: str,
+    itemid: uuid.UUID | None, filename: str, filepath: str = "/", content_type: str | None = None, user=None,
+) -> FileRecord:
+    """Same as store_file but for in-memory bytes — scorm_service's per-
+    entry unpack loop is the caller, since it already has each file's
+    bytes from the opened zip rather than an UploadFile per entry."""
+    contenthash, size = _hash_and_store_bytes(data, content_type)
+    return await _upsert_file_row(
+        db, org_id=org_id, component=component, filearea=filearea, itemid=itemid,
+        filepath=filepath, filename=filename, contenthash=contenthash, size=size, mimetype=content_type,
+        user_id=getattr(user, "id", None), user_name=getattr(user, "name", None),
+    )
+
+
+async def find_file(db: AsyncSession, *, component: str, filearea: str, itemid: uuid.UUID | None, filepath: str) -> FileRecord | None:
+    """Looks up one slot's current row directly — used where there's no
+    other column to hold the key (a SCORM package's hundreds of files
+    aren't each getting their own Module column; the `files` table IS
+    the index for "which content is at this relative path")."""
+    pathnamehash = _pathnamehash(component, filearea, itemid, filepath)
+    return (await db.execute(select(FileRecord).where(FileRecord.pathnamehash == pathnamehash))).scalar_one_or_none()
+
+
+def file_key(record: FileRecord) -> str:
+    """The plain object-storage key for a `files` row's content — what
+    callers store in their own file_key/image_key column and pass to
+    presigned_get_url/get_bytes exactly as they did before this table
+    existed."""
+    return _content_key(record.contenthash)
+
+
+async def list_slot_paths(db: AsyncSession, *, component: str, filearea: str, itemid: uuid.UUID | None) -> set[str]:
+    """Every filepath currently recorded for this (component, filearea,
+    itemid) — used by a multi-file owner (SCORM's unpack loop) to work
+    out which of the PREVIOUS package's files the new upload no longer
+    has, so those specific rows/blobs get cleaned up rather than left
+    behind as orphans from the old package."""
+    rows = (await db.execute(
+        select(FileRecord.filepath).where(FileRecord.component == component, FileRecord.filearea == filearea, FileRecord.itemid == itemid)
+    )).scalars().all()
+    return set(rows)
+
+
+async def delete_file_ref_at(db: AsyncSession, *, component: str, filearea: str, itemid: uuid.UUID | None, filepath: str) -> None:
+    """Removes the one row at this exact slot (not every row for the
+    itemid — see delete_file_ref for that) and GCs its blob if orphaned."""
+    pathnamehash = _pathnamehash(component, filearea, itemid, filepath)
+    row = (await db.execute(select(FileRecord).where(FileRecord.pathnamehash == pathnamehash))).scalar_one_or_none()
+    if row is None:
+        return
+    h = row.contenthash
+    await db.delete(row)
+    await db.flush()
+    await _gc_if_orphaned(db, h)
+
+
+async def delete_file_ref(db: AsyncSession, *, component: str, filearea: str, itemid: uuid.UUID | None) -> None:
+    """Removes every `files` row for this (component, filearea, itemid) —
+    e.g. a module's content being replaced/removed — and garbage-collects
+    each row's physical blob, but only where no other row anywhere still
+    references that same contenthash (the whole point of dedup: deleting
+    one use must never break a different module/question/avatar that
+    happens to share the identical bytes)."""
+    rows = (await db.execute(
+        select(FileRecord).where(FileRecord.component == component, FileRecord.filearea == filearea, FileRecord.itemid == itemid)
+    )).scalars().all()
+    hashes = {r.contenthash for r in rows}
+    for row in rows:
+        await db.delete(row)
+    await db.flush()
+    for h in hashes:
+        await _gc_if_orphaned(db, h)
