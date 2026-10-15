@@ -1,19 +1,31 @@
 """
-Object storage for module content (video/PDF/DOC uploads and, later,
-SCORM packages) — Cloudflare R2, which speaks the plain S3 API, so this
-is just a thin boto3 wrapper. Nothing here is R2-specific: pointed at
-R2_ENDPOINT_URL it talks to R2, pointed at a local MinIO/moto endpoint
-in tests it talks to that instead, same code path either way.
+Object storage for module content (video/PDF/DOC uploads, quiz/option
+images, and SCORM packages) — two interchangeable backends behind one
+set of module-level functions, so nothing outside this file ever
+branches on which is active:
 
-R2 buckets are private by default and have no public URL, so a module's
-"file_url" is never a stored, permanent link — it's a short-lived
-presigned GET URL generated fresh every time the module is serialized
-(see ModuleOut's model_validator in schemas/course.py). What *is*
+- Local disk (the fallback, used whenever R2_ENDPOINT_URL is empty):
+  files land under STORAGE_ROOT (default <repo root>/riolmsdata, a
+  sibling of backend/ and frontend/) and are served back out through
+  GET /api/v1/files/{key} (app/api/v1/files.py). Zero setup — this is
+  what a fresh clone gets with no .env object-storage config at all.
+- Cloudflare R2 / any S3-compatible endpoint, used once an admin sets
+  R2_ENDPOINT_URL (+ the access keys). Still a thin boto3 wrapper same
+  as before; pointed at a local MinIO/moto endpoint in tests it talks
+  to that instead, same code path either way.
+
+A module's "file_url" is never a stored, permanent link either way —
+it's rebuilt fresh every time the module is serialized (see ModuleOut's
+model_validator in schemas/course.py): a short-lived presigned GET URL
+on R2, or the local file-serving URL on disk storage. What *is*
 permanent is the object key, stored on Module.file_key.
 """
 import mimetypes
+import shutil
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import quote
 
 import boto3
 from botocore.client import Config as BotoConfig
@@ -59,12 +71,11 @@ def limits_for_module_type(module_type: str) -> UploadLimits:
     raise HTTPException(status_code=400, detail="This module type doesn't accept a file upload")
 
 
+def _using_s3() -> bool:
+    return bool(settings.R2_ENDPOINT_URL)
+
+
 def _client():
-    if not settings.R2_ENDPOINT_URL:
-        raise HTTPException(
-            status_code=500,
-            detail="Object storage isn't configured (R2_ENDPOINT_URL is empty) — set the R2_* env vars.",
-        )
     return boto3.client(
         "s3",
         endpoint_url=settings.R2_ENDPOINT_URL,
@@ -76,6 +87,30 @@ def _client():
         # AWS-specific convention their DNS doesn't support.
         config=BotoConfig(s3={"addressing_style": "path"}, signature_version="s3v4"),
     )
+
+
+def _local_root() -> Path:
+    """<repo root>/riolmsdata by default — a sibling of backend/ and
+    frontend/, not inside either, so it survives a `rm -rf` of either
+    folder and is easy to find/back up/point a volume mount at.
+    STORAGE_ROOT overrides this (absolute or relative to the backend's
+    working directory) if an admin wants it somewhere else."""
+    if settings.STORAGE_ROOT:
+        root = Path(settings.STORAGE_ROOT).expanduser()
+    else:
+        # this file is backend/app/services/storage_service.py, so
+        # parents[2] = backend/, parents[3] = backend/'s parent = repo root.
+        repo_root = Path(__file__).resolve().parents[3]
+        root = repo_root / "riolmsdata"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _local_path(key: str) -> Path:
+    # Keys are always forward-slash object paths (built by build_key /
+    # build_image_key / scorm_service, never from raw user input), so this
+    # never escapes _local_root() via ".." the way a user-supplied path could.
+    return _local_root() / key
 
 
 def build_key(module_id: uuid.UUID, filename: str) -> str:
@@ -118,6 +153,12 @@ def size_label(num_bytes: int) -> str:
 
 
 def upload_fileobj(key: str, file: UploadFile) -> None:
+    if not _using_s3():
+        path = _local_path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as out:
+            shutil.copyfileobj(file.file, out)
+        return
     client = _client()
     try:
         client.upload_fileobj(
@@ -130,6 +171,9 @@ def upload_fileobj(key: str, file: UploadFile) -> None:
 
 def delete_object(key: str) -> None:
     """Best-effort — a failed delete here shouldn't block removing the module's reference to it."""
+    if not _using_s3():
+        _local_path(key).unlink(missing_ok=True)
+        return
     try:
         _client().delete_object(Bucket=settings.R2_BUCKET_NAME, Key=key)
     except (BotoCoreError, ClientError, HTTPException):
@@ -137,6 +181,11 @@ def delete_object(key: str) -> None:
 
 
 def upload_bytes(key: str, data: bytes, content_type: str | None = None) -> None:
+    if not _using_s3():
+        path = _local_path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return
     client = _client()
     try:
         client.put_object(
@@ -148,6 +197,12 @@ def upload_bytes(key: str, data: bytes, content_type: str | None = None) -> None
 
 
 def get_bytes(key: str) -> bytes | None:
+    if not _using_s3():
+        path = _local_path(key)
+        try:
+            return path.read_bytes()
+        except OSError:
+            return None
     try:
         obj = _client().get_object(Bucket=settings.R2_BUCKET_NAME, Key=key)
         return obj["Body"].read()
@@ -159,6 +214,9 @@ def delete_prefix(prefix: str) -> None:
     """Best-effort delete of every object under a SCORM package's folder —
     used when a module's package is replaced or removed, so storage
     doesn't quietly accumulate a full orphaned copy on every re-upload."""
+    if not _using_s3():
+        shutil.rmtree(_local_path(prefix), ignore_errors=True)
+        return
     try:
         client = _client()
         paginator = client.get_paginator("list_objects_v2")
@@ -173,6 +231,14 @@ def delete_prefix(prefix: str) -> None:
 def presigned_get_url(key: str, expires_in: int = 3600) -> str | None:
     if not key:
         return None
+    if not _using_s3():
+        # No real presigning for local disk — just a stable URL to the
+        # file-serving route (app/api/v1/files.py). Unlike an R2 presigned
+        # URL this doesn't expire; the key itself (a random UUID path) is
+        # what keeps it from being guessable, same trust model a short
+        # S3 presigned URL has, minus the expiry.
+        base = settings.PUBLIC_API_BASE_URL.rstrip("/")
+        return f"{base}/api/v1/files/{quote(key)}"
     try:
         return _client().generate_presigned_url(
             "get_object", Params={"Bucket": settings.R2_BUCKET_NAME, "Key": key}, ExpiresIn=expires_in,
@@ -185,14 +251,19 @@ def presigned_get_url(key: str, expires_in: int = 3600) -> str | None:
 
 
 def ensure_bucket() -> None:
-    """Idempotent — creates the configured bucket if it doesn't exist yet.
-    Real R2 buckets are created once by hand in the dashboard, so this
-    only matters for spinning up a fresh local/test S3-compatible server.
+    """Idempotent setup call for whichever backend is active: creates the
+    local storage root, or (R2/S3) the configured bucket if it doesn't
+    exist yet. Real R2 buckets are normally created once by hand in the
+    dashboard, so the R2 branch here only matters for spinning up a
+    fresh local/test S3-compatible server.
     create_bucket is called with region_name="us-east-1" specifically —
     that's the one region the S3 API lets you create a bucket on without
     a LocationConstraint, which "auto" (R2's own region) isn't a real
     value for; R2 itself ignores this entirely since its buckets are
     created in its dashboard, not through this call."""
+    if not _using_s3():
+        _local_root()
+        return
     client = _client()
     try:
         client.head_bucket(Bucket=settings.R2_BUCKET_NAME)

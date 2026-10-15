@@ -29,11 +29,26 @@ class Settings(BaseSettings):
     # AI
     ANTHROPIC_API_KEY: str = ""
 
-    # Object storage (Cloudflare R2 — S3-compatible)
+    # Object storage — Cloudflare R2 (S3-compatible) when configured, else
+    # local disk is the fallback so the app works out of the box with
+    # nothing to set up. Leave R2_ENDPOINT_URL empty to use local storage;
+    # set it (plus the two keys below) to switch to R2/S3 instead — see
+    # storage_service.py for the backend selection.
     R2_ENDPOINT_URL: str = ""
     R2_ACCESS_KEY_ID: str = ""
     R2_SECRET_ACCESS_KEY: str = ""
     R2_BUCKET_NAME: str = "riosmart-lms-content"
+
+    # Local disk storage (the fallback backend). Empty means "compute the
+    # default" — <repo root>/riolmsdata, a sibling of backend/ and
+    # frontend/, not inside either — see storage_service.py's _local_root().
+    # Only used while R2_ENDPOINT_URL is unset.
+    STORAGE_ROOT: str = ""
+    # Base URL this backend is actually reachable at — used only by the
+    # local storage backend to build a file's URL (served via
+    # GET /api/v1/files/{key}, app/api/v1/files.py). R2 doesn't need this;
+    # it hands back a real presigned R2 URL instead.
+    PUBLIC_API_BASE_URL: str = "http://localhost:8000"
 
     # Monitoring
     SENTRY_DSN: str = ""

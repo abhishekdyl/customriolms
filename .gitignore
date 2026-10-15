@@ -17,6 +17,10 @@ out/
 .env.*
 !.env.example
 
+# local object-storage fallback (storage_service.py) — uploaded files
+# live on disk here when R2_ENDPOINT_URL isn't set; never committed
+riolmsdata/
+
 # OS
 .DS_Store
 *.rdb
