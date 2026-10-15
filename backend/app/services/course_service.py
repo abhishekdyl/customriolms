@@ -283,6 +283,14 @@ async def remove_module_content(db: AsyncSession, module: Module) -> None:
         # row anywhere still references its content.
         component = "mod_scorm" if is_scorm else _MODULE_COMPONENT[module.type]
         await storage_service.delete_file_ref(db, component=component, filearea="content" if not is_scorm else "package", itemid=module.id)
+        # delete_file_ref only flushes (see storage_service) — without this
+        # commit, its row deletions roll back when the request's session
+        # closes even though the now-orphaned physical blob was already
+        # deleted for real by the same call, leaving a dangling `files`
+        # row pointing at nothing. Caught live: a first smoke-test run's
+        # [f] step reported the GC as successful (correct inside that
+        # transaction), but the row was still in Postgres on the next run.
+        await db.commit()
 
 
 async def upload_scorm_package(db: AsyncSession, module: Module, file, org_id: uuid.UUID, user: User) -> Module:
@@ -375,7 +383,7 @@ async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[
         done = await progress_svc.completed_map(db, user.id)
         pct, _, _ = progress_svc.course_progress(course, done)
         out.append(EnrolledLearnerOut(
-            user_id=user.id, name=user.name, email=user.email, team_name=team_name,
+            user_id=user.id, name=user.full_name, email=user.email, team_name=team_name,
             via="direct" if via_direct else "team", progress_pct=pct, completed=pct >= 100,
         ))
     out.sort(key=lambda r: r.name.lower())
@@ -413,7 +421,7 @@ async def list_module_progress(db: AsyncSession, course: Course, viewer: User) -
             for m in modules
         ]
         learners.append(LearnerModuleProgressOut(
-            user_id=user.id, name=user.name, email=user.email, team_name=team_name,
+            user_id=user.id, name=user.full_name, email=user.email, team_name=team_name,
             course_completed=pct >= 100, cells=cells,
         ))
     learners.sort(key=lambda r: r.name.lower())
@@ -437,7 +445,7 @@ async def list_quiz_attempts(db: AsyncSession, course: Course, viewer: User) -> 
         if viewer.role == RoleName.TEAM_LEAD and user.team_id != viewer.team_id:
             continue
         out.append(QuizAttemptOut(
-            id=attempt.id, user_id=user.id, user_name=user.name, user_email=user.email,
+            id=attempt.id, user_id=user.id, user_name=user.full_name, user_email=user.email,
             module_id=attempt.module_id, module_title=module_title,
             score=attempt.score, passed=attempt.passed, created_at=attempt.created_at,
             answers=attempt.answers_json or [],

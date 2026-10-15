@@ -7,12 +7,20 @@ export type RoleName = "super_admin" | "org_admin" | "team_lead" | "learner";
 
 export interface User {
   id: string;
-  name: string;
+  firstname: string;
+  lastname: string;
+  full_name: string;
+  username: string;
   email: string;
   role: RoleName;
   org_id: string;
   must_change_password?: boolean;
   team_name?: string | null;
+  profile_image_url?: string | null;
+  city?: string | null;
+  country?: string | null;
+  timezone?: string | null;
+  companyname?: string | null;
 }
 
 /** GET/PATCH /api/v1/learn/profile — the learner's own extended profile
@@ -47,12 +55,19 @@ export interface Team {
 
 export interface AppUser {
   id: string;
-  name: string;
+  firstname: string;
+  lastname: string;
+  full_name: string;
+  username: string;
   email: string;
   role: RoleName;
   status: "invited" | "active" | "suspended" | "deactivated";
   team_id: string | null;
   team_name: string | null;
+  city?: string | null;
+  country?: string | null;
+  timezone?: string | null;
+  companyname?: string | null;
 }
 
 export interface BulkInviteResult {
@@ -232,6 +247,7 @@ export interface Org {
   timezone: string;
   contact_email: string | null;
   logo_url: string | null;
+  allow_custom_username: boolean;
   user_count: number;
   admin_email: string | null;
 }

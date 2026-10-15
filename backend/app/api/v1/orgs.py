@@ -8,7 +8,7 @@ from app.core.security import hash_password
 from app.core.session import revoke_all_sessions
 from app.models.org import PLAN_USER_LIMITS, Org, OrgStatus
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
-from app.models.user import RoleName, User
+from app.models.user import RoleName, User, split_full_name
 from app.schemas.org import (
     OrgCreateRequest,
     OrgOut,
@@ -66,7 +66,7 @@ async def update_my_org(body: OrgProfileUpdateRequest, db: AsyncSession = Depend
         if clash.scalar_one_or_none() is not None:
             raise HTTPException(status_code=409, detail=f"The slug \"{body.slug}\" is already taken")
 
-    for field in ("name", "slug", "industry", "timezone", "contact_email"):
+    for field in ("name", "slug", "industry", "timezone", "contact_email", "allow_custom_username"):
         value = getattr(body, field)
         if value is not None:
             setattr(org, field, value)
@@ -140,10 +140,13 @@ async def create_org(body: OrgCreateRequest, db: AsyncSession = Depends(get_db))
     db.add(org)
     await db.flush()
 
+    admin_firstname, admin_lastname = split_full_name(body.admin_name)
     admin = User(
         org_id=org.id,
-        name=body.admin_name,
+        firstname=admin_firstname,
+        lastname=admin_lastname,
         email=body.admin_email,
+        username=body.admin_email,  # default — see Org.allow_custom_username
         hashed_password=hash_password(body.admin_password),
         role=RoleName.ORG_ADMIN,
     )

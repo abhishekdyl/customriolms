@@ -391,7 +391,7 @@ async def store_file(
     return await _upsert_file_row(
         db, org_id=org_id, component=component, filearea=filearea, itemid=itemid,
         filepath=filepath, filename=name, contenthash=contenthash, size=size, mimetype=content_type,
-        user_id=getattr(user, "id", None), user_name=getattr(user, "name", None),
+        user_id=getattr(user, "id", None), user_name=getattr(user, "full_name", None),
     )
 
 
@@ -406,7 +406,7 @@ async def store_bytes(
     return await _upsert_file_row(
         db, org_id=org_id, component=component, filearea=filearea, itemid=itemid,
         filepath=filepath, filename=filename, contenthash=contenthash, size=size, mimetype=content_type,
-        user_id=getattr(user, "id", None), user_name=getattr(user, "name", None),
+        user_id=getattr(user, "id", None), user_name=getattr(user, "full_name", None),
     )
 
 

@@ -19,6 +19,7 @@ class OrgOut(BaseModel):
     timezone: str = "UTC"
     contact_email: str | None = None
     logo_url: str | None = None
+    allow_custom_username: bool = False
     user_count: int = 0  # filled in by the endpoint, not stored on the row
     admin_email: str | None = None  # this org's Org Admin — filled in by the endpoint, not stored on the row
 
@@ -64,6 +65,7 @@ class OrgProfileUpdateRequest(BaseModel):
     industry: str | None = None
     timezone: str | None = None
     contact_email: EmailStr | None = None
+    allow_custom_username: bool | None = None
 
 
 class PlatformSettingsOut(BaseModel):
@@ -79,7 +81,7 @@ class PlatformSettingsUpdateRequest(BaseModel):
 
 class SuperAdminOut(BaseModel):
     id: uuid.UUID
-    name: str
+    full_name: str
     email: str
 
     class Config:

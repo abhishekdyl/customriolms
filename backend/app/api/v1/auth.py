@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_user_and_jti
@@ -9,7 +9,8 @@ from app.core.session import create_session, revoke_all_sessions, revoke_all_ses
 from app.models.org import Org, OrgStatus
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.team import Team
-from app.models.user import RoleName, User, UserStatus
+from app.models.user import RoleName, User, UserStatus, split_full_name
+from app.services import storage_service
 from app.schemas.auth import ChangePasswordRequest, LoginRequest, RegisterRequest, TokenResponse, UpdateProfileRequest, UserOut
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -38,10 +39,13 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     db.add(org)
     await db.flush()  # get org.id before creating the user
 
+    firstname, lastname = split_full_name(body.name)
     user = User(
         org_id=org.id,
-        name=body.name,
+        firstname=firstname,
+        lastname=lastname,
         email=body.email,
+        username=body.email,  # default — see Org.allow_custom_username
         hashed_password=hash_password(body.password),
         role=RoleName.ORG_ADMIN,
     )
@@ -60,7 +64,11 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == body.email))
+    # body.email is the login *identifier* — matches either column, so a
+    # user who has customized their username (once their org allows it)
+    # can log in with it, while everyone else keeps logging in by email
+    # (which is also always what username defaults to at creation).
+    result = await db.execute(select(User).where(or_(User.email == body.email, User.username == body.email)))
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
@@ -135,12 +143,15 @@ async def logout_all(current_user: User = Depends(get_current_user)):
 
 async def _user_out(db: AsyncSession, user: User) -> UserOut:
     """UserOut plus the team's name (looked up explicitly — touching user.team
-    here would lazy-load inside an async session and fail)."""
+    here would lazy-load inside an async session and fail) and a fresh
+    presigned/local URL for the avatar, if one is set."""
     team_name = None
     if user.team_id is not None:
         team_name = (await db.execute(select(Team.name).where(Team.id == user.team_id))).scalar_one_or_none()
     out = UserOut.model_validate(user)
     out.team_name = team_name
+    if user.avatar_key:
+        out.profile_image_url = storage_service.presigned_get_url(user.avatar_key)
     return out
 
 
@@ -151,8 +162,43 @@ async def me(current_user: User = Depends(get_current_user), db: AsyncSession = 
 
 @router.patch("/me", response_model=UserOut)
 async def update_me(body: UpdateProfileRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Edit your own profile. Only `name` is editable — see UpdateProfileRequest."""
-    current_user.name = body.name
+    """Edit your own profile — see UpdateProfileRequest for which fields."""
+    current_user.firstname = body.firstname
+    current_user.lastname = body.lastname
+    current_user.city = body.city
+    current_user.country = body.country
+    current_user.timezone = body.timezone
+    current_user.companyname = body.companyname
+
+    if body.username is not None and body.username != current_user.username:
+        org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
+        if not org.allow_custom_username:
+            raise HTTPException(status_code=403, detail="Your organization doesn't allow custom usernames")
+        taken = (await db.execute(
+            select(User.id).where(User.username == body.username, User.id != current_user.id)
+        )).scalar_one_or_none()
+        if taken:
+            raise HTTPException(status_code=400, detail="That username is already taken")
+        current_user.username = body.username
+
+    await db.commit()
+    await db.refresh(current_user)
+    return await _user_out(db, current_user)
+
+
+@router.post("/me/avatar", response_model=UserOut)
+async def upload_avatar(
+    file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    file.file.seek(0, 2)
+    size = file.file.tell()
+    file.file.seek(0)
+    storage_service.validate_image_upload(file, size)
+    record = await storage_service.store_file(
+        db, file, org_id=current_user.org_id, component="user", filearea="avatar",
+        itemid=current_user.id, user=current_user,
+    )
+    current_user.avatar_key = storage_service.file_key(record)
     await db.commit()
     await db.refresh(current_user)
     return await _user_out(db, current_user)

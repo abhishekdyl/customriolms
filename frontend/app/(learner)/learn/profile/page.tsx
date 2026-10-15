@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api-client";
-import { useChangePassword, useCurrentUser, useLogoutAll, useUpdateProfile } from "@/lib/hooks/use-auth";
+import { useChangePassword, useCurrentUser, useLogoutAll, useUpdateProfile, useUploadAvatar } from "@/lib/hooks/use-auth";
+import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { useLearnerProfile, useUpdateLearnerProfile } from "@/lib/hooks/use-learner-profile";
 
 const ROLE_LABEL: Record<string, string> = {
@@ -43,25 +44,44 @@ function errorText(e: unknown, fallback: string) {
 
 function DetailsCard() {
   const { data: user } = useCurrentUser();
+  const { data: org } = useMyOrg();
   const { data: profile } = useLearnerProfile();
   const update = useUpdateProfile();
   const updateProfile = useUpdateLearnerProfile();
   const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
+  const [city, setCity] = useState("");
+  const [timezone, setTimezone] = useState("");
+  const [companyname, setCompanyname] = useState("");
   const [country, setCountry] = useState("");
   const [saved, setSaved] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   // Seed the fields once the profile has loaded.
   useEffect(() => {
-    if (user) setName(user.name);
+    if (user) {
+      setName(user.full_name);
+      setUsername(user.username);
+      setCity(user.city ?? "");
+      setTimezone(user.timezone ?? "");
+      setCompanyname(user.companyname ?? "");
+    }
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (profile) setCountry(profile.country ?? "");
   }, [profile?.country]);
 
   const clean = name.trim().replace(/\s+/g, " ");
+  const cleanUsername = username.trim();
   const cleanCountry = country.trim();
-  const dirty = (!!user && clean !== user.name) || (!!profile && cleanCountry !== (profile.country ?? ""));
+  const dirty =
+    (!!user &&
+      (clean !== user.full_name ||
+        cleanUsername !== user.username ||
+        city.trim() !== (user.city ?? "") ||
+        timezone.trim() !== (user.timezone ?? "") ||
+        companyname.trim() !== (user.companyname ?? ""))) ||
+    (!!profile && cleanCountry !== (profile.country ?? ""));
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,8 +91,19 @@ function DetailsCard() {
       return;
     }
     setLocalError(null);
-    if (user && clean !== user.name) {
-      update.mutate({ name: clean }, { onSuccess: (me) => setName(me.name) });
+    if (user) {
+      const [firstname, ...rest] = clean.split(/\s+/);
+      update.mutate(
+        {
+          firstname,
+          lastname: rest.join(" "),
+          username: org?.allow_custom_username ? cleanUsername : undefined,
+          city: city.trim() || null,
+          timezone: timezone.trim() || null,
+          companyname: companyname.trim() || null,
+        },
+        { onSuccess: (me) => { setName(me.full_name); setUsername(me.username); } }
+      );
     }
     if (profile && cleanCountry !== (profile.country ?? "")) {
       updateProfile.mutate({ country: cleanCountry || null }, { onSuccess: (p) => setCountry(p.country ?? "") });
@@ -100,6 +131,23 @@ function DetailsCard() {
           <p className="mt-1 text-[11.5px] text-ink-faint">This is your login. Ask your admin if it needs to change.</p>
         </div>
 
+        <div>
+          <Label htmlFor="username">Username</Label>
+          <Input
+            id="username"
+            value={username}
+            maxLength={255}
+            disabled={!org?.allow_custom_username}
+            onChange={(e) => { setUsername(e.target.value); setSaved(false); setLocalError(null); }}
+            className="mt-1.5"
+          />
+          <p className="mt-1 text-[11.5px] text-ink-faint">
+            {org?.allow_custom_username
+              ? "You can log in with this username instead of your email."
+              : "Your organization hasn't turned on custom usernames yet — this mirrors your email."}
+          </p>
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label htmlFor="team">Team</Label>
@@ -111,17 +159,46 @@ function DetailsCard() {
           </div>
         </div>
 
-        <div>
-          <Label htmlFor="country">Country</Label>
-          <Input
-            id="country"
-            value={country}
-            maxLength={100}
-            placeholder="e.g. China"
-            onChange={(e) => { setCountry(e.target.value); setSaved(false); setLocalError(null); }}
-            className="mt-1.5"
-          />
-          <p className="mt-1 text-[11.5px] text-ink-faint">Some course modules are only available to learners from a specific country.</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="city">City</Label>
+            <Input
+              id="city" value={city} maxLength={100}
+              onChange={(e) => { setCity(e.target.value); setSaved(false); setLocalError(null); }}
+              className="mt-1.5"
+            />
+          </div>
+          <div>
+            <Label htmlFor="country">Country</Label>
+            <Input
+              id="country"
+              value={country}
+              maxLength={100}
+              placeholder="e.g. China"
+              onChange={(e) => { setCountry(e.target.value); setSaved(false); setLocalError(null); }}
+              className="mt-1.5"
+            />
+          </div>
+        </div>
+        <p className="-mt-2 text-[11.5px] text-ink-faint">Some course modules are only available to learners from a specific country.</p>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="timezone">Timezone</Label>
+            <Input
+              id="timezone" value={timezone} maxLength={50} placeholder="e.g. Asia/Kolkata"
+              onChange={(e) => { setTimezone(e.target.value); setSaved(false); setLocalError(null); }}
+              className="mt-1.5"
+            />
+          </div>
+          <div>
+            <Label htmlFor="companyname">Company</Label>
+            <Input
+              id="companyname" value={companyname} maxLength={200}
+              onChange={(e) => { setCompanyname(e.target.value); setSaved(false); setLocalError(null); }}
+              className="mt-1.5"
+            />
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
@@ -224,7 +301,14 @@ function SessionsCard() {
 
 export default function ProfilePage() {
   const { data: user } = useCurrentUser();
-  const initials = user?.name?.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "";
+  const uploadAvatar = useUploadAvatar();
+  const initials = user?.full_name?.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "";
+
+  const onPickAvatar = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) uploadAvatar.mutate(file);
+    e.target.value = "";
+  };
 
   return (
     <>
@@ -232,11 +316,23 @@ export default function ProfilePage() {
       <div className="mx-auto w-full max-w-[640px] flex-1 px-4 pb-8 pt-5 md:px-8 md:pt-6">
         {/* header — same avatar block as the prototype */}
         <div className="mb-6 flex flex-col items-center">
-          <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-full bg-amber">
-            {initials ? <span className="font-head text-xl text-white">{initials}</span> : <UserIcon size={24} color="#fff" />}
-          </div>
-          <div className="font-head text-base text-ink">{user?.name ?? "\u00A0"}</div>
+          <label className="group relative mb-2 flex h-16 w-16 cursor-pointer items-center justify-center rounded-full bg-amber">
+            {user?.profile_image_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={user.profile_image_url} alt="" className="h-16 w-16 rounded-full object-cover" />
+            ) : initials ? (
+              <span className="font-head text-xl text-white">{initials}</span>
+            ) : (
+              <UserIcon size={24} color="#fff" />
+            )}
+            <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
+              {uploadAvatar.isPending ? "Uploading\u2026" : "Change"}
+            </span>
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onPickAvatar} />
+          </label>
+          <div className="font-head text-base text-ink">{user?.full_name ?? "\u00A0"}</div>
           <div className="text-[12.5px] text-ink-faint">{user?.team_name ?? "No team yet"}</div>
+          {uploadAvatar.isError && <p className="mt-1 text-[11.5px] text-danger">Couldn\u2019t upload \u2014 try a smaller image.</p>}
         </div>
 
         <DetailsCard />

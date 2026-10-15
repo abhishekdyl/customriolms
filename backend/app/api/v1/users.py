@@ -45,10 +45,12 @@ async def list_users(db: AsyncSession = Depends(get_db), current_user: User = De
         .outerjoin(Team, Team.id == User.team_id)
         .where(User.org_id == current_user.org_id, User.status != UserStatus.DEACTIVATED)
     )
-    return [
-        UserOut.model_validate({**user.__dict__, "team_name": team_name})
-        for user, team_name in result.all()
-    ]
+    out = []
+    for user, team_name in result.all():
+        row = UserOut.model_validate(user)
+        row.team_name = team_name
+        out.append(row)
+    return out
 
 
 @router.get("/progress", response_model=list[LearnerProgressOut], dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))])
@@ -134,7 +136,9 @@ async def change_team(user_id: uuid.UUID, body: UpdateTeamRequest, db: AsyncSess
     if user.team_id is not None:
         team_row = await db.execute(select(Team.name).where(Team.id == user.team_id))
         team_name = team_row.scalar_one_or_none()
-    return UserOut.model_validate({**user.__dict__, "team_name": team_name})
+    row = UserOut.model_validate(user)
+    row.team_name = team_name
+    return row
 
 
 @router.patch("/{user_id}/status", response_model=UserOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])

@@ -89,10 +89,10 @@ export function Sidebar() {
 
       <div className="flex items-center gap-2.5 border-t border-white/10 px-5 py-4">
         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-amber font-head text-[11px] font-bold text-white">
-          {user?.name?.split(" ").map((n) => n[0]).join("") || "…"}
+          {user?.full_name?.split(" ").map((n) => n[0]).join("") || "…"}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="truncate text-xs text-white">{user?.name || "Loading…"}</div>
+          <div className="truncate text-xs text-white">{user?.full_name || "Loading…"}</div>
           <div className="text-[11px] text-white/50">{user?.role?.replace("_", " ") || ""}</div>
         </div>
         <button onClick={logout} title="Log out"><LogOut className="h-4 w-4 text-white/50" /></button>

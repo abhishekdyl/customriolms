@@ -164,7 +164,7 @@ export function AssignModal({
                   >
                     {userIds.includes(u.id) && <Check className="h-2.5 w-2.5 text-white" />}
                   </span>
-                  <span className="text-sm text-ink">{u.name}</span>
+                  <span className="text-sm text-ink">{u.full_name}</span>
                   {u.team_name && <span className="text-[11px] text-ink-faint">· {u.team_name}</span>}
                 </button>
               ))}

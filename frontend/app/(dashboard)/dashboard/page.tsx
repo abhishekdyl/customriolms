@@ -249,11 +249,11 @@ function TeamLeadDashboard() {
               <div key={u.id} className="flex items-center gap-3 p-3 bg-surface border border-line rounded-lg">
                 <div className="w-8 h-8 rounded-full bg-primary-soft flex items-center justify-center shrink-0">
                   <span className="font-head text-[11px] text-primary">
-                    {u.name.split(" ").map((n) => n[0]).join("")}
+                    {u.full_name.split(" ").map((n) => n[0]).join("")}
                   </span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] text-ink font-medium">{u.name}</div>
+                  <div className="text-[13px] text-ink font-medium">{u.full_name}</div>
                   <div className="text-[11.5px] text-ink-faint capitalize">{u.role.replace("_", " ")}</div>
                 </div>
                 {u.role === "learner" && (

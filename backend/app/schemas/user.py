@@ -52,12 +52,19 @@ class AcceptInviteRequest(BaseModel):
 
 class UserOut(BaseModel):
     id: uuid.UUID
-    name: str
+    firstname: str
+    lastname: str
+    full_name: str
+    username: str
     email: str
     role: RoleName
     status: UserStatus
     team_id: uuid.UUID | None
     team_name: str | None = None  # filled in by the endpoint via a join, not stored on the row
+    city: str | None = None
+    country: str | None = None
+    timezone: str | None = None
+    companyname: str | None = None
 
     class Config:
         from_attributes = True

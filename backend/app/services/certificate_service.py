@@ -2,12 +2,16 @@ import secrets
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.certificate import Certificate, CertTemplate
 from app.models.course import Course
 from app.models.user import User
+
+# SQL equivalent of User.full_name — lastname is never null (defaults to
+# ""), so plain concat would leave a trailing space for a single-word name.
+_FULL_NAME = func.trim(func.concat(User.firstname, " ", User.lastname))
 
 DEFAULT_TEMPLATE_FIELDS = {
     "learnerName": True, "courseTitle": True, "date": True,
@@ -69,7 +73,7 @@ async def issue_certificate(db: AsyncSession, org_id: uuid.UUID, user_id: uuid.U
 
     cert = Certificate(
         org_id=org_id, user_id=user_id, course_id=course_id, template_id=template_id,
-        code=_generate_code(course.title, user.name),
+        code=_generate_code(course.title, user.full_name),
     )
     db.add(cert)
     await db.commit()
@@ -79,7 +83,7 @@ async def issue_certificate(db: AsyncSession, org_id: uuid.UUID, user_id: uuid.U
 
 async def list_certificates(db: AsyncSession, org_id: uuid.UUID) -> list[dict]:
     result = await db.execute(
-        select(Certificate, User.name.label("learner_name"), Course.title.label("course_title"))
+        select(Certificate, _FULL_NAME.label("learner_name"), Course.title.label("course_title"))
         .join(User, Certificate.user_id == User.id)
         .join(Course, Certificate.course_id == Course.id)
         .where(Certificate.org_id == org_id)
@@ -102,7 +106,7 @@ async def get_certificate_public(db: AsyncSession, code: str) -> dict:
     """No org scoping — this backs the public verification page, reachable by
     anyone with the link or QR code, same as the frontend's CertificateSharePage."""
     result = await db.execute(
-        select(Certificate, User.name.label("learner_name"), Course.title.label("course_title"))
+        select(Certificate, _FULL_NAME.label("learner_name"), Course.title.label("course_title"))
         .join(User, Certificate.user_id == User.id)
         .join(Course, Certificate.course_id == Course.id)
         .where(Certificate.code == code)

@@ -48,6 +48,13 @@ class Org(Base):
     timezone: Mapped[str] = mapped_column(String(50), default="UTC", nullable=False)
     contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Off by default: every user's username mirrors their email and login
+    # only ever happens by email. Once an Org Admin flips this on, users
+    # may set their own custom username from their profile (see
+    # auth.update_me) and log in with it afterward — auth.login matches
+    # against username OR email either way, so existing email-based
+    # logins keep working regardless of this setting.
+    allow_custom_username: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     teams: Mapped[list["Team"]] = relationship(back_populates="org")
     users: Mapped[list["User"]] = relationship(back_populates="org")

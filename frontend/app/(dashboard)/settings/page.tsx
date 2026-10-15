@@ -193,6 +193,29 @@ export default function OrgSettingsPage() {
         </div>
       </form>
 
+      {/* Custom usernames */}
+      <div className="rounded-[10px] border border-line bg-surface p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="mb-0.5 font-head text-sm text-ink">Allow custom usernames</div>
+            <p className="text-[12.5px] text-ink-soft">
+              By default every user logs in with their email. Turn this on to let users set their own
+              username from their profile — they can still log in with their email either way.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => updateOrg.mutate({ allow_custom_username: !org.allow_custom_username })}
+            disabled={updateOrg.isPending}
+            className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${org.allow_custom_username ? "bg-primary" : "bg-line"}`}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${org.allow_custom_username ? "translate-x-5" : "translate-x-0.5"}`}
+            />
+          </button>
+        </div>
+      </div>
+
       {/* Danger zone */}
       <div className="rounded-[10px] border border-danger/20 bg-danger-soft p-5">
         <div className="mb-1.5 font-head text-sm text-ink">Danger zone</div>

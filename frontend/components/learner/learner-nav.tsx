@@ -26,7 +26,7 @@ export function LearnerSidebar() {
   const { data: myOrg } = useMyOrg(true);
   const logout = useLogout();
   const brandName = myOrg?.name || "Riosmart LMS";
-  const initials = user?.name?.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "…";
+  const initials = user?.full_name?.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "…";
 
   return (
     <aside className="hidden h-full w-[72px] shrink-0 flex-col bg-rail md:flex lg:w-[232px]">
@@ -72,7 +72,7 @@ export function LearnerSidebar() {
             {initials}
           </div>
           <div className="hidden min-w-0 lg:block">
-            <div className="truncate text-[12.5px] text-white">{user?.name || "Loading…"}</div>
+            <div className="truncate text-[12.5px] text-white">{user?.full_name || "Loading…"}</div>
             <div className="text-[11px] text-white/60">Learner</div>
           </div>
         </div>

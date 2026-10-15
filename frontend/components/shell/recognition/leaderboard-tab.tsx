@@ -16,9 +16,9 @@ export function LeaderboardTab({ query = "" }: { query?: string }) {
   const ranked = users
     .filter((u) => u.role === "learner" && u.status !== "deactivated")
     .filter((u) => teamFilter === "All teams" || u.team_name === teamFilter)
-    .filter((u) => u.name.toLowerCase().includes(query.trim().toLowerCase()))
+    .filter((u) => u.full_name.toLowerCase().includes(query.trim().toLowerCase()))
     .map((u) => ({ ...u, points: 0 }))
-    .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
+    .sort((a, b) => b.points - a.points || a.full_name.localeCompare(b.full_name));
 
   return (
     <div className="max-w-[560px]">
@@ -45,7 +45,7 @@ export function LeaderboardTab({ query = "" }: { query?: string }) {
               <div className="w-7 text-center shrink-0"><span className="font-head text-[13px] text-ink-faint">{i + 1}</span></div>
             )}
             <div className="flex-1 min-w-0">
-              <div className="text-[13px] text-ink font-medium">{u.name}</div>
+              <div className="text-[13px] text-ink font-medium">{u.full_name}</div>
               <div className="text-[11px] text-ink-faint">{u.team_name ?? "No team"}</div>
             </div>
             <span className="font-head text-[14px] text-ink">{u.points.toLocaleString()}</span>

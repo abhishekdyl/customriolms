@@ -383,7 +383,7 @@ export default function UsersPage() {
                     </td>
                     <td className="border-b border-line-soft px-5 py-3">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-ink">{u.name}</span>
+                        <span className="font-medium text-ink">{u.full_name}</span>
                         {suspended && <span className="rounded-full bg-amber-soft px-2 py-0.5 text-[10px] text-amber">Suspended</span>}
                         {u.status === "invited" && <span className="rounded-full bg-primary-soft px-2 py-0.5 text-[10px] text-primary">Invited</span>}
                       </div>

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
 from app.models.team import Team
-from app.models.user import RoleName, User, UserStatus
+from app.models.user import RoleName, User, UserStatus, split_full_name
 from app.schemas.user import BulkInviteResult
 
 # Every admin-created account starts here — shown to the admin right
@@ -47,11 +47,14 @@ async def invite_user(
     if existing.scalar_one_or_none():
         raise ValueError(f"{email} is already registered")
 
+    firstname, lastname = split_full_name(name)
     user = User(
         org_id=org_id,
         team_id=team_id,
-        name=name,
+        firstname=firstname,
+        lastname=lastname,
         email=email,
+        username=email,  # default — see Org.allow_custom_username
         hashed_password=hash_password(DEFAULT_PASSWORD),
         role=role,
         status=UserStatus.ACTIVE,

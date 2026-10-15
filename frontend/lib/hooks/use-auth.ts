@@ -89,12 +89,40 @@ export function useChangePassword({ redirectAfter = true }: { redirectAfter?: bo
   });
 }
 
-/** Edit your own profile (name only — see UpdateProfileRequest on the backend). */
+/** Edit your own profile — see UpdateProfileRequest on the backend for the
+ * full field set (firstname/lastname/username/city/country/timezone/
+ * companyname). `name` here is a convenience for callers that still just
+ * collect one "Full name" field — split client-side the same way the
+ * backend splits it at creation time (first word vs. the rest). */
 export function useUpdateProfile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string }) => api.patch<User>("/api/v1/auth/me", body),
+    mutationFn: (
+      body: { name: string } | Partial<Pick<User, "firstname" | "lastname" | "username" | "city" | "country" | "timezone" | "companyname">>,
+    ) => {
+      if ("name" in body) {
+        const parts = body.name.trim().split(/\s+/);
+        const firstname = parts[0] ?? "";
+        const lastname = parts.slice(1).join(" ");
+        return api.patch<User>("/api/v1/auth/me", { firstname, lastname });
+      }
+      return api.patch<User>("/api/v1/auth/me", body);
+    },
     // Everything that shows the name (sidebar, Home greeting) reads this cache entry.
+    onSuccess: (me) => qc.setQueryData(["me"], me),
+  });
+}
+
+/** Upload/replace your own avatar — stored via the content-addressed
+ * `files` table ledger (component="user", filearea="avatar"). */
+export function useUploadAvatar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api.upload<User>("/api/v1/auth/me/avatar", form);
+    },
     onSuccess: (me) => qc.setQueryData(["me"], me),
   });
 }

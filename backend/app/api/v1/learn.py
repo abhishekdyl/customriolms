@@ -11,7 +11,7 @@ from app.models.certificate import Certificate, CertTemplate
 from app.models.org import Org
 from app.models.course import Course
 from app.models.team import Team
-from app.models.user import RoleName, User
+from app.models.user import RoleName, User, split_full_name
 from app.schemas.learn import (
     CertDetail, CompleteRequest, CompleteResult, LearnCourseDetail, LearnCourseItem, LearnModule, LearnNotification,
     LearnProgress, LearnSummary, LeaderRow, ProfileOut, ProfileUpdate, QuizResult, QuizSubmit,
@@ -44,7 +44,7 @@ async def summary(db: AsyncSession = Depends(get_db), user: User = Depends(get_c
         select(Certificate.id).where(Certificate.user_id == user.id, Certificate.issued_at >= since).limit(1)
     )).first() is not None
     return LearnSummary(
-        name=user.name, streak=await svc.streak_for(db, user.id), week=week, days_trained=sum(week),
+        name=user.full_name, streak=await svc.streak_for(db, user.id), week=week, days_trained=sum(week),
         assigned_count=len(courses), in_progress_count=len(in_progress), completed_count=sum(1 for _, p in pcts if p >= 100),
         next_course_id=nxt.id if nxt else None, next_course_title=nxt.title if nxt else None,
         next_course_modules=len(nxt.modules) if nxt else 0, has_unread=has_unread,
@@ -115,7 +115,7 @@ async def _profile(db: AsyncSession, user: User) -> ProfileOut:
     if user.team_id:
         team_name = (await db.execute(select(Team.name).where(Team.id == user.team_id))).scalar_one_or_none()
     return ProfileOut(
-        name=user.name, email=user.email, team_name=team_name, role=user.role.value,
+        name=user.full_name, email=user.email, team_name=team_name, role=user.role.value,
         phone=user.phone, job_title=user.job_title, location=user.location, bio=user.bio,
         country=user.country,
     )
@@ -129,10 +129,16 @@ async def get_profile(db: AsyncSession = Depends(get_db), user: User = Depends(g
 @router.patch("/profile", response_model=ProfileOut)
 async def update_profile(body: ProfileUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     data = body.model_dump(exclude_unset=True)
-    if "name" in data and not (data["name"] or "").strip():
-        raise HTTPException(status_code=422, detail="Name can't be empty")
+    if "name" in data:
+        # `name` is this endpoint's one display-name field — split it onto
+        # firstname/lastname (same rule as registration/invite), User.name
+        # itself no longer exists as a column.
+        name_value = (data.pop("name") or "").strip()
+        if not name_value:
+            raise HTTPException(status_code=422, detail="Name can't be empty")
+        user.firstname, user.lastname = split_full_name(name_value)
     for key, value in data.items():
-        setattr(user, key, value.strip() if isinstance(value, str) and value.strip() else (None if key != "name" else value))
+        setattr(user, key, value.strip() if isinstance(value, str) and value.strip() else None)
     await db.commit()
     await db.refresh(user)
     return await _profile(db, user)
@@ -164,7 +170,7 @@ async def certificate_detail(cert_id: uuid.UUID, db: AsyncSession = Depends(get_
         template = await ensure_org_has_a_template(db, user.org_id)
     org_name = (await db.execute(select(Org.name).where(Org.id == user.org_id))).scalar_one()
     return CertDetail(
-        id=cert.id, code=cert.code, learner_name=user.name, course_title=course.title,
+        id=cert.id, code=cert.code, learner_name=user.full_name, course_title=course.title,
         certification_name=course.certificate_name or course.title,
         issuer_name=course.certificate_org_name or org_name, duration=course.duration_label or "—",
         issued_at=cert.issued_at, template=template,

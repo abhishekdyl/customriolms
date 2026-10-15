@@ -228,7 +228,7 @@ async def leaderboard(db: AsyncSession, me: User) -> list[dict]:
         .where(User.org_id == me.org_id, User.role == RoleName.LEARNER, User.status.in_([UserStatus.ACTIVE, UserStatus.INVITED]))
     )
     board = [
-        {"id": u.id, "name": u.name, "team_name": tname, "points": pts.get(u.id, 0), "is_me": u.id == me.id}
+        {"id": u.id, "name": u.full_name, "team_name": tname, "points": pts.get(u.id, 0), "is_me": u.id == me.id}
         for u, tname in rows.all()
     ]
     board.sort(key=lambda r: (-r["points"], r["name"].lower()))

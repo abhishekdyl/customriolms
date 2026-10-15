@@ -117,5 +117,10 @@ async def upload_question_image(
         db, file, org_id=current_user.org_id, component="question", filearea="image",
         itemid=None, filepath=uuid.uuid4().hex, user=current_user,
     )
+    # store_file only flushes (see storage_service._upsert_file_row) — the
+    # caller owns the commit. Without this, the `files` row (and any GC it
+    # triggered) rolls back when this request's session closes, same bug
+    # just fixed in course_service.remove_module_content.
+    await db.commit()
     key = storage_service.file_key(record)
     return ImageUploadOut(image_key=key, image_url=storage_service.presigned_get_url(key))

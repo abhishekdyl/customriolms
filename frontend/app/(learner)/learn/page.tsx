@@ -118,7 +118,7 @@ export default function LearnerHomePage() {
       <div className="mb-5 flex items-center justify-between">
         <div>
           <div className="text-[12.5px] text-ink-faint">{greeting()}</div>
-          <div className="font-head text-[20px] text-ink md:text-[24px]">{user?.name ?? "\u00A0"}</div>
+          <div className="font-head text-[20px] text-ink md:text-[24px]">{user?.full_name ?? "\u00A0"}</div>
         </div>
         <Link href="/learn/notifications" className="relative active:opacity-60" aria-label="Notifications">
           <Bell size={20} color="var(--color-ink)" />
