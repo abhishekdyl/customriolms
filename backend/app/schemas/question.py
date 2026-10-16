@@ -56,6 +56,19 @@ class QuestionIn(BaseModel):
     options: list[OptionIn] = []
     correct_option_id: str | None = None
     accepted_answers: list[str] = []
+    # In-video placement — only meaningful (and only validated) for a
+    # WATCH module's questions; course_service.update_module enforces the
+    # WATCH-specific rules (required here, no images, etc.) since this
+    # schema alone doesn't know which module it's attached to. None on a
+    # QUIZ module's questions.
+    trigger_time_sec: int | None = None
+    # None = no display timer — the video stays paused until the learner
+    # submits. Otherwise seconds the question stays on screen before
+    # auto-submit (if an option is picked) or skip (uncounted, not wrong).
+    timer_seconds: int | None = None
+    # Marks for one correct answer to this question. Defaults to 1 so
+    # existing count-based QUIZ scoring is unaffected unless changed.
+    points: int = 1
 
     @model_validator(mode="after")
     def _validate_shape(self):
@@ -75,6 +88,13 @@ class QuestionIn(BaseModel):
         elif self.type is QuestionType.SHORT_ANSWER:
             if not any((a or "").strip() for a in self.accepted_answers):
                 raise ValueError("A short-answer question needs at least one accepted answer")
+
+        if self.trigger_time_sec is not None and self.trigger_time_sec < 0:
+            raise ValueError("trigger_time_sec can't be negative")
+        if self.timer_seconds is not None and self.timer_seconds <= 0:
+            raise ValueError("timer_seconds must be positive when set")
+        if self.points < 1:
+            raise ValueError("points must be at least 1")
         return self
 
 
@@ -95,6 +115,9 @@ class QuestionOut(BaseModel):
     options: list[OptionOut] = []
     correct_option_id: str | None
     accepted_answers: list[str]
+    trigger_time_sec: int | None = None
+    timer_seconds: int | None = None
+    points: int = 1
 
     class Config:
         from_attributes = True
@@ -113,7 +136,9 @@ class QuestionOut(BaseModel):
 
 class QuestionLearnerOut(BaseModel):
     """What a learner sees before answering — no correct_option_id, no
-    accepted_answers."""
+    accepted_answers. trigger_time_sec/timer_seconds ARE included (unlike
+    the answer key) — the WATCH player needs them to know when to pause
+    and whether to run a countdown."""
     id: uuid.UUID
     type: QuestionType
     text: str | None
@@ -121,6 +146,8 @@ class QuestionLearnerOut(BaseModel):
     image_url: str | None = None
     options_json: list[dict] = Field(default=[], exclude=True)
     options: list[OptionOut] = []
+    trigger_time_sec: int | None = None
+    timer_seconds: int | None = None
 
     class Config:
         from_attributes = True

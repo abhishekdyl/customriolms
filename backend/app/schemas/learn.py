@@ -60,28 +60,16 @@ class LearnCourseDetail(BaseModel):
     modules: list[LearnModule]
 
 
-class CompleteRequest(BaseModel):
-    """Body for POST .../modules/{id}/complete. Only WATCH modules actually
-    use watched_pct — it's how far through the video the player tracked the
-    learner reaching (the running max, not just wherever playback currently
-    sits, so scrubbing to the end doesn't let someone skip the real
-    watch-through). Every other module type ignores it; omit it entirely
-    and the call still works for them."""
-    watched_pct: int | None = None
-
-
-class CompleteResult(BaseModel):
-    progress: int
-    course_completed: bool
-    certificate_code: str | None = None
-
-
 class QuizAnswerIn(BaseModel):
     """One answer to one question, keyed by question_id (not position) so a
     client that only sends a subset, or sends them out of order, still
     scores correctly. option_id answers MCQ/TRUE_FALSE; text answers
     SHORT_ANSWER. Both are optional so an unanswered question just scores
-    wrong rather than failing validation."""
+    wrong rather than failing validation. Also used for a WATCH module's
+    in-video question answers, accumulated client-side during playback and
+    sent as CompleteRequest.answers — an entry simply absent here (not
+    "wrong") is how a skipped-on-timeout in-video question stays uncounted
+    rather than scored against the learner."""
     question_id: uuid.UUID
     option_id: str | None = None
     text: str | None = None
@@ -97,6 +85,30 @@ class QuizQuestionResult(BaseModel):
     picked_text: str | None = None
     correct_option_id: str | None = None
     correct: bool
+
+
+class CompleteRequest(BaseModel):
+    """Body for POST .../modules/{id}/complete. Only WATCH modules actually
+    use watched_pct/answers — watched_pct is how far through the video the
+    player tracked the learner reaching (the running max, not just wherever
+    playback currently sits, so scrubbing to the end doesn't let someone
+    skip the real watch-through); answers is every in-video question the
+    learner actually submitted (an untimed-out skip is simply missing from
+    this list — see QuizAnswerIn's docstring). Every other module type
+    ignores both; omit them entirely and the call still works for them."""
+    watched_pct: int | None = None
+    answers: list[QuizAnswerIn] = []
+
+
+class CompleteResult(BaseModel):
+    progress: int
+    course_completed: bool
+    certificate_code: str | None = None
+    # Populated only when the WATCH module had in-video questions —
+    # per-question correctness, same shape as QuizResult.results, so the
+    # frontend can reconcile its own live feedback against what the
+    # server actually scored and persisted.
+    video_question_results: list[QuizQuestionResult] = []
 
 
 class QuizResult(BaseModel):

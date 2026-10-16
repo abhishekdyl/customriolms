@@ -102,6 +102,14 @@ class Module(Base):
     # validated at the API layer, not here.
     restrictions: Mapped[list[dict]] = mapped_column(JSONB, default=list)
 
+    # WATCH-only in-video-question gate, independent of `threshold` (the
+    # min watched-%): when set, the module also requires at least this
+    # many of its in-video questions (ModuleQuizQuestion rows with a
+    # trigger_time_sec, see below) answered correctly. None/0 = no such
+    # gate, only the watched-% threshold applies — see learn_service's
+    # complete_module. Org-admin-configured per module.
+    video_question_min_correct: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     course: Mapped["Course"] = relationship(back_populates="modules")
     # Same reasoning as Course.modules/category above — ModuleOut always
     # includes questions, so it must be loaded within the awaited query,
@@ -153,5 +161,22 @@ class ModuleQuizQuestion(Base):
 
     # SHORT_ANSWER: matched case-insensitively against any entry
     accepted_answers: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+
+    # In-video question placement, WATCH modules only (NULL for QUIZ
+    # questions — they're ordered by `position`/shown all-at-once instead).
+    # Seconds into the video's playback at which this question fires and
+    # pauses it. Picture questions (image_key set, no text) are rejected
+    # for WATCH modules at the API layer — see schemas/question.py.
+    trigger_time_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # How long the question stays on screen before auto-submit/skip, in
+    # seconds. NULL = no timer — video stays paused until the learner
+    # actually submits an answer (see learn_service's in-video-answer
+    # handling for the submit-selected-else-skip-uncounted timeout rule).
+    timer_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Marks awarded for one correct answer to this question. Only
+    # meaningful for WATCH in-video questions and QUIZ questions that
+    # score by points rather than plain count — defaults to 1 so existing
+    # QUIZ scoring (count-based) is unaffected unless an admin changes it.
+    points: Mapped[int] = mapped_column(Integer, default=1)
 
     module: Mapped["Module"] = relationship(back_populates="questions")

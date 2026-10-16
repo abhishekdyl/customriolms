@@ -15,6 +15,12 @@ class ModuleCreate(BaseModel):
     type: ModuleType = ModuleType.WATCH
     required: bool = True
     threshold: int = 90
+    # WATCH-only extra completion gate (min correct in-video answers,
+    # alongside the watched-% threshold above) — see Module's own
+    # docstring. None = no such gate. Set via update_module afterward in
+    # practice (the create form doesn't need it up front), but accepted
+    # here too for symmetry.
+    video_question_min_correct: int | None = None
 
 
 class ModuleRestrictionIn(BaseModel):
@@ -66,6 +72,7 @@ class ModuleUpdate(BaseModel):
     type: ModuleType | None = None
     required: bool | None = None
     threshold: int | None = None
+    video_question_min_correct: int | None = None
     # file_url/file_name/file_size_label are deliberately not here — a
     # module's file is only ever set by the real upload endpoint (and
     # cleared by the matching delete endpoint), never by a free-text PATCH.
@@ -88,6 +95,7 @@ class ModuleOut(BaseModel):
     position: int
     required: bool
     threshold: int
+    video_question_min_correct: int | None = None
     file_url: str | None
     file_name: str | None
     file_size_label: str | None
@@ -312,6 +320,7 @@ class LearnerModuleOut(BaseModel):
     position: int
     required: bool
     threshold: int
+    video_question_min_correct: int | None = None
     file_url: str | None = None
     file_name: str | None = None
     file_size_label: str | None = None

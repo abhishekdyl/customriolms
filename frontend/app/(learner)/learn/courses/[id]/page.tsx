@@ -1,16 +1,114 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  ArrowLeft, BookOpen, CheckCircle2, Circle, HelpCircle, Loader2, Lock, PlayCircle, Sparkles, XCircle,
+  ArrowLeft, BookOpen, CheckCircle2, Circle, Clock, HelpCircle, Loader2, Lock, PlayCircle, Sparkles, XCircle,
 } from "lucide-react";
 import { useCompleteModule, useMyCourse, useSubmitQuiz } from "@/lib/hooks/use-my-courses";
 import { MODULE_TYPE_LABEL } from "@/lib/learner-courses";
 import { cn } from "@/lib/utils";
 import { ScormPlayer } from "@/components/shell/courses/scorm-player";
-import type { LearnerModule, QuizAnswer, QuizResult } from "@/lib/types";
+import type { CompleteResult, LearnerModule, QuizAnswer, QuizResult } from "@/lib/types";
+
+// One question's working answer while it's on screen — same shape as the
+// quiz panel's own Answer below, kept local to each component since they
+// never share state.
+type InVideoAnswer = { option_id?: string; text?: string };
+
+/** The in-video question overlay a WatchPlayer shows when playback
+ * reaches a question's trigger_time_sec — pauses the video underneath,
+ * runs an optional countdown (timer_seconds), and calls onResolve once
+ * with either a real answer or `null` (timed out with nothing picked —
+ * a skip, never scored as wrong, see QuizAnswerIn's docstring on the
+ * backend). onResolve is also how the parent resumes playback. */
+function InVideoQuestionOverlay({
+  question: q, onResolve,
+}: { question: LearnerModule["questions"][number]; onResolve: (answer: InVideoAnswer | null) => void }) {
+  const [answer, setAnswer] = useState<InVideoAnswer>({});
+  const [timeLeft, setTimeLeft] = useState<number | null>(q.timer_seconds);
+  const resolvedRef = useRef(false);
+
+  const resolve = (a: InVideoAnswer | null) => {
+    if (resolvedRef.current) return;
+    resolvedRef.current = true;
+    onResolve(a);
+  };
+
+  useEffect(() => {
+    if (q.timer_seconds == null) return;
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev === null) return prev;
+        if (prev <= 1) {
+          clearInterval(interval);
+          // Timeout: auto-submit whatever's selected, else it's a skip —
+          // never scored as wrong either way (see docstring above).
+          setAnswer((current) => {
+            const hasPick = current.option_id || (current.text ?? "").trim();
+            resolve(hasPick ? current : null);
+            return current;
+          });
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.id]);
+
+  const isShortAnswer = q.type === "short_answer";
+  const canSubmit = isShortAnswer ? !!(answer.text ?? "").trim() : !!answer.option_id;
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-ink/80 p-4">
+      <div className="w-full max-w-sm rounded-lg bg-paper p-4">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="text-[11px] font-medium text-ink-soft">Question</span>
+          {timeLeft !== null && (
+            <span className="flex items-center gap-1 text-[11px] font-medium text-amber">
+              <Clock size={12} /> {timeLeft}s
+            </span>
+          )}
+        </div>
+        <p className="text-[13px] text-ink">{q.text}</p>
+
+        {isShortAnswer ? (
+          <input
+            autoFocus
+            value={answer.text ?? ""}
+            onChange={(e) => setAnswer({ text: e.target.value })}
+            placeholder="Your answer (in English)"
+            className="mt-2 w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] outline-none"
+          />
+        ) : (
+          <div className="mt-2 flex flex-col gap-1">
+            {q.options.map((opt) => (
+              <label key={opt.id} className="flex items-center gap-2 rounded-md py-0.5">
+                <input
+                  type="radio" name={`iv-${q.id}`}
+                  checked={answer.option_id === opt.id}
+                  onChange={() => setAnswer({ option_id: opt.id })}
+                />
+                <span className="text-[12.5px] text-ink-soft">{opt.text}</span>
+              </label>
+            ))}
+          </div>
+        )}
+
+        <button
+          onClick={() => resolve(canSubmit ? answer : null)}
+          disabled={!canSubmit}
+          className="mt-3 w-full rounded-lg bg-primary py-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+        >
+          Submit answer
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const TABS = [
   { id: "content", label: "Modules", icon: BookOpen },
@@ -39,14 +137,66 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
   const videoRef = useRef<HTMLVideoElement>(null);
   const [watchedPct, setWatchedPct] = useState(m.score ?? 0);
 
+  // In-video questions (trigger_time_sec set) — ordered by when they fire.
+  const inVideoQuestions = [...m.questions]
+    .filter((q) => q.trigger_time_sec !== null)
+    .sort((a, b) => (a.trigger_time_sec ?? 0) - (b.trigger_time_sec ?? 0));
+  const [activeQuestion, setActiveQuestion] = useState<LearnerModule["questions"][number] | null>(null);
+  const [shownIds, setShownIds] = useState<Set<string>>(new Set());
+  const [collectedAnswers, setCollectedAnswers] = useState<Record<string, InVideoAnswer>>({});
+  const [completeResult, setCompleteResult] = useState<CompleteResult | null>(null);
+  // The furthest point actually reached via normal playback — used to
+  // snap back a forward scrub attempt, so a learner can't jump past an
+  // in-video question they haven't reached yet (rewinding to re-watch is
+  // still fine). Same "honest, not tamper-proof" design as watchedPct
+  // itself — the backend only ever sees the answers actually submitted.
+  const maxReachedRef = useRef(0);
+
   const onTimeUpdate = () => {
     const v = videoRef.current;
     if (!v || !v.duration) return;
     const pct = Math.round((v.currentTime / v.duration) * 100);
     setWatchedPct((prev) => Math.max(prev, pct));
+    maxReachedRef.current = Math.max(maxReachedRef.current, v.currentTime);
+
+    if (!activeQuestion) {
+      const due = inVideoQuestions.find((q) => !shownIds.has(q.id) && (q.trigger_time_sec ?? 0) <= v.currentTime);
+      if (due) {
+        v.pause();
+        setActiveQuestion(due);
+      }
+    }
+  };
+
+  const onSeeking = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.currentTime > maxReachedRef.current + 0.75) {
+      v.currentTime = maxReachedRef.current;
+    }
+  };
+
+  const resolveActiveQuestion = (answer: InVideoAnswer | null) => {
+    if (!activeQuestion) return;
+    if (answer) {
+      setCollectedAnswers((prev) => ({ ...prev, [activeQuestion.id]: answer }));
+    }
+    setShownIds((prev) => new Set(prev).add(activeQuestion.id));
+    setActiveQuestion(null);
+    videoRef.current?.play();
   };
 
   const needsMore = watchedPct < m.threshold;
+
+  const handleComplete = () => {
+    const answers: QuizAnswer[] = Object.entries(collectedAnswers).map(([question_id, a]) => ({
+      question_id, option_id: a.option_id ?? null, text: a.text ?? null,
+    }));
+    complete.mutate(
+      { moduleId: m.id, watched_pct: watchedPct, answers },
+      { onSuccess: (data) => setCompleteResult(data) },
+    );
+  };
 
   return (
     <div className="border-b border-line-soft py-3">
@@ -61,27 +211,44 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
           <div className="text-[11px] text-ink-faint">
             {MODULE_TYPE_LABEL[m.type]}
             {m.skill_count > 0 && ` · builds ${m.skill_count} skill${m.skill_count > 1 ? "s" : ""}`}
+            {inVideoQuestions.length > 0 && ` · ${inVideoQuestions.length} in-video question${inVideoQuestions.length > 1 ? "s" : ""}`}
           </div>
         </div>
         {m.completed && <span className="text-[11.5px] font-medium text-success">Completed</span>}
       </div>
 
       {m.file_url ? (
-        // eslint-disable-next-line jsx-a11y/media-has-caption
-        <video
-          ref={videoRef} src={m.file_url} controls onTimeUpdate={onTimeUpdate}
-          className="mb-2 max-h-[280px] w-full rounded-lg bg-ink"
-        />
+        <div className="relative mb-2">
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <video
+            ref={videoRef} src={m.file_url} controls onTimeUpdate={onTimeUpdate} onSeeking={onSeeking}
+            className="max-h-[280px] w-full rounded-lg bg-ink"
+          />
+          {activeQuestion && <InVideoQuestionOverlay question={activeQuestion} onResolve={resolveActiveQuestion} />}
+        </div>
       ) : (
         <div className="mb-2 flex h-[140px] items-center justify-center rounded-lg bg-ink">
           <PlayCircle size={32} color="rgba(255,255,255,0.5)" />
         </div>
       )}
 
+      {completeResult?.video_question_results.length ? (
+        <div className="mb-2 flex flex-col gap-1">
+          {completeResult.video_question_results.map((r, i) => (
+            <div key={r.question_id} className="flex items-center gap-1.5 text-[11.5px]">
+              {r.correct ? <CheckCircle2 size={12} color="var(--color-success)" /> : <XCircle size={12} color="var(--color-danger)" />}
+              <span className="text-ink-soft">In-video question {i + 1} — {r.correct ? "correct" : "not correct"}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {!m.completed && (
         <>
           <div className="mb-1.5 text-[11.5px] text-ink-faint">
             Watched {watchedPct}% · need {m.threshold}% to mark this complete
+            {m.video_question_min_correct !== null &&
+              ` · ${Object.keys(collectedAnswers).length}/${inVideoQuestions.length} in-video questions answered, need ${m.video_question_min_correct} correct`}
           </div>
           {complete.isError && (
             <div className="mb-1.5 text-[11px] text-danger">
@@ -89,8 +256,8 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
             </div>
           )}
           <button
-            onClick={() => complete.mutate({ moduleId: m.id, watched_pct: watchedPct })}
-            disabled={needsMore || complete.isPending}
+            onClick={handleComplete}
+            disabled={needsMore || !!activeQuestion || complete.isPending}
             title={needsMore ? `Keep watching — ${m.threshold - watchedPct}% to go` : undefined}
             className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-white disabled:opacity-40"
           >

@@ -23,12 +23,16 @@ export function useMyCourse(id: string) {
 
 /** Marks a non-quiz module (watch/read/manual/scorm) done for the caller.
  * watched_pct only matters for a WATCH module — the backend 400s if it's
- * below that module's threshold (see learn_service.complete_module). */
+ * below that module's threshold (see learn_service.complete_module).
+ * answers carries any in-video question answers the learner submitted
+ * during playback (a timed-out, unanswered question is simply absent
+ * from this array — it's not counted as wrong, see QuizAnswerIn) — only
+ * meaningful for a WATCH module with in-video questions, ignored otherwise. */
 export function useCompleteModule(courseId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ moduleId, watched_pct }: { moduleId: string; watched_pct?: number }) =>
-      api.post<CompleteResult>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/complete`, { watched_pct }),
+    mutationFn: ({ moduleId, watched_pct, answers }: { moduleId: string; watched_pct?: number; answers?: QuizAnswer[] }) =>
+      api.post<CompleteResult>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/complete`, { watched_pct, answers }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["courses", "mine", courseId] });
       qc.invalidateQueries({ queryKey: ["courses", "mine"] });

@@ -273,8 +273,8 @@ async def _assert_module_unlocked(db: AsyncSession, user: User, course: Course, 
 
 
 async def complete_module(
-    db: AsyncSession, user: User, module_id: uuid.UUID, watched_pct: int | None = None,
-) -> tuple[int, bool, str | None]:
+    db: AsyncSession, user: User, module_id: uuid.UUID, watched_pct: int | None = None, answers: list | None = None,
+) -> tuple[int, bool, str | None, list[dict]]:
     module, course = await _module_in_assigned_course(db, user, module_id)
     if module.type == ModuleType.QUIZ:
         raise HTTPException(status_code=400, detail="Quiz modules are completed by passing the quiz")
@@ -282,6 +282,7 @@ async def complete_module(
     await _assert_module_unlocked(db, user, course, module)
 
     score = None
+    video_question_results: list[dict] = []
     if module.type == ModuleType.WATCH:
         # Mirrors the QUIZ gate below — a WATCH module's own `threshold` is
         # its pass mark too ("min % watched (WATCH) or min score (QUIZ)",
@@ -297,11 +298,37 @@ async def complete_module(
                 status_code=400,
                 detail=f"Watch at least {module.threshold}% of the video first — you're at {pct}%.",
             )
+
+        # In-video questions (trigger_time_sec set) are an extra gate on
+        # top of watched_pct, not a replacement for it — org-admin set via
+        # Module.video_question_min_correct. A module with no in-video
+        # questions (the pre-existing WATCH flow) just skips all of this,
+        # same behavior as before this feature existed.
+        in_video_questions = [q for q in module.questions if q.trigger_time_sec is not None]
+        if in_video_questions:
+            video_question_results, snapshot, right, _points = _score_questions(in_video_questions, answers or [])
+            min_correct = module.video_question_min_correct
+            if min_correct is not None and right < min_correct:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Answer at least {min_correct} in-video question(s) correctly — you got {right}.",
+                )
+            # Always persisted (pass or fail), same "every submission gets
+            # a row" rule as a QUIZ module's QuizAttempt — score here is
+            # the % of in-video questions answered correctly, independent
+            # of watched_pct (which is what ModuleProgress.score ends up
+            # holding instead, for the module-progress matrix/leaderboard).
+            iv_score = round(100 * right / len(in_video_questions))
+            db.add(QuizAttempt(
+                org_id=user.org_id, user_id=user.id, module_id=module.id, score=iv_score,
+                passed=min_correct is None or right >= min_correct, answers_json=snapshot,
+            ))
         score = pct
 
     await _mark_done(db, user, course, module, score)
     await db.commit()
-    return await _finish_course_if_done(db, user, course)
+    pct, completed, code = await _finish_course_if_done(db, user, course)
+    return pct, completed, code, video_question_results
 
 
 async def _module_in_assigned_course(db: AsyncSession, user: User, module_id: uuid.UUID) -> tuple[Module, Course]:
@@ -317,26 +344,23 @@ def _short_answer_correct(picked_text: str | None, accepted: list[str]) -> bool:
     return bool(picked) and any(picked == (a or "").strip().lower() for a in accepted)
 
 
-async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answers: list) -> dict:
-    """`answers` is a list of QuizAnswerIn (schemas/learn.py) — each keyed by
-    question_id rather than position, so scoring doesn't depend on the
-    client sending questions back in the same order it received them.
+def _score_questions(questions: list, answers: list) -> tuple[list[dict], list[dict], int, int]:
+    """Shared by submit_quiz (QUIZ modules) and complete_module's WATCH
+    in-video-question branch — same per-question correctness logic either
+    way. Returns (results, snapshot, right_count, earned_points).
 
-    MCQ/TRUE_FALSE: correct iff the picked option_id matches the question's
-    correct_option_id. SHORT_ANSWER: correct iff the picked text
-    case-insensitively matches one of accepted_answers."""
-    module, course = await _module_in_assigned_course(db, user, module_id)
-    if module.type != ModuleType.QUIZ or not module.questions:
-        raise HTTPException(status_code=400, detail="This module has no quiz")
-    assert_course_open(course)
-    await _assert_module_unlocked(db, user, course, module)
+    A question absent from `answers` (never answered — including a
+    skipped-on-timeout in-video question, see QuizAnswerIn's docstring)
+    simply scores not-correct here; it's the caller's job to not otherwise
+    penalize a skip beyond that (no negative marking either way)."""
     answers_by_question = {a.question_id: a for a in answers}
     results = []
     snapshot = []  # same data as `results`, plus the question/option text — stored on
                     # the attempt so an admin can see exactly what was asked and picked
                     # even if the question is later edited or deleted (see QuizAttempt's docstring)
     right = 0
-    for q in module.questions:
+    earned_points = 0
+    for q in questions:
         ans = answers_by_question.get(q.id)
         picked_option_id = ans.option_id if ans else None
         picked_text = ans.text if ans else None
@@ -346,6 +370,7 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
         else:
             ok = picked_option_id is not None and picked_option_id == q.correct_option_id
         right += 1 if ok else 0
+        earned_points += (q.points or 1) if ok else 0
         results.append({
             "question_id": q.id, "picked_option_id": picked_option_id, "picked_text": picked_text,
             "correct_option_id": q.correct_option_id, "correct": ok,
@@ -365,6 +390,23 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
             "accepted_answers": q.accepted_answers or [],
             "correct": ok,
         })
+    return results, snapshot, right, earned_points
+
+
+async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answers: list) -> dict:
+    """`answers` is a list of QuizAnswerIn (schemas/learn.py) — each keyed by
+    question_id rather than position, so scoring doesn't depend on the
+    client sending questions back in the same order it received them.
+
+    MCQ/TRUE_FALSE: correct iff the picked option_id matches the question's
+    correct_option_id. SHORT_ANSWER: correct iff the picked text
+    case-insensitively matches one of accepted_answers."""
+    module, course = await _module_in_assigned_course(db, user, module_id)
+    if module.type != ModuleType.QUIZ or not module.questions:
+        raise HTTPException(status_code=400, detail="This module has no quiz")
+    assert_course_open(course)
+    await _assert_module_unlocked(db, user, course, module)
+    results, snapshot, right, _earned_points = _score_questions(module.questions, answers)
     score = round(100 * right / len(module.questions))
     passed = score >= module.threshold
     db.add(QuizAttempt(

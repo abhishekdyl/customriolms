@@ -91,8 +91,11 @@ async def complete(
     module_id: uuid.UUID, body: CompleteRequest | None = None,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    pct, completed, code = await svc.complete_module(db, user, module_id, (body.watched_pct if body else None))
-    return CompleteResult(progress=pct, course_completed=completed, certificate_code=code)
+    pct, completed, code, video_question_results = await svc.complete_module(
+        db, user, module_id, (body.watched_pct if body else None), (body.answers if body else None),
+    )
+    return CompleteResult(progress=pct, course_completed=completed, certificate_code=code,
+                           video_question_results=video_question_results)
 
 
 @router.post("/modules/{module_id}/quiz", response_model=QuizResult)

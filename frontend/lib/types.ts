@@ -103,7 +103,9 @@ export interface QuestionOption {
 }
 
 /** Authoring shape — includes the answer key. Mirrors
- * backend/app/schemas/question.py's QuestionOut. */
+ * backend/app/schemas/question.py's QuestionOut. trigger_time_sec/
+ * timer_seconds/points only matter for a WATCH module's in-video
+ * questions — null/default on an ordinary QUIZ question. */
 export interface QuizQuestion {
   id: string;
   type: QuestionType;
@@ -113,11 +115,18 @@ export interface QuizQuestion {
   options: QuestionOption[];
   correct_option_id: string | null;
   accepted_answers: string[];
+  trigger_time_sec: number | null;
+  timer_seconds: number | null;
+  points: number;
 }
 
 /** What the authoring UI sends to create/replace a question — mirrors
  * QuestionIn. image_key/option image_key are set by uploading first via
- * POST /question-banks/images, then embedding the returned key here. */
+ * POST /question-banks/images, then embedding the returned key here.
+ * trigger_time_sec is required by the backend for every question on a
+ * WATCH module (and rejected on a QUIZ module's) — see course_service's
+ * update_module validation. Picture questions (image_key set, on the
+ * question or any option) are rejected for WATCH modules too. */
 export interface QuestionInput {
   type: QuestionType;
   text: string | null;
@@ -125,6 +134,9 @@ export interface QuestionInput {
   options: { id: string; text: string | null; image_key: string | null }[];
   correct_option_id: string | null;
   accepted_answers: string[];
+  trigger_time_sec?: number | null;
+  timer_seconds?: number | null;
+  points?: number;
 }
 
 /** One access condition on a module (Module.restrictions) — ALL of a
@@ -142,6 +154,9 @@ export interface Module {
   position: number;
   required: boolean;
   threshold: number;
+  // WATCH-only extra completion gate: min correct in-video answers,
+  // alongside threshold (watched-%) above. Null = no such gate.
+  video_question_min_correct: number | null;
   file_url: string | null;
   file_name: string | null;
   file_size_label: string | null;
@@ -312,6 +327,7 @@ export interface LearnerModule {
   position: number;
   required: boolean;
   threshold: number;
+  video_question_min_correct: number | null;
   file_url: string | null;
   file_name: string | null;
   file_size_label: string | null;
@@ -319,13 +335,17 @@ export interface LearnerModule {
   scorm_version: string | null;
   instructions: string | null;
   skill_count: number;
-  /** No answer key — mirrors QuestionLearnerOut. */
+  /** No answer key — mirrors QuestionLearnerOut. trigger_time_sec/
+   * timer_seconds are included (unlike the answer key) so the WATCH
+   * player knows when to pause and whether to run a countdown. */
   questions: {
     id: string;
     type: QuestionType;
     text: string | null;
     image_url: string | null;
     options: QuestionOption[];
+    trigger_time_sec: number | null;
+    timer_seconds: number | null;
   }[];
   completed: boolean;
   /** Best score (QUIZ) or furthest watched-% (WATCH) recorded so far —
@@ -352,6 +372,9 @@ export interface CompleteResult {
   progress: number;
   course_completed: boolean;
   certificate_code: string | null;
+  /** Populated only when the WATCH module had in-video questions —
+   * per-question correctness, same shape as QuizResult.results. */
+  video_question_results: QuizQuestionResult[];
 }
 
 /** One answer to one question, submitted by question_id (not position) —

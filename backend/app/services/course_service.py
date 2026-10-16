@@ -209,6 +209,20 @@ async def update_module(db: AsyncSession, module: Module, body: ModuleUpdate, or
         module.restrictions = [r.model_dump(mode="json", exclude_none=True) for r in body.restrictions]
 
     if body.questions is not None:
+        # The module's resolved type after this PATCH — body.type if it's
+        # changing type in the same request, else whatever it already is.
+        resolved_type = body.type if body.type is not None else module.type
+        if resolved_type is ModuleType.WATCH:
+            for q in body.questions:
+                if q.trigger_time_sec is None:
+                    raise HTTPException(status_code=400, detail="Every in-video question needs a trigger_time_sec")
+                if q.image_key or any(o.image_key for o in q.options):
+                    raise HTTPException(status_code=400, detail="Picture questions can't be used in-video — remove the image")
+        else:
+            for q in body.questions:
+                if q.trigger_time_sec is not None:
+                    raise HTTPException(status_code=400, detail="trigger_time_sec only applies to WATCH modules")
+
         # Replace the full question set rather than diffing — authoring UI always
         # sends the complete list back on save, same as the frontend's own state model.
         for q in list(module.questions):
@@ -218,6 +232,7 @@ async def update_module(db: AsyncSession, module: Module, body: ModuleUpdate, or
                 module_id=module.id, position=i, type=q.type, text=q.text, image_key=q.image_key,
                 options_json=[o.model_dump() for o in q.options],
                 correct_option_id=q.correct_option_id, accepted_answers=q.accepted_answers,
+                trigger_time_sec=q.trigger_time_sec, timer_seconds=q.timer_seconds, points=q.points,
             ))
 
     await db.commit()

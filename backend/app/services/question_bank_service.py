@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.module import Module, ModuleQuizQuestion
+from app.models.module import Module, ModuleQuizQuestion, ModuleType
 from app.models.question_bank import BankQuestion, QuestionBank
 from app.schemas.question import QuestionIn
 
@@ -98,6 +98,11 @@ async def import_into_module(db: AsyncSession, module: Module, bank: QuestionBan
     missing = [qid for qid in question_ids if qid not in by_id]
     if missing:
         raise HTTPException(status_code=400, detail=f"Unknown question id(s) in this bank: {', '.join(str(m) for m in missing)}")
+
+    if module.type == ModuleType.WATCH:
+        picture = [qid for qid in question_ids if by_id[qid].image_key or any(o.get("image_key") for o in (by_id[qid].options_json or []))]
+        if picture:
+            raise HTTPException(status_code=400, detail="Picture questions can't be used in-video — deselect them to import the rest")
 
     max_position = max((q.position for q in module.questions), default=-1)
     for i, qid in enumerate(question_ids):

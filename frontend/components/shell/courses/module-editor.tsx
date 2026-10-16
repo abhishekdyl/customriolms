@@ -241,11 +241,23 @@ function BankImportPicker({ courseId, moduleId, onDone }: { courseId: string; mo
   );
 }
 
-export function QuestionCard({ q, onChange, onDelete }: { q: QuizQuestion; onChange: (next: QuizQuestion) => void; onDelete: () => void }) {
+export function QuestionCard({
+  q, onChange, onDelete, showImagePicker = true, showTiming = false,
+}: {
+  q: QuizQuestion; onChange: (next: QuizQuestion) => void; onDelete: () => void;
+  // false for a WATCH module's in-video questions — picture questions
+  // aren't allowed mid-video (backend rejects image_key there), so the
+  // picker is hidden entirely rather than left to fail on save.
+  showImagePicker?: boolean;
+  // true for a WATCH module's in-video questions — renders the
+  // trigger-time/timer/points row below, which a plain QUIZ question has
+  // no use for.
+  showTiming?: boolean;
+}) {
   const setType = (type: QuestionType) => {
     if (type === q.type) return;
     const base = newQuestion(type);
-    onChange({ ...base, id: q.id, text: q.text, image_key: q.image_key, image_url: q.image_url });
+    onChange({ ...base, id: q.id, text: q.text, image_key: q.image_key, image_url: q.image_url, trigger_time_sec: q.trigger_time_sec, timer_seconds: q.timer_seconds, points: q.points });
   };
 
   return (
@@ -257,16 +269,48 @@ export function QuestionCard({ q, onChange, onDelete }: { q: QuizQuestion; onCha
         <button onClick={onDelete}><Trash2 className="h-3.5 w-3.5 text-danger" /></button>
       </div>
 
+      {showTiming && (
+        <div className="mb-2 flex items-center gap-3 rounded-md bg-surface px-2.5 py-1.5">
+          <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+            Shows at
+            <input
+              type="number" min={0} value={q.trigger_time_sec ?? ""} placeholder="sec"
+              onChange={(e) => onChange({ ...q, trigger_time_sec: e.target.value === "" ? null : Number(e.target.value) })}
+              className="h-6 w-16 rounded-md border border-line px-1.5 text-[11px]"
+            />
+            s
+          </label>
+          <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+            Timer
+            <input
+              type="number" min={1} value={q.timer_seconds ?? ""} placeholder="none"
+              onChange={(e) => onChange({ ...q, timer_seconds: e.target.value === "" ? null : Number(e.target.value) })}
+              className="h-6 w-16 rounded-md border border-line px-1.5 text-[11px]"
+            />
+            s
+          </label>
+          <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+            Points
+            <input
+              type="number" min={1} value={q.points} onChange={(e) => onChange({ ...q, points: Number(e.target.value) || 1 })}
+              className="h-6 w-14 rounded-md border border-line px-1.5 text-[11px]"
+            />
+          </label>
+        </div>
+      )}
+
       <div className="mb-2 flex items-start gap-2">
         <Input
-          value={q.text ?? ""} placeholder="Question text (optional if there's an image)"
+          value={q.text ?? ""} placeholder={showImagePicker ? "Question text (optional if there's an image)" : "Question text"}
           onChange={(e) => onChange({ ...q, text: e.target.value })} className="h-8 flex-1 text-sm"
         />
-        <ImagePicker
-          imageUrl={q.image_url}
-          onUploaded={(key, url) => onChange({ ...q, image_key: key, image_url: url })}
-          onRemove={() => onChange({ ...q, image_key: null, image_url: null })}
-        />
+        {showImagePicker && (
+          <ImagePicker
+            imageUrl={q.image_url}
+            onUploaded={(key, url) => onChange({ ...q, image_key: key, image_url: url })}
+            onRemove={() => onChange({ ...q, image_key: null, image_url: null })}
+          />
+        )}
       </div>
 
       {(q.type === "mcq" || q.type === "true_false") && (
@@ -281,12 +325,14 @@ export function QuestionCard({ q, onChange, onDelete }: { q: QuizQuestion; onCha
                 onChange={(e) => onChange({ ...q, options: q.options.map((o) => (o.id === opt.id ? { ...o, text: e.target.value } : o)) })}
                 className="flex-1 border-b border-line-soft bg-transparent py-0.5 text-xs outline-none"
               />
-              <ImagePicker
-                imageUrl={opt.image_url}
-                size="h-10 w-10"
-                onUploaded={(key, url) => onChange({ ...q, options: q.options.map((o) => (o.id === opt.id ? { ...o, image_key: key, image_url: url } : o)) })}
-                onRemove={() => onChange({ ...q, options: q.options.map((o) => (o.id === opt.id ? { ...o, image_key: null, image_url: null } : o)) })}
-              />
+              {showImagePicker && (
+                <ImagePicker
+                  imageUrl={opt.image_url}
+                  size="h-10 w-10"
+                  onUploaded={(key, url) => onChange({ ...q, options: q.options.map((o) => (o.id === opt.id ? { ...o, image_key: key, image_url: url } : o)) })}
+                  onRemove={() => onChange({ ...q, options: q.options.map((o) => (o.id === opt.id ? { ...o, image_key: null, image_url: null } : o)) })}
+                />
+              )}
               {q.type === "mcq" && q.options.length > 2 && (
                 <button onClick={() => onChange({ ...q, options: q.options.filter((o) => o.id !== opt.id), correct_option_id: q.correct_option_id === opt.id ? null : q.correct_option_id })}>
                   <X className="h-3 w-3 text-ink-faint" />
@@ -349,6 +395,53 @@ function QuizBuilder({
           className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-dashed border-line py-2"
         >
           <Plus className="h-3 w-3 text-primary" /> <span className="text-xs font-medium text-primary">Add question</span>
+        </button>
+        <button
+          onClick={() => setImporting((v) => !v)}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-dashed border-line py-2"
+        >
+          <Library className="h-3 w-3 text-primary" /> <span className="text-xs font-medium text-primary">Import from bank</span>
+        </button>
+      </div>
+      {importing && <BankImportPicker courseId={courseId} moduleId={moduleId} onDone={() => setImporting(false)} />}
+    </div>
+  );
+}
+
+/** In-video questions for a WATCH module — same building blocks as
+ * QuizBuilder (QuestionCard, bank import) but time-ordered, with no image
+ * picker (picture questions aren't allowed mid-video) and the
+ * trigger-time/timer/points row shown instead. A newly added question
+ * starts with trigger_time_sec: null — the backend 400s on save until
+ * the admin fills in a time, same as any other required field left
+ * blank, rather than silently defaulting to 0s. A bank-imported question
+ * lands the same way (see question_bank_service.import_into_module) —
+ * it keeps its position at the end until the admin gives it a time too. */
+function WatchQuestionsBuilder({
+  courseId, moduleId, questions, onChange,
+}: { courseId: string; moduleId: string; questions: QuizQuestion[]; onChange: (q: QuizQuestion[]) => void }) {
+  const [importing, setImporting] = useState(false);
+  const updateQ = (id: string, next: QuizQuestion) => onChange(questions.map((q) => (q.id === id ? next : q)));
+  const deleteQ = (id: string) => onChange(questions.filter((q) => q.id !== id));
+  const sorted = [...questions].sort((a, b) => (a.trigger_time_sec ?? Infinity) - (b.trigger_time_sec ?? Infinity));
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <p className="text-[11px] text-ink-soft">
+        Pauses the video at each question's time below — no timer means playback stays paused until the learner submits.
+      </p>
+      {sorted.map((q) => (
+        <QuestionCard
+          key={q.id} q={q} onChange={(next) => updateQ(q.id, next)} onDelete={() => deleteQ(q.id)}
+          showImagePicker={false} showTiming
+        />
+      ))}
+      <div className="flex gap-2">
+        <button
+          onClick={() => onChange([...questions, newQuestion("mcq")])}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-dashed border-line py-2"
+        >
+          <Plus className="h-3 w-3 text-primary" /> <span className="text-xs font-medium text-primary">Add in-video question</span>
         </button>
         <button
           onClick={() => setImporting((v) => !v)}
@@ -610,10 +703,16 @@ export function ModuleEditorRow({
           <div>
             <p className="mb-1.5 text-[11px] text-ink-soft">Content</p>
             {m.type === "watch" && (
-              <FileMetaField
-                courseId={courseId} moduleId={m.id} label="Upload video" accept="video/mp4,video/webm,video/quicktime,video/x-matroska"
-                fileName={m.file_name} fileSizeLabel={m.file_size_label} fileUrl={m.file_url}
-              />
+              <>
+                <FileMetaField
+                  courseId={courseId} moduleId={m.id} label="Upload video" accept="video/mp4,video/webm,video/quicktime,video/x-matroska"
+                  fileName={m.file_name} fileSizeLabel={m.file_size_label} fileUrl={m.file_url}
+                />
+                <div className="mt-3">
+                  <p className="mb-1.5 text-[11px] text-ink-soft">In-video questions (optional)</p>
+                  <WatchQuestionsBuilder courseId={courseId} moduleId={m.id} questions={m.questions} onChange={(qs) => onChange({ questions: qs })} />
+                </div>
+              </>
             )}
             {m.type === "read" && (
               <FileMetaField
@@ -646,6 +745,22 @@ export function ModuleEditorRow({
               <div className="flex items-center gap-2">
                 <input type="range" min={50} max={100} step={5} value={m.threshold} onChange={(e) => onChange({ threshold: Number(e.target.value) })} className="w-24 accent-primary" />
                 <span className="w-9 text-right text-xs text-ink">{m.threshold}%</span>
+              </div>
+            </div>
+          )}
+
+          {m.type === "watch" && m.questions.length > 0 && (
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-ink-soft">Also require correct in-video answers</span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number" min={0} max={m.questions.length}
+                  value={m.video_question_min_correct ?? ""}
+                  placeholder="off"
+                  onChange={(e) => onChange({ video_question_min_correct: e.target.value === "" ? null : Number(e.target.value) })}
+                  className="h-7 w-14 rounded-md border border-line px-1.5 text-xs"
+                />
+                <span className="text-[10px] text-ink-faint">of {m.questions.length} correct</span>
               </div>
             </div>
           )}

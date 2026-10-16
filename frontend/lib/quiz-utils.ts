@@ -8,6 +8,11 @@ export function tempId(prefix: string): string {
   return `${prefix}-${Date.now()}-${counter}`;
 }
 
+/** trigger_time_sec stays null here even for a WATCH module's question —
+ * the module editor sets it explicitly once the admin picks a timestamp;
+ * leaving it null by default also means a question created but not yet
+ * placed on the timeline fails the backend's required-for-WATCH check
+ * loudly, rather than silently landing at 0s. */
 export function newQuestion(type: QuizQuestion["type"] = "mcq"): QuizQuestion {
   if (type === "true_false") {
     return {
@@ -17,12 +22,14 @@ export function newQuestion(type: QuizQuestion["type"] = "mcq"): QuizQuestion {
         { id: tempId("opt"), text: "False", image_key: null, image_url: null },
       ],
       correct_option_id: null, accepted_answers: [],
+      trigger_time_sec: null, timer_seconds: null, points: 1,
     };
   }
   if (type === "short_answer") {
     return {
       id: tempId("q"), type, text: "New question", image_key: null, image_url: null,
       options: [], correct_option_id: null, accepted_answers: [""],
+      trigger_time_sec: null, timer_seconds: null, points: 1,
     };
   }
   return {
@@ -32,6 +39,7 @@ export function newQuestion(type: QuizQuestion["type"] = "mcq"): QuizQuestion {
       { id: tempId("opt"), text: "Option B", image_key: null, image_url: null },
     ],
     correct_option_id: null, accepted_answers: [],
+    trigger_time_sec: null, timer_seconds: null, points: 1,
   };
 }
 
@@ -49,5 +57,8 @@ export function toQuestionInput(q: QuizQuestion): QuestionInput {
     })),
     correct_option_id: q.correct_option_id,
     accepted_answers: q.accepted_answers.filter((a) => a.trim()),
+    trigger_time_sec: q.trigger_time_sec,
+    timer_seconds: q.timer_seconds,
+    points: q.points,
   };
 }

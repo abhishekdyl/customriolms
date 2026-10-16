@@ -67,8 +67,11 @@ async def complete_my_module(
     complete_module via assigned_courses). body.watched_pct only matters
     for a WATCH module — see complete_module's docstring."""
     await _module_belongs_to_course(module_id, course_id, db)
-    pct, completed, code = await progress_svc.complete_module(db, current_user, module_id, (body.watched_pct if body else None))
-    return CompleteResult(progress=pct, course_completed=completed, certificate_code=code)
+    pct, completed, code, video_question_results = await progress_svc.complete_module(
+        db, current_user, module_id, (body.watched_pct if body else None), (body.answers if body else None),
+    )
+    return CompleteResult(progress=pct, course_completed=completed, certificate_code=code,
+                           video_question_results=video_question_results)
 
 
 @router.post("/mine/{course_id}/modules/{module_id}/quiz", response_model=QuizResult)
