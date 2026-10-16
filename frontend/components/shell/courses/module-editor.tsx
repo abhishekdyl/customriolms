@@ -206,8 +206,18 @@ function isPictureQuestion(q: { image_key: string | null; options: { image_key?:
 }
 
 function BankImportPicker({
-  courseId, moduleId, onDone, excludePictureQuestions = false,
-}: { courseId: string; moduleId: string; onDone: () => void; excludePictureQuestions?: boolean }) {
+  courseId, moduleId, onDone, excludePictureQuestions = false, onImported,
+}: {
+  courseId: string; moduleId: string; onDone: () => void; excludePictureQuestions?: boolean;
+  // Called with the server's fresh copy of the module right after a
+  // successful import, before onDone closes the panel — lets the caller
+  // merge the newly-imported question(s) into its own local draft
+  // without losing any of that draft's other unsaved edits (see
+  // WatchQuestionsBuilder/QuizBuilder's own onChange wiring, which is
+  // what the admin's edits actually flow through — this module stays
+  // unsaved server-side until that module's own "Save changes" fires).
+  onImported?: (module: Module) => void;
+}) {
   const { data: banks } = useQuestionBanks();
   const [bankId, setBankId] = useState<string>("");
   const { data: bank } = useQuestionBank(bankId || null);
@@ -248,7 +258,9 @@ function BankImportPicker({
           {importable.length > 0 && (
             <button
               disabled={selected.length === 0 || importQs.isPending}
-              onClick={() => importQs.mutate({ bankId, moduleId, questionIds: selected }, { onSuccess: onDone })}
+              onClick={() => importQs.mutate({ bankId, moduleId, questionIds: selected }, {
+                onSuccess: (mod) => { onImported?.(mod); onDone(); },
+              })}
               className="mt-1 w-full rounded-md bg-primary py-1.5 text-[11px] font-medium text-white disabled:opacity-40"
             >
               {importQs.isPending ? "Importing…" : `Import ${selected.length || ""} question${selected.length === 1 ? "" : "s"}`}
@@ -265,6 +277,18 @@ function BankImportPicker({
 function formatClock(totalSeconds: number): string {
   const s = Math.max(0, Math.round(totalSeconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Merges a bank import's fresh server response into the local
+ * (possibly unsaved-edited) question list: an id already present locally
+ * keeps its local version — preserving whatever the admin was mid-editing
+ * (a trigger time, a timer) — while a brand-new id (the just-imported
+ * question) is taken from the server as-is. Used by both QuizBuilder and
+ * WatchQuestionsBuilder's BankImportPicker#onImported, since import can
+ * land on a module that already has unsaved edits sitting in its draft. */
+function mergeImportedQuestions(local: QuizQuestion[], serverQuestions: QuizQuestion[]): QuizQuestion[] {
+  const localById = new Map(local.map((q) => [q.id, q]));
+  return serverQuestions.map((serverQ) => localById.get(serverQ.id) ?? serverQ);
 }
 
 export function QuestionCard({
@@ -434,7 +458,12 @@ function QuizBuilder({
           <Library className="h-3 w-3 text-primary" /> <span className="text-xs font-medium text-primary">Import from bank</span>
         </button>
       </div>
-      {importing && <BankImportPicker courseId={courseId} moduleId={moduleId} onDone={() => setImporting(false)} />}
+      {importing && (
+        <BankImportPicker
+          courseId={courseId} moduleId={moduleId} onDone={() => setImporting(false)}
+          onImported={(mod) => onChange(mergeImportedQuestions(questions, mod.questions))}
+        />
+      )}
     </div>
   );
 }
@@ -532,7 +561,12 @@ function WatchQuestionsBuilder({
           <Library className="h-3 w-3 text-primary" /> <span className="text-xs font-medium text-primary">Import from bank</span>
         </button>
       </div>
-      {importing && <BankImportPicker courseId={courseId} moduleId={moduleId} onDone={() => setImporting(false)} excludePictureQuestions />}
+      {importing && (
+        <BankImportPicker
+          courseId={courseId} moduleId={moduleId} onDone={() => setImporting(false)} excludePictureQuestions
+          onImported={(mod) => onChange(mergeImportedQuestions(questions, mod.questions))}
+        />
+      )}
     </div>
   );
 }
@@ -546,7 +580,7 @@ function toDateInputValue(iso: string | null): string {
   return iso ? iso.slice(0, 10) : "";
 }
 
-function restrictionValid(r: ModuleRestriction): boolean {
+export function restrictionValid(r: ModuleRestriction): boolean {
   if (r.type === "date_window") return !!(r.opens_at || r.closes_at) && (!r.opens_at || !r.closes_at || r.closes_at > r.opens_at);
   if (r.type === "profile_field") return !!r.value.trim();
   if (r.type === "module_score") return !!r.module_id && r.min_score >= 0 && r.min_score <= 100;
@@ -684,12 +718,27 @@ export function ModuleEditorRow({
   allModules,
   onChange,
   onDelete,
+  isDirty,
+  saving,
+  onSave,
 }: {
   courseId: string;
   module: Module;
   allModules: Module[];
+  // Updates this module's local draft only — nothing is sent to the
+  // server until onSave is called. The caller (CourseManagePage) still
+  // owns the actual module state and marks it dirty on any onChange.
   onChange: (patch: Partial<Module>) => void;
   onDelete: () => void;
+  // True once this module has unsaved local edits (tracked by the
+  // caller, since it owns the pre-edit baseline to diff against).
+  isDirty: boolean;
+  saving: boolean;
+  // Fires the actual PATCH with this module's current full state —
+  // restrictions filtered to only the complete ones (see
+  // restrictionValid) and questions converted to the authoring input
+  // shape happen at the call site in CourseManagePage, not here.
+  onSave: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const { data: skills } = useSkills();
@@ -706,24 +755,6 @@ export function ModuleEditorRow({
   // different module opened).
   const [videoDurationSec, setVideoDurationSec] = useState<number | null>(null);
   useEffect(() => { setVideoDurationSec(null); }, [m.file_url]);
-
-  // Restrictions get their own local draft + debounce, decoupled from the
-  // parent's instant per-field patch (used by every other field here) —
-  // an in-progress restriction (e.g. "+ Learner profile" just clicked,
-  // no value typed yet) needs to stay on screen without ever being sent
-  // to the server, which the parent's generic patch doesn't support.
-  // Resynced only on module identity change, not on every re-render, so
-  // mid-edit typing survives this module's own debounced saves.
-  const [restrictionsDraft, setRestrictionsDraft] = useState<Module["restrictions"]>(m.restrictions);
-  const restrictionsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => { setRestrictionsDraft(m.restrictions); }, [m.id]);
-  const updateRestrictions = (next: Module["restrictions"]) => {
-    setRestrictionsDraft(next);
-    if (restrictionsTimer.current) clearTimeout(restrictionsTimer.current);
-    restrictionsTimer.current = setTimeout(() => {
-      onChange({ restrictions: next.filter(restrictionValid) });
-    }, 500);
-  };
 
   const hasContent =
     m.type === "manual" ? !!m.instructions : m.type === "quiz" ? m.questions.length > 0 : !!m.file_name;
@@ -747,6 +778,9 @@ export function ModuleEditorRow({
           </div>
         </div>
         {m.certificate_enabled && <Award className="h-3.5 w-3.5 flex-shrink-0 text-amber" />}
+        {isDirty && (
+          <span className="flex-shrink-0 whitespace-nowrap rounded-full bg-amber-soft px-2 py-0.5 text-[10px] font-medium text-amber">Unsaved</span>
+        )}
         {hasContent ? (
           <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-success" />
         ) : (
@@ -877,9 +911,9 @@ export function ModuleEditorRow({
           </div>
 
           <RestrictionsEditor
-            restrictions={restrictionsDraft}
+            restrictions={m.restrictions}
             otherModules={allModules.filter((om) => om.id !== m.id)}
-            onChange={updateRestrictions}
+            onChange={(next) => onChange({ restrictions: next })}
           />
 
           {(badges?.length ?? 0) > 0 && (
@@ -929,9 +963,19 @@ export function ModuleEditorRow({
             )}
           </div>
 
-          <button onClick={onDelete} className="mt-1 flex items-center gap-1.5 self-start">
-            <Trash2 className="h-3 w-3 text-danger" /> <span className="text-[11.5px] text-danger">Remove module</span>
-          </button>
+          <div className="flex items-center justify-between border-t border-line-soft pt-3">
+            <button onClick={onDelete} className="flex items-center gap-1.5">
+              <Trash2 className="h-3 w-3 text-danger" /> <span className="text-[11.5px] text-danger">Remove module</span>
+            </button>
+            <button
+              onClick={onSave}
+              disabled={!isDirty || saving}
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+            >
+              {saving && <Loader2 className="h-3 w-3 animate-spin" />}
+              {saving ? "Saving…" : isDirty ? "Save changes" : "Saved"}
+            </button>
+          </div>
         </div>
       )}
     </div>

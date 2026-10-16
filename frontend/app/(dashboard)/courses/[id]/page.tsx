@@ -1,5 +1,5 @@
 "use client";
-import { use, useEffect, useRef, useState } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Plus, ChevronUp, ChevronDown, Users, Award, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import {
 } from "@/lib/hooks/use-courses";
 import { useBadges } from "@/lib/hooks/use-badges";
 import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
-import { ModuleEditorRow } from "@/components/shell/courses/module-editor";
+import { ModuleEditorRow, restrictionValid } from "@/components/shell/courses/module-editor";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
 import { QuizAttemptsSection } from "@/components/shell/courses/quiz-attempts";
 import { ModuleProgressMatrix } from "@/components/shell/courses/module-progress-matrix";
@@ -41,15 +41,45 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [assigning, setAssigning] = useState(false);
 
-  // Local module state lets typing feel instant; each field's change is
-  // pushed to the server on a short debounce instead of on every
-  // keystroke, so a title edit doesn't fire a PATCH per letter.
+  // Local module state is the editor's working draft — every field edit
+  // (including a brand-new module's) only lands here, never the server,
+  // until that module's own "Save changes" button is clicked. dirtyIds
+  // tracks which modules have edits not yet saved, purely for the
+  // button's enabled/label state and the "Unsaved" badge.
   const [modules, setModules] = useState<Module[]>([]);
-  const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
+  const [savingId, setSavingId] = useState<string | null>(null);
 
+  // A module with unsaved local edits must survive a background refetch
+  // (an upload, a bank import, or another module's own save all
+  // invalidate this course's query) — otherwise the explicit-save model
+  // above is pointless, since any such action would silently discard
+  // whatever the admin was mid-editing. For a dirty module, keep the
+  // local draft and only pull in the fields a draft never actually
+  // controls: file_url/file_name/file_size_label/scorm_launch_path/
+  // scorm_version only ever change via the upload/remove/SCORM
+  // mutations' own results, never via onChange, so refreshing
+  // them from the server is always safe and is what lets an admin see a
+  // video they just uploaded even while unrelated fields on the same
+  // module are still unsaved. A bank-imported question landing on an
+  // otherwise-dirty module is the one known gap this leaves — it won't
+  // show until that module's edits are saved (or the page is reloaded).
   useEffect(() => {
-    if (course) setModules(course.modules);
-  }, [course]);
+    if (!course) return;
+    setModules((prev) =>
+      course.modules.map((serverMod) => {
+        if (!dirtyIds.has(serverMod.id)) return serverMod;
+        const draft = prev.find((p) => p.id === serverMod.id);
+        if (!draft) return serverMod;
+        return {
+          ...draft,
+          file_url: serverMod.file_url, file_name: serverMod.file_name,
+          file_size_label: serverMod.file_size_label, scorm_launch_path: serverMod.scorm_launch_path,
+          scorm_version: serverMod.scorm_version,
+        };
+      })
+    );
+  }, [course, dirtyIds]);
 
   if (isLoading || !course) return <div className="p-8 text-sm text-ink-faint">Loading…</div>;
 
@@ -64,19 +94,36 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
   const patchModule = (moduleId: string, patch: Partial<Module>) => {
     setModules((prev) => prev.map((m) => (m.id === moduleId ? { ...m, ...patch } : m)));
+    setDirtyIds((prev) => new Set(prev).add(moduleId));
+  };
 
-    clearTimeout(debounceTimers.current[moduleId]);
-    debounceTimers.current[moduleId] = setTimeout(() => {
-      // The editor works with the authoring/display shape (QuizQuestion —
-      // what GET returns, with a server-assigned id and presigned
-      // image_url); the PATCH endpoint expects QuestionIn (image_key
-      // only, no id) — see quiz-utils.ts for why.
-      const { questions, ...rest } = patch;
-      updateModuleMutation.mutate({
-        moduleId, ...rest,
-        ...(questions ? { questions: questions.map(toQuestionInput) } : {}),
-      });
-    }, 400);
+  const saveModule = (moduleId: string) => {
+    const m = modules.find((mod) => mod.id === moduleId);
+    if (!m) return;
+    setSavingId(moduleId);
+    // The editor works with the authoring/display shape (QuizQuestion —
+    // what GET returns, with a server-assigned id and presigned
+    // image_url); the PATCH endpoint expects QuestionIn (image_key only,
+    // no id) — see quiz-utils.ts. Restrictions get the same
+    // "incomplete entries never reach the server" filter the old
+    // per-field debounce used to apply before sending, now applied once
+    // here at actual save time instead.
+    updateModuleMutation.mutate(
+      {
+        moduleId,
+        title: m.title, type: m.type, required: m.required, threshold: m.threshold,
+        video_question_min_correct: m.video_question_min_correct, instructions: m.instructions,
+        skill_ids: m.skill_ids, badge_ids: m.badge_ids,
+        certificate_enabled: m.certificate_enabled, certificate_template_id: m.certificate_template_id,
+        certificate_name: m.certificate_name,
+        questions: m.questions.map(toQuestionInput),
+        restrictions: m.restrictions.filter(restrictionValid),
+      },
+      {
+        onSuccess: () => setDirtyIds((prev) => { const next = new Set(prev); next.delete(moduleId); return next; }),
+        onSettled: () => setSavingId(null),
+      },
+    );
   };
 
   const toggleCourseBadge = (badgeId: string) => {
@@ -258,6 +305,9 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                 allModules={modules}
                 onChange={(patch) => patchModule(m.id, patch)}
                 onDelete={() => { if (confirm("Remove this module?")) deleteModule.mutate(m.id); }}
+                isDirty={dirtyIds.has(m.id)}
+                saving={savingId === m.id}
+                onSave={() => saveModule(m.id)}
               />
             </div>
           </div>
