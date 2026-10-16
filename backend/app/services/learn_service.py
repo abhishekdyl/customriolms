@@ -45,8 +45,11 @@ async def completed_map(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID,
 
 
 def _counted_modules(course: Course) -> list[Module]:
-    required = [m for m in course.modules if m.required]
-    return required or list(course.modules)
+    # A draft module (see Module.published) is invisible to the learner,
+    # so it must never count toward — or block — their progress either.
+    live = [m for m in course.modules if m.published]
+    required = [m for m in live if m.required]
+    return required or live
 
 
 def course_progress(course: Course, done: dict) -> tuple[int, int, int]:
@@ -72,7 +75,10 @@ def course_progress(course: Course, done: dict) -> tuple[int, int, int]:
 
 
 def ordered_modules(course: Course) -> list[Module]:
-    return sorted(course.modules, key=lambda m: m.position)
+    # Draft modules (see Module.published) are excluded — sequential_unlock
+    # must never make a published module wait on an invisible draft that
+    # sits before it in position order and can never be completed.
+    return sorted((m for m in course.modules if m.published), key=lambda m: m.position)
 
 
 def _restriction_reason(course: Course, restriction: dict, done: dict, user: User) -> str | None:
@@ -274,7 +280,7 @@ async def _assert_module_unlocked(db: AsyncSession, user: User, course: Course, 
 
 async def complete_module(
     db: AsyncSession, user: User, module_id: uuid.UUID, watched_pct: int | None = None, answers: list | None = None,
-) -> tuple[int, bool, str | None, list[dict]]:
+) -> tuple[int, bool, str | None, list[dict], int | None, int | None]:
     module, course = await _module_in_assigned_course(db, user, module_id)
     if module.type == ModuleType.QUIZ:
         raise HTTPException(status_code=400, detail="Quiz modules are completed by passing the quiz")
@@ -283,6 +289,8 @@ async def complete_module(
 
     score = None
     video_question_results: list[dict] = []
+    video_earned_points: int | None = None
+    video_total_points: int | None = None
     if module.type == ModuleType.WATCH:
         # Mirrors the QUIZ gate below — a WATCH module's own `threshold` is
         # its pass mark too ("min % watched (WATCH) or min score (QUIZ)",
@@ -306,7 +314,7 @@ async def complete_module(
         # same behavior as before this feature existed.
         in_video_questions = [q for q in module.questions if q.trigger_time_sec is not None]
         if in_video_questions:
-            video_question_results, snapshot, right, _points = _score_questions(in_video_questions, answers or [])
+            video_question_results, snapshot, right, earned_points, total_points = _score_questions(in_video_questions, answers or [])
             min_correct = module.video_question_min_correct
             if min_correct is not None and right < min_correct:
                 raise HTTPException(
@@ -321,20 +329,25 @@ async def complete_module(
             iv_score = round(100 * right / len(in_video_questions))
             db.add(QuizAttempt(
                 org_id=user.org_id, user_id=user.id, module_id=module.id, score=iv_score,
+                earned_points=earned_points, total_points=total_points,
                 passed=min_correct is None or right >= min_correct, answers_json=snapshot,
             ))
+            video_earned_points, video_total_points = earned_points, total_points
         score = pct
 
     await _mark_done(db, user, course, module, score)
     await db.commit()
     pct, completed, code = await _finish_course_if_done(db, user, course)
-    return pct, completed, code, video_question_results
+    return pct, completed, code, video_question_results, video_earned_points, video_total_points
 
 
 async def _module_in_assigned_course(db: AsyncSession, user: User, module_id: uuid.UUID) -> tuple[Module, Course]:
     for course in await assigned_courses(db, user):
         for m in course.modules:
-            if m.id == module_id:
+            # A still-draft module (see Module.published) is treated as
+            # not existing for the learner — defense in depth, since it's
+            # already hidden from the module list this id would come from.
+            if m.id == module_id and m.published:
                 return m, course
     raise HTTPException(status_code=404, detail="Module not found")
 
@@ -344,10 +357,10 @@ def _short_answer_correct(picked_text: str | None, accepted: list[str]) -> bool:
     return bool(picked) and any(picked == (a or "").strip().lower() for a in accepted)
 
 
-def _score_questions(questions: list, answers: list) -> tuple[list[dict], list[dict], int, int]:
+def _score_questions(questions: list, answers: list) -> tuple[list[dict], list[dict], int, int, int]:
     """Shared by submit_quiz (QUIZ modules) and complete_module's WATCH
     in-video-question branch — same per-question correctness logic either
-    way. Returns (results, snapshot, right_count, earned_points).
+    way. Returns (results, snapshot, right_count, earned_points, total_points).
 
     A question absent from `answers` (never answered — including a
     skipped-on-timeout in-video question, see QuizAnswerIn's docstring)
@@ -360,6 +373,7 @@ def _score_questions(questions: list, answers: list) -> tuple[list[dict], list[d
                     # even if the question is later edited or deleted (see QuizAttempt's docstring)
     right = 0
     earned_points = 0
+    total_points = sum(q.points or 1 for q in questions)
     for q in questions:
         ans = answers_by_question.get(q.id)
         picked_option_id = ans.option_id if ans else None
@@ -389,8 +403,9 @@ def _score_questions(questions: list, answers: list) -> tuple[list[dict], list[d
             "correct_option_id": q.correct_option_id, "correct_option_text": _option_text(q.correct_option_id),
             "accepted_answers": q.accepted_answers or [],
             "correct": ok,
+            "points": q.points or 1,
         })
-    return results, snapshot, right, earned_points
+    return results, snapshot, right, earned_points, total_points
 
 
 async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answers: list) -> dict:
@@ -406,11 +421,12 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
         raise HTTPException(status_code=400, detail="This module has no quiz")
     assert_course_open(course)
     await _assert_module_unlocked(db, user, course, module)
-    results, snapshot, right, _earned_points = _score_questions(module.questions, answers)
+    results, snapshot, right, earned_points, total_points = _score_questions(module.questions, answers)
     score = round(100 * right / len(module.questions))
     passed = score >= module.threshold
     db.add(QuizAttempt(
         org_id=user.org_id, user_id=user.id, module_id=module.id, score=score,
+        earned_points=earned_points, total_points=total_points,
         passed=passed, answers_json=snapshot,
     ))
     if passed:
@@ -418,6 +434,7 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
     await db.commit()
     pct, completed, code = await _finish_course_if_done(db, user, course)
     return {"score": score, "passed": passed, "threshold": module.threshold, "results": results,
+            "earned_points": earned_points, "total_points": total_points,
             "progress": pct, "course_completed": completed, "certificate_code": code}
 
 

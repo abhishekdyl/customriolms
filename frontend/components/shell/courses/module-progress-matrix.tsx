@@ -136,7 +136,8 @@ export function ModuleProgressMatrix({ courseId }: { courseId: string }) {
             </DialogTitle>
             {openAttempt && (
               <p className="mt-1 text-xs text-ink-faint">
-                {openAttempt.score}% ·{" "}
+                {openAttempt.score}%
+                {openAttempt.total_points !== null && ` · ${openAttempt.earned_points}/${openAttempt.total_points} marks`} ·{" "}
                 <span className={openAttempt.passed ? "text-success" : "text-danger"}>{openAttempt.passed ? "Passed" : "Failed"}</span>
                 {" · "}{new Date(openAttempt.created_at).toLocaleString()}
               </p>

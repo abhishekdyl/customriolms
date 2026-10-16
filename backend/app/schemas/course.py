@@ -86,6 +86,11 @@ class ModuleUpdate(BaseModel):
     # Replaces the full restriction set when provided, same as questions
     # above — the authoring UI always sends the complete list back.
     restrictions: list[ModuleRestrictionIn] | None = None
+    # Draft/published gate — see Module.published's docstring. Omitted
+    # (the normal case) lets a plain Save auto-publish a still-draft
+    # module; sending it explicitly is how the admin manually
+    # publishes/un-publishes on demand.
+    published: bool | None = None
 
 
 class ModuleOut(BaseModel):
@@ -96,6 +101,7 @@ class ModuleOut(BaseModel):
     required: bool
     threshold: int
     video_question_min_correct: int | None = None
+    published: bool = True
     file_url: str | None
     file_name: str | None
     file_size_label: str | None
@@ -238,6 +244,9 @@ class QuizAttemptAnswerOut(BaseModel):
     correct_option_text: str | None
     accepted_answers: list[str]
     correct: bool
+    # This question's own weight (ModuleQuizQuestion.points at submit
+    # time) — None for an attempt recorded before this existed.
+    points: int | None = None
 
 
 class QuizAttemptOut(BaseModel):
@@ -253,6 +262,11 @@ class QuizAttemptOut(BaseModel):
     module_title: str
     score: int
     passed: bool
+    # Raw marks alongside `score`'s percent — "7/10 marks", not just
+    # "70%". None on an attempt recorded before this existed (no
+    # per-question points to recompute them from).
+    earned_points: int | None = None
+    total_points: int | None = None
     created_at: datetime
     answers: list[QuizAttemptAnswerOut]
 

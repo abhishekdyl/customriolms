@@ -21,7 +21,10 @@ export function AttemptAnswers({ answers }: { answers: QuizAttemptAnswer[] }) {
             ) : (
               <X className="h-3.5 w-3.5 text-danger shrink-0 mt-0.5" />
             )}
-            <p className="text-[12.5px] text-ink">{i + 1}. {a.question_text ?? "(image question)"}</p>
+            <p className="text-[12.5px] text-ink">
+              {i + 1}. {a.question_text ?? "(image question)"}
+              {a.points !== null && <span className="ml-1 text-[10.5px] text-ink-faint">({a.points} mark{a.points === 1 ? "" : "s"})</span>}
+            </p>
           </div>
           <div className="ml-5 mt-1 flex flex-col gap-0.5">
             <p className="text-[11.5px] text-ink-faint">
@@ -57,7 +60,9 @@ function AttemptRow({ attempt }: { attempt: QuizAttempt }) {
           </div>
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
-          <span className="text-xs text-ink-soft">{attempt.score}%</span>
+          <span className="text-xs text-ink-soft">
+            {attempt.score}%{attempt.total_points !== null && ` · ${attempt.earned_points}/${attempt.total_points} marks`}
+          </span>
           <span
             className={cn(
               "rounded-full px-2 py-0.5 text-[10.5px]",

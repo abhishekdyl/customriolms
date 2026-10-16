@@ -77,7 +77,11 @@ async def list_my_courses(db: AsyncSession, user: User) -> list[MyCourseItem]:
     result = await db.execute(
         select(Course, Category.name.label("category_name"), func.count(Module.id).label("module_count"))
         .outerjoin(Category, Course.category_id == Category.id)
-        .outerjoin(Module, Module.course_id == Course.id)
+        # Only published modules count here — a learner's course card
+        # shouldn't advertise a module they can't actually see yet (see
+        # Module.published's docstring). The ON-clause condition (not a
+        # WHERE) keeps the outer join's "0 modules" courses intact.
+        .outerjoin(Module, (Module.course_id == Course.id) & (Module.published == True))  # noqa: E712
         .where(Course.org_id == user.org_id, or_(*_assigned_to(user)))
         .group_by(Course.id, Category.name)
         .order_by(Course.title)
@@ -119,6 +123,11 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
     pct, completed_count, _ = progress_svc.course_progress(course, done)
     modules = []
     for m in course.modules:
+        # A draft module (see Module.published) — still being authored,
+        # never explicitly saved yet — doesn't exist for the learner at
+        # all, not even as a locked placeholder.
+        if not m.published:
+            continue
         # sequential_unlock and this module's own restrictions both gate
         # actual content, not just the "mark complete" click — a locked
         # module shows up in the list (so the learner can see what's
@@ -183,6 +192,10 @@ async def add_module(db: AsyncSession, course: Course, body: ModuleCreate) -> Mo
     module = Module(
         course_id=course.id, title=body.title, type=body.type,
         required=body.required, threshold=body.threshold, position=max_position + 1,
+        # Starts as a draft — invisible to any learner (see Module.published's
+        # docstring and learn_service's ordered_modules/_counted_modules) —
+        # until the admin's first explicit Save on it, in update_module below.
+        published=False,
     )
     db.add(module)
     await db.commit()
@@ -200,6 +213,16 @@ async def update_module(db: AsyncSession, module: Module, body: ModuleUpdate, or
     data = body.model_dump(exclude_unset=True, exclude={"questions", "restrictions"})
     for key, value in data.items():
         setattr(module, key, value)
+
+    # Draft -> published gate (see Module.published's docstring): an
+    # explicit `published` in the request always wins (lets the admin
+    # manually un/republish). Otherwise, any ordinary explicit Save
+    # finishes the "being authored" state — a still-draft module flips to
+    # published the moment it's saved at all, matching "jab module ban
+    # kar save ho tab learner ko dikhe" rather than requiring a separate
+    # publish step on top of the Save button that already exists.
+    if "published" not in data and not module.published:
+        module.published = True
 
     if body.restrictions is not None:
         # mode="json" so each restriction's opens_at/closes_at/module_id
@@ -462,7 +485,9 @@ async def list_quiz_attempts(db: AsyncSession, course: Course, viewer: User) -> 
         out.append(QuizAttemptOut(
             id=attempt.id, user_id=user.id, user_name=user.full_name, user_email=user.email,
             module_id=attempt.module_id, module_title=module_title,
-            score=attempt.score, passed=attempt.passed, created_at=attempt.created_at,
+            score=attempt.score, passed=attempt.passed,
+            earned_points=attempt.earned_points, total_points=attempt.total_points,
+            created_at=attempt.created_at,
             answers=attempt.answers_json or [],
         ))
     return out

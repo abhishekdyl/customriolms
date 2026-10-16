@@ -157,6 +157,11 @@ export interface Module {
   // WATCH-only extra completion gate: min correct in-video answers,
   // alongside threshold (watched-%) above. Null = no such gate.
   video_question_min_correct: number | null;
+  // Draft/published gate — a brand-new module starts false (hidden from
+  // every learner) and flips true the first time it's explicitly saved,
+  // or whenever this is set directly (manual publish/un-publish). See
+  // the backend Module.published docstring.
+  published: boolean;
   file_url: string | null;
   file_name: string | null;
   file_size_label: string | null;
@@ -346,6 +351,7 @@ export interface LearnerModule {
     options: QuestionOption[];
     trigger_time_sec: number | null;
     timer_seconds: number | null;
+    points: number;
   }[];
   completed: boolean;
   /** Best score (QUIZ) or furthest watched-% (WATCH) recorded so far —
@@ -375,6 +381,10 @@ export interface CompleteResult {
   /** Populated only when the WATCH module had in-video questions —
    * per-question correctness, same shape as QuizResult.results. */
   video_question_results: QuizQuestionResult[];
+  /** Raw marks for those in-video questions ("earned 2/3 marks") — null
+   * when the module had none. */
+  video_earned_points: number | null;
+  video_total_points: number | null;
 }
 
 /** One answer to one question, submitted by question_id (not position) —
@@ -400,6 +410,9 @@ export interface QuizResult {
   passed: boolean;
   threshold: number;
   results: QuizQuestionResult[];
+  /** Raw marks alongside score's percent — "earned 3/5 marks". */
+  earned_points: number;
+  total_points: number;
   progress: number;
   course_completed: boolean;
   certificate_code: string | null;
@@ -420,6 +433,9 @@ export interface QuizAttemptAnswer {
   correct_option_text: string | null;
   accepted_answers: string[];
   correct: boolean;
+  /** This question's own weight — null on an attempt recorded before
+   * per-question points existed. */
+  points: number | null;
 }
 
 /** One learner's one submission of one quiz module — every attempt, pass
@@ -434,6 +450,10 @@ export interface QuizAttempt {
   module_title: string;
   score: number;
   passed: boolean;
+  /** Raw marks alongside score's percent — null on an attempt recorded
+   * before per-question points existed. */
+  earned_points: number | null;
+  total_points: number | null;
   created_at: string;
   answers: QuizAttemptAnswer[];
 }

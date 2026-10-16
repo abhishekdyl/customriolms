@@ -247,6 +247,11 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
 
       {completeResult?.video_question_results.length ? (
         <div className="mb-2 flex flex-col gap-1">
+          {completeResult.video_total_points !== null && (
+            <p className="text-[12px] font-medium text-ink">
+              Marks: {completeResult.video_earned_points}/{completeResult.video_total_points}
+            </p>
+          )}
           {completeResult.video_question_results.map((r, i) => (
             <div key={r.question_id} className="flex items-center gap-1.5 text-[11.5px]">
               {r.correct ? <CheckCircle2 size={12} color="var(--color-success)" /> : <XCircle size={12} color="var(--color-danger)" />}
@@ -385,6 +390,36 @@ function ModuleRow({ module: m, courseId }: { module: LearnerModule; courseId: s
   );
 }
 
+/** A per-question countdown for QuizPanel — same "skip, never scored as
+ * wrong" idea as InVideoQuestionOverlay's timer, just rendered as a small
+ * inline badge next to a question instead of pausing anything, since a
+ * plain quiz shows every question on one page rather than one at a time.
+ * Fires onExpire exactly once when it hits 0; the parent decides what
+ * that means (lock the question, treat it as answered-enough-to-submit). */
+function QuestionTimer({ seconds, onExpire }: { seconds: number; onExpire: () => void }) {
+  const [left, setLeft] = useState(seconds);
+  const firedRef = useRef(false);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          if (!firedRef.current) { firedRef.current = true; onExpire(); }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <span className={cn("inline-flex items-center gap-1 text-[10.5px]", left <= 5 ? "text-danger" : "text-ink-faint")}>
+      <Clock size={10} /> {left}s
+    </span>
+  );
+}
+
 /** Interactive quiz — radio answers per question, scored server-side on submit. */
 // One question's working answer — option_id for MCQ/TRUE_FALSE, text for
 // SHORT_ANSWER (mirrors QuizAnswer, see lib/types.ts).
@@ -394,6 +429,12 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
   const submit = useSubmitQuiz(courseId);
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
   const [result, setResult] = useState<QuizResult | null>(null);
+  // Questions whose own timer (set per-question, or via the authoring
+  // UI's module-wide default — see module-editor.tsx) ran out — locked
+  // from further editing, and treated as "answered enough to submit"
+  // even with nothing picked (a skip, never scored as wrong — same rule
+  // as an in-video question's timeout, see InVideoQuestionOverlay).
+  const [expiredIds, setExpiredIds] = useState<Set<string>>(new Set());
 
   if (quizModule.completed && !result) {
     return (
@@ -407,15 +448,19 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
     );
   }
 
-  const isAnswered = (q: LearnerModule["questions"][number]) => {
+  const hasRealAnswer = (q: LearnerModule["questions"][number]) => {
     const a = answers[q.id];
     if (!a) return false;
     return q.type === "short_answer" ? !!(a.text ?? "").trim() : !!a.option_id;
   };
+  const isAnswered = (q: LearnerModule["questions"][number]) => expiredIds.has(q.id) || hasRealAnswer(q);
   const allAnswered = quizModule.questions.every(isAnswered);
 
   function handleSubmit() {
-    const payload: QuizAnswer[] = quizModule.questions.map((q) => ({
+    // A question whose timer ran out with nothing picked is omitted
+    // entirely, same "skip, not a wrong answer" rule as an in-video
+    // question's timeout — see _score_questions' docstring on the backend.
+    const payload: QuizAnswer[] = quizModule.questions.filter(hasRealAnswer).map((q) => ({
       question_id: q.id,
       option_id: answers[q.id]?.option_id ?? null,
       text: answers[q.id]?.text ?? null,
@@ -452,7 +497,8 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
               <XCircle size={14} color="var(--color-danger)" />
             )}
             <span className="text-[12.5px] text-ink">
-              Scored {result.score}% ({result.passed ? "passed" : `needed ${result.threshold}% to pass`})
+              Scored {result.score}% · {result.earned_points}/{result.total_points} marks
+              {" "}({result.passed ? "passed" : `needed ${result.threshold}% to pass`})
               {result.course_completed && " · course completed 🎉"}
             </span>
           </div>
@@ -480,7 +526,7 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
 
           {!result.passed && (
             <button
-              onClick={() => setResult(null)}
+              onClick={() => { setResult(null); setExpiredIds(new Set()); }}
               className="self-start rounded-lg border border-line px-3 py-1.5 text-[12px] font-medium text-ink"
             >
               Retake to try for a passing score
@@ -489,44 +535,53 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
         </div>
       ) : (
         <div className="mt-3 flex flex-col gap-4">
-          {quizModule.questions.map((q, qi) => (
-            <div key={q.id}>
-              <div className="text-[13px] text-ink">
-                {qi + 1}. {q.text}
-              </div>
-              {q.image_url && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={q.image_url} alt="" className="mt-1.5 max-h-40 rounded-lg border border-line-soft object-contain" />
-              )}
-
-              {q.type === "short_answer" ? (
-                <input
-                  value={answers[q.id]?.text ?? ""}
-                  onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: { text: e.target.value } }))}
-                  placeholder="Your answer"
-                  className="mt-1.5 w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] outline-none"
-                />
-              ) : (
-                <div className="mt-1.5 flex flex-col gap-1">
-                  {q.options.map((opt) => (
-                    <label key={opt.id} className="flex items-center gap-2 py-0.5">
-                      <input
-                        type="radio"
-                        name={q.id}
-                        checked={answers[q.id]?.option_id === opt.id}
-                        onChange={() => setAnswers((a) => ({ ...a, [q.id]: { option_id: opt.id } }))}
-                      />
-                      {opt.image_url && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={opt.image_url} alt="" className="h-10 w-10 flex-shrink-0 rounded-md border border-line-soft object-cover" />
-                      )}
-                      {opt.text && <span className="text-[12.5px] text-ink-soft">{opt.text}</span>}
-                    </label>
-                  ))}
+          {quizModule.questions.map((q, qi) => {
+            const expired = expiredIds.has(q.id);
+            return (
+              <div key={q.id} className={expired ? "opacity-50" : undefined}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[13px] text-ink">
+                    {qi + 1}. {q.text} <span className="text-[10.5px] text-ink-faint">({q.points} mark{q.points === 1 ? "" : "s"})</span>
+                  </div>
+                  {q.timer_seconds !== null && !expired && (
+                    <QuestionTimer seconds={q.timer_seconds} onExpire={() => setExpiredIds((s) => new Set(s).add(q.id))} />
+                  )}
+                  {expired && <span className="text-[10.5px] text-danger shrink-0">Time&apos;s up</span>}
                 </div>
-              )}
-            </div>
-          ))}
+                {q.image_url && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={q.image_url} alt="" className="mt-1.5 max-h-40 rounded-lg border border-line-soft object-contain" />
+                )}
+
+                {q.type === "short_answer" ? (
+                  <input
+                    value={answers[q.id]?.text ?? ""} disabled={expired}
+                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: { text: e.target.value } }))}
+                    placeholder="Your answer"
+                    className="mt-1.5 w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] outline-none disabled:cursor-not-allowed"
+                  />
+                ) : (
+                  <div className="mt-1.5 flex flex-col gap-1">
+                    {q.options.map((opt) => (
+                      <label key={opt.id} className="flex items-center gap-2 py-0.5">
+                        <input
+                          type="radio"
+                          name={q.id} disabled={expired}
+                          checked={answers[q.id]?.option_id === opt.id}
+                          onChange={() => setAnswers((a) => ({ ...a, [q.id]: { option_id: opt.id } }))}
+                        />
+                        {opt.image_url && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={opt.image_url} alt="" className="h-10 w-10 flex-shrink-0 rounded-md border border-line-soft object-cover" />
+                        )}
+                        {opt.text && <span className="text-[12.5px] text-ink-soft">{opt.text}</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           {submit.isError && (
             <div className="text-[12px] text-danger">

@@ -28,5 +28,11 @@ class QuizAttempt(Base):
     module_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("modules.id"), nullable=False, index=True)
     score: Mapped[int] = mapped_column(Integer, nullable=False)  # percent
     passed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Raw marks, alongside the already-existing percent `score` — "earned
+    # 7/10 marks" is what an Org Admin actually wants to see, not just
+    # "70%". Nullable because an attempt scored before this existed has
+    # no per-question points recorded to recompute these from.
+    earned_points: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_points: Mapped[int | None] = mapped_column(Integer, nullable=True)
     answers_json: Mapped[list[dict]] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

@@ -148,6 +148,7 @@ class QuestionLearnerOut(BaseModel):
     options: list[OptionOut] = []
     trigger_time_sec: int | None = None
     timer_seconds: int | None = None
+    points: int = 1
 
     class Config:
         from_attributes = True

@@ -72,6 +72,12 @@ async def course_detail(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     pct, _, _ = svc.course_progress(course, done)
     mods = []
     for m in course.modules:
+        # A draft module (see Module.published) doesn't exist for the
+        # learner yet — same rule as courses.py's get_my_course, which is
+        # what the current frontend actually calls; this older duplicate
+        # endpoint gets the same gate for consistency.
+        if not m.published:
+            continue
         mp = done.get(m.id)
         mods.append(LearnModule(
             id=m.id, title=m.title, type=m.type.value, required=m.required, threshold=m.threshold,
@@ -91,11 +97,12 @@ async def complete(
     module_id: uuid.UUID, body: CompleteRequest | None = None,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    pct, completed, code, video_question_results = await svc.complete_module(
+    pct, completed, code, video_question_results, video_earned_points, video_total_points = await svc.complete_module(
         db, user, module_id, (body.watched_pct if body else None), (body.answers if body else None),
     )
     return CompleteResult(progress=pct, course_completed=completed, certificate_code=code,
-                           video_question_results=video_question_results)
+                           video_question_results=video_question_results,
+                           video_earned_points=video_earned_points, video_total_points=video_total_points)
 
 
 @router.post("/modules/{module_id}/quiz", response_model=QuizResult)

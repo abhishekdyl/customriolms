@@ -49,6 +49,14 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   const [modules, setModules] = useState<Module[]>([]);
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [savingId, setSavingId] = useState<string | null>(null);
+  // Which modules had their "Visible to learners" switch explicitly
+  // touched since the last save — only these get an explicit `published`
+  // in the PATCH (see saveModule). A still-draft module the admin never
+  // touches that switch on must stay omitted, so the backend's own
+  // "any ordinary Save auto-publishes a draft" default (update_module)
+  // is what makes it visible, not a value mirrored from its own
+  // not-yet-published local state.
+  const [publishOverrides, setPublishOverrides] = useState<Set<string>>(new Set());
 
   // A module with unsaved local edits must survive a background refetch
   // (an upload, a bank import, or another module's own save all
@@ -95,6 +103,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   const patchModule = (moduleId: string, patch: Partial<Module>) => {
     setModules((prev) => prev.map((m) => (m.id === moduleId ? { ...m, ...patch } : m)));
     setDirtyIds((prev) => new Set(prev).add(moduleId));
+    if ("published" in patch) setPublishOverrides((prev) => new Set(prev).add(moduleId));
   };
 
   const saveModule = (moduleId: string) => {
@@ -118,9 +127,16 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
         certificate_name: m.certificate_name,
         questions: m.questions.map(toQuestionInput),
         restrictions: m.restrictions.filter(restrictionValid),
+        // Omitted unless the admin actually touched the "Visible to
+        // learners" switch this session — see publishOverrides above and
+        // update_module's own auto-publish-on-save default.
+        ...(publishOverrides.has(moduleId) ? { published: m.published } : {}),
       },
       {
-        onSuccess: () => setDirtyIds((prev) => { const next = new Set(prev); next.delete(moduleId); return next; }),
+        onSuccess: () => {
+          setDirtyIds((prev) => { const next = new Set(prev); next.delete(moduleId); return next; });
+          setPublishOverrides((prev) => { const next = new Set(prev); next.delete(moduleId); return next; });
+        },
         onSettled: () => setSavingId(null),
       },
     );

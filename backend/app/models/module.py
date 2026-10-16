@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import ARRAY, Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import ARRAY, Boolean, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -109,6 +109,18 @@ class Module(Base):
     # gate, only the watched-% threshold applies — see learn_service's
     # complete_module. Org-admin-configured per module.
     video_question_min_correct: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Draft/published gate — a brand-new module (add_module) is created
+    # with this False so it never appears to a learner mid-authoring; it
+    # flips to True the first time the admin explicitly saves it (see
+    # update_module), or whenever they set it directly (an admin can also
+    # un-publish an already-live module to pull it temporarily). Existing
+    # rows from before this column existed default True via the DB-level
+    # server_default, so nothing already-published silently disappears.
+    # Only checked learner-side (get_my_course / ordered_modules /
+    # _counted_modules) — the admin's own course-management view always
+    # shows every module, draft or not.
+    published: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
 
     course: Mapped["Course"] = relationship(back_populates="modules")
     # Same reasoning as Course.modules/category above — ModuleOut always

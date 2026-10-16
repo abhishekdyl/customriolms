@@ -109,6 +109,10 @@ class CompleteResult(BaseModel):
     # frontend can reconcile its own live feedback against what the
     # server actually scored and persisted.
     video_question_results: list[QuizQuestionResult] = []
+    # Raw marks for those in-video questions ("earned 2/3 marks"), None
+    # when the module had none.
+    video_earned_points: int | None = None
+    video_total_points: int | None = None
 
 
 class QuizResult(BaseModel):
@@ -116,6 +120,8 @@ class QuizResult(BaseModel):
     passed: bool
     threshold: int
     results: list[QuizQuestionResult]
+    earned_points: int
+    total_points: int
     progress: int
     course_completed: bool
     certificate_code: str | None = None
