@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import {
   ArrowLeft, BookOpen, CheckCircle2, Circle, Clock, HelpCircle, Loader2, Lock, PlayCircle, Sparkles, XCircle,
 } from "lucide-react";
+import { Video, VideoPlayer, VideoSkin } from "@videojs/react/video";
 import { useCompleteModule, useMyCourse, useSubmitQuiz } from "@/lib/hooks/use-my-courses";
 import { MODULE_TYPE_LABEL } from "@/lib/learner-courses";
 import { cn } from "@/lib/utils";
@@ -176,6 +177,17 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
     }
   };
 
+  // Defense-in-depth alongside the overlay covering the skin's own
+  // play/pause button: whatever actually fires the native `play` event
+  // (a click that slips through, a keyboard shortcut, autoplay-resume
+  // after a tab-visibility change), a question on screen always wins —
+  // immediately pause again. This is what guarantees "pause rahega chahe
+  // timer ho ya na ho" rather than relying on the overlay's click-capture
+  // alone.
+  const onPlay = () => {
+    if (activeQuestion) videoRef.current?.pause();
+  };
+
   const resolveActiveQuestion = (answer: InVideoAnswer | null) => {
     if (!activeQuestion) return;
     if (answer) {
@@ -219,11 +231,12 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
 
       {m.file_url ? (
         <div className="relative mb-2">
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <video
-            ref={videoRef} src={m.file_url} controls onTimeUpdate={onTimeUpdate} onSeeking={onSeeking}
-            className="max-h-[280px] w-full rounded-lg bg-ink"
-          />
+          <VideoPlayer title={m.title}>
+            <VideoSkin className="max-h-[280px] w-full overflow-hidden rounded-lg bg-ink" style={{ aspectRatio: "16 / 9" }}>
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <Video ref={videoRef} src={m.file_url} onTimeUpdate={onTimeUpdate} onSeeking={onSeeking} onPlay={onPlay} />
+            </VideoSkin>
+          </VideoPlayer>
           {activeQuestion && <InVideoQuestionOverlay question={activeQuestion} onResolve={resolveActiveQuestion} />}
         </div>
       ) : (
