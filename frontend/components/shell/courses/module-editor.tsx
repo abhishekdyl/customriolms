@@ -293,6 +293,7 @@ function mergeImportedQuestions(local: QuizQuestion[], serverQuestions: QuizQues
 
 export function QuestionCard({
   q, onChange, onDelete, showImagePicker = true, showTiming = false, videoDurationSec = null,
+  isCustomTiming = false, onToggleCustomTiming, defaultTimerSeconds = null, defaultPoints = 1,
 }: {
   q: QuizQuestion; onChange: (next: QuizQuestion) => void; onDelete: () => void;
   // false for a WATCH module's in-video questions — picture questions
@@ -300,9 +301,10 @@ export function QuestionCard({
   // picker is hidden entirely rather than left to fail on save.
   showImagePicker?: boolean;
   // true for a WATCH module's in-video questions — renders the
-  // trigger-time row below (timer/points are set once, for every
-  // question, by WatchQuestionsBuilder's own defaults — see its
-  // docstring — so there's nothing to edit per-question for those here).
+  // trigger-time row below, plus a "custom timer & marks" toggle (see
+  // isCustomTiming) — by default every question follows
+  // WatchQuestionsBuilder's module-wide defaults, but this lets a
+  // particular question opt out and get its own timer/points instead.
   showTiming?: boolean;
   // The uploaded video's real length, read client-side once its metadata
   // loads (see ModuleEditorRow) — turns "Shows at" into a duration-aware
@@ -310,6 +312,17 @@ export function QuestionCard({
   // before the video's loaded (or if there's no video yet), in which
   // case a plain number input is the fallback.
   videoDurationSec?: number | null;
+  // Whether this specific question has opted out of the module-wide
+  // timer/points defaults — only meaningful when showTiming is true.
+  // When false, q.timer_seconds/q.points are kept in lockstep with the
+  // defaults by WatchQuestionsBuilder, so this card just displays them
+  // read-only; when true, this card's own inputs edit them directly.
+  isCustomTiming?: boolean;
+  onToggleCustomTiming?: () => void;
+  // The module's current defaults — shown read-only here when this
+  // question isn't customized, so the admin can see what it'll use.
+  defaultTimerSeconds?: number | null;
+  defaultPoints?: number;
 }) {
   const setType = (type: QuestionType) => {
     if (type === q.type) return;
@@ -350,6 +363,36 @@ export function QuestionCard({
               />
               <span className="text-[10px] text-ink-faint">Upload the video first to drag this on a timeline instead.</span>
             </div>
+          )}
+
+          <label className="mt-2 flex items-center gap-1.5 text-[11px] text-ink-soft">
+            <input type="checkbox" checked={isCustomTiming} onChange={onToggleCustomTiming} className="h-3 w-3" />
+            Custom timer &amp; marks for this question
+          </label>
+          {isCustomTiming ? (
+            <div className="mt-1.5 flex items-center gap-4">
+              <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+                Timer
+                <input
+                  type="number" min={1} value={q.timer_seconds ?? ""} placeholder="none"
+                  onChange={(e) => onChange({ ...q, timer_seconds: e.target.value === "" ? null : Number(e.target.value) })}
+                  className="h-6 w-16 rounded-md border border-line px-1.5 text-[11px]"
+                />
+                s
+              </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+                Marks
+                <input
+                  type="number" min={1} value={q.points}
+                  onChange={(e) => onChange({ ...q, points: Number(e.target.value) || 1 })}
+                  className="h-6 w-14 rounded-md border border-line px-1.5 text-[11px]"
+                />
+              </label>
+            </div>
+          ) : (
+            <p className="mt-1 text-[10px] text-ink-faint">
+              Using module default — {defaultTimerSeconds === null ? "no timer" : `${defaultTimerSeconds}s timer`} · {defaultPoints} mark{defaultPoints === 1 ? "" : "s"}
+            </p>
           )}
         </div>
       )}
@@ -471,12 +514,19 @@ function QuizBuilder({
 /** In-video questions for a WATCH module — same building blocks as
  * QuizBuilder (QuestionCard, bank import) but time-ordered, with no image
  * picker or import option for picture questions (not allowed mid-video),
- * and the timer/points fields lifted up here as module-wide defaults
- * instead of set per question — one timer length and one points value
- * for every in-video question on this module, changed once at the top
- * and applied to all of them automatically (including a question added
- * or imported afterward). Only "Shows at" stays per-question, since each
- * one fires at a different point in the video.
+ * and the timer/points fields lifted up here as module-wide defaults —
+ * one timer length and one points value for every in-video question on
+ * this module, changed once at the top and applied to all of them
+ * automatically (including a question added or imported afterward).
+ *
+ * A question can still opt out of the defaults — the "Custom timer &
+ * marks" checkbox on its own QuestionCard — to get its own timer/points
+ * (e.g. a harder question worth more marks with more time). customIds
+ * tracks which question ids are opted out; only those are skipped by the
+ * auto-sync effect below, and un-checking the box snaps that question
+ * straight back to the current defaults. "Shows at" always stays
+ * per-question regardless, since each one fires at a different point in
+ * the video.
  *
  * videoDurationSec (read client-side once the uploaded video's metadata
  * loads — see ModuleEditorRow) turns each question's "Shows at" into a
@@ -491,23 +541,54 @@ function WatchQuestionsBuilder({
   const [importing, setImporting] = useState(false);
   const [defaultTimerSeconds, setDefaultTimerSeconds] = useState<number | null>(() => questions[0]?.timer_seconds ?? null);
   const [defaultPoints, setDefaultPoints] = useState<number>(() => questions[0]?.points ?? 1);
+  // Which question ids have opted out of the defaults above (see
+  // docstring). Seeded once from whatever already differs from the very
+  // first question's values — a reasonable baseline for a module opened
+  // after a previous save, before any defaults are touched again.
+  const [customIds, setCustomIds] = useState<Set<string>>(
+    () => new Set(questions.filter((q) => q.timer_seconds !== (questions[0]?.timer_seconds ?? null) || q.points !== (questions[0]?.points ?? 1)).map((q) => q.id)),
+  );
   const didMountRef = useRef(false);
 
-  // Keeps every question's timer_seconds/points in lockstep with the
-  // defaults above — fires when the admin changes a default, or when the
-  // question count changes (add/import/delete), so a freshly added or
-  // bank-imported question (which otherwise lands with timer_seconds:
-  // null, points: 1 from newQuestion/the backend) picks up the current
-  // defaults too, without the admin having to touch it.
+  // Keeps every non-custom question's timer_seconds/points in lockstep
+  // with the defaults above — fires when the admin changes a default, or
+  // when the question count changes (add/import/delete), so a freshly
+  // added or bank-imported question (which otherwise lands with
+  // timer_seconds: null, points: 1 from newQuestion/the backend) picks up
+  // the current defaults too, without the admin having to touch it. A
+  // question in customIds is left alone entirely.
   useEffect(() => {
     if (!didMountRef.current) { didMountRef.current = true; return; }
-    const changed = questions.some((q) => q.timer_seconds !== defaultTimerSeconds || q.points !== defaultPoints);
-    if (changed) onChange(questions.map((q) => ({ ...q, timer_seconds: defaultTimerSeconds, points: defaultPoints })));
+    const changed = questions.some((q) => !customIds.has(q.id) && (q.timer_seconds !== defaultTimerSeconds || q.points !== defaultPoints));
+    if (changed) onChange(questions.map((q) => (customIds.has(q.id) ? q : { ...q, timer_seconds: defaultTimerSeconds, points: defaultPoints })));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultTimerSeconds, defaultPoints, questions.length]);
 
   const updateQ = (id: string, next: QuizQuestion) => onChange(questions.map((q) => (q.id === id ? next : q)));
-  const deleteQ = (id: string) => onChange(questions.filter((q) => q.id !== id));
+  const deleteQ = (id: string) => {
+    onChange(questions.filter((q) => q.id !== id));
+    setCustomIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+  const toggleCustom = (id: string) => {
+    setCustomIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+        // Opting back in to the defaults — snap this question's
+        // timer/points back to them immediately rather than waiting for
+        // the next default change.
+        onChange(questions.map((q) => (q.id === id ? { ...q, timer_seconds: defaultTimerSeconds, points: defaultPoints } : q)));
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
   const sorted = [...questions].sort((a, b) => (a.trigger_time_sec ?? Infinity) - (b.trigger_time_sec ?? Infinity));
 
   return (
@@ -534,7 +615,7 @@ function WatchQuestionsBuilder({
             className="h-6 w-14 rounded-md border border-line px-1.5 text-[11px]"
           />
         </label>
-        <span className="text-[10px] text-ink-faint">Applies to every in-video question on this module</span>
+        <span className="text-[10px] text-ink-faint">Applies to every in-video question below, unless it has its own "Custom timer &amp; marks" checked</span>
       </div>
 
       {videoDurationSec !== null && (
@@ -545,6 +626,8 @@ function WatchQuestionsBuilder({
         <QuestionCard
           key={q.id} q={q} onChange={(next) => updateQ(q.id, next)} onDelete={() => deleteQ(q.id)}
           showImagePicker={false} showTiming videoDurationSec={videoDurationSec}
+          isCustomTiming={customIds.has(q.id)} onToggleCustomTiming={() => toggleCustom(q.id)}
+          defaultTimerSeconds={defaultTimerSeconds} defaultPoints={defaultPoints}
         />
       ))}
       <div className="flex gap-2">
