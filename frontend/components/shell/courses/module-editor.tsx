@@ -197,12 +197,26 @@ function ImagePicker({ imageUrl, onUploaded, onRemove, size = "h-16 w-16" }: {
   );
 }
 
-function BankImportPicker({ courseId, moduleId, onDone }: { courseId: string; moduleId: string; onDone: () => void }) {
+/** A bank question carrying an image anywhere (its own or an option's) —
+ * used by BankImportPicker's excludePictureQuestions to hide these from
+ * a WATCH module's import list entirely, rather than let the admin pick
+ * one and hit the backend's rejection on import. */
+function isPictureQuestion(q: { image_key: string | null; options: { image_key?: string | null }[] }): boolean {
+  return !!q.image_key || q.options.some((o) => !!o.image_key);
+}
+
+function BankImportPicker({
+  courseId, moduleId, onDone, excludePictureQuestions = false,
+}: { courseId: string; moduleId: string; onDone: () => void; excludePictureQuestions?: boolean }) {
   const { data: banks } = useQuestionBanks();
   const [bankId, setBankId] = useState<string>("");
   const { data: bank } = useQuestionBank(bankId || null);
   const [selected, setSelected] = useState<string[]>([]);
   const importQs = useImportBankQuestions(courseId);
+
+  const allQuestions = bank?.questions ?? [];
+  const pictureCount = excludePictureQuestions ? allQuestions.filter(isPictureQuestion).length : 0;
+  const importable = excludePictureQuestions ? allQuestions.filter((q) => !isPictureQuestion(q)) : allQuestions;
 
   return (
     <div className="rounded-lg border border-line-soft bg-paper p-3">
@@ -212,8 +226,13 @@ function BankImportPicker({ courseId, moduleId, onDone }: { courseId: string; mo
       </select>
       {bank && (
         <div className="mt-2 flex flex-col gap-1">
-          {bank.questions.length === 0 && <p className="text-[11px] text-ink-faint">This bank has no questions yet.</p>}
-          {bank.questions.map((q) => (
+          {allQuestions.length === 0 && <p className="text-[11px] text-ink-faint">This bank has no questions yet.</p>}
+          {pictureCount > 0 && (
+            <p className="text-[10.5px] text-ink-faint">
+              {pictureCount} picture question{pictureCount > 1 ? "s" : ""} hidden — not supported in-video.
+            </p>
+          )}
+          {importable.map((q) => (
             <label key={q.id} className="flex items-start gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-surface">
               <input
                 type="checkbox" className="mt-0.5"
@@ -226,7 +245,7 @@ function BankImportPicker({ courseId, moduleId, onDone }: { courseId: string; mo
               </span>
             </label>
           ))}
-          {bank.questions.length > 0 && (
+          {importable.length > 0 && (
             <button
               disabled={selected.length === 0 || importQs.isPending}
               onClick={() => importQs.mutate({ bankId, moduleId, questionIds: selected }, { onSuccess: onDone })}
@@ -241,8 +260,15 @@ function BankImportPicker({ courseId, moduleId, onDone }: { courseId: string; mo
   );
 }
 
+// mm:ss display for a seconds value — used by the video-duration-aware
+// "Shows at" slider below (and the duration readout above it).
+function formatClock(totalSeconds: number): string {
+  const s = Math.max(0, Math.round(totalSeconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 export function QuestionCard({
-  q, onChange, onDelete, showImagePicker = true, showTiming = false,
+  q, onChange, onDelete, showImagePicker = true, showTiming = false, videoDurationSec = null,
 }: {
   q: QuizQuestion; onChange: (next: QuizQuestion) => void; onDelete: () => void;
   // false for a WATCH module's in-video questions — picture questions
@@ -250,9 +276,16 @@ export function QuestionCard({
   // picker is hidden entirely rather than left to fail on save.
   showImagePicker?: boolean;
   // true for a WATCH module's in-video questions — renders the
-  // trigger-time/timer/points row below, which a plain QUIZ question has
-  // no use for.
+  // trigger-time row below (timer/points are set once, for every
+  // question, by WatchQuestionsBuilder's own defaults — see its
+  // docstring — so there's nothing to edit per-question for those here).
   showTiming?: boolean;
+  // The uploaded video's real length, read client-side once its metadata
+  // loads (see ModuleEditorRow) — turns "Shows at" into a duration-aware
+  // slider instead of a blind number the admin has to guess at. Null
+  // before the video's loaded (or if there's no video yet), in which
+  // case a plain number input is the fallback.
+  videoDurationSec?: number | null;
 }) {
   const setType = (type: QuestionType) => {
     if (type === q.type) return;
@@ -270,32 +303,30 @@ export function QuestionCard({
       </div>
 
       {showTiming && (
-        <div className="mb-2 flex items-center gap-3 rounded-md bg-surface px-2.5 py-1.5">
-          <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
-            Shows at
+        <div className="mb-2 rounded-md bg-surface px-2.5 py-1.5">
+          <div className="flex items-center justify-between text-[11px] text-ink-soft">
+            <span>Shows at</span>
+            <span className="font-medium text-ink">
+              {q.trigger_time_sec === null ? "not set" : formatClock(q.trigger_time_sec)}
+              {videoDurationSec !== null && ` / ${formatClock(videoDurationSec)}`}
+            </span>
+          </div>
+          {videoDurationSec !== null && videoDurationSec > 0 ? (
             <input
-              type="number" min={0} value={q.trigger_time_sec ?? ""} placeholder="sec"
-              onChange={(e) => onChange({ ...q, trigger_time_sec: e.target.value === "" ? null : Number(e.target.value) })}
-              className="h-6 w-16 rounded-md border border-line px-1.5 text-[11px]"
+              type="range" min={0} max={Math.floor(videoDurationSec)} value={q.trigger_time_sec ?? 0}
+              onChange={(e) => onChange({ ...q, trigger_time_sec: Number(e.target.value) })}
+              className="mt-1 w-full accent-primary"
             />
-            s
-          </label>
-          <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
-            Timer
-            <input
-              type="number" min={1} value={q.timer_seconds ?? ""} placeholder="none"
-              onChange={(e) => onChange({ ...q, timer_seconds: e.target.value === "" ? null : Number(e.target.value) })}
-              className="h-6 w-16 rounded-md border border-line px-1.5 text-[11px]"
-            />
-            s
-          </label>
-          <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
-            Points
-            <input
-              type="number" min={1} value={q.points} onChange={(e) => onChange({ ...q, points: Number(e.target.value) || 1 })}
-              className="h-6 w-14 rounded-md border border-line px-1.5 text-[11px]"
-            />
-          </label>
+          ) : (
+            <div className="mt-1 flex items-center gap-1.5">
+              <input
+                type="number" min={0} value={q.trigger_time_sec ?? ""} placeholder="sec"
+                onChange={(e) => onChange({ ...q, trigger_time_sec: e.target.value === "" ? null : Number(e.target.value) })}
+                className="h-6 w-20 rounded-md border border-line px-1.5 text-[11px]"
+              />
+              <span className="text-[10px] text-ink-faint">Upload the video first to drag this on a timeline instead.</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -410,17 +441,42 @@ function QuizBuilder({
 
 /** In-video questions for a WATCH module — same building blocks as
  * QuizBuilder (QuestionCard, bank import) but time-ordered, with no image
- * picker (picture questions aren't allowed mid-video) and the
- * trigger-time/timer/points row shown instead. A newly added question
- * starts with trigger_time_sec: null — the backend 400s on save until
- * the admin fills in a time, same as any other required field left
- * blank, rather than silently defaulting to 0s. A bank-imported question
- * lands the same way (see question_bank_service.import_into_module) —
- * it keeps its position at the end until the admin gives it a time too. */
+ * picker or import option for picture questions (not allowed mid-video),
+ * and the timer/points fields lifted up here as module-wide defaults
+ * instead of set per question — one timer length and one points value
+ * for every in-video question on this module, changed once at the top
+ * and applied to all of them automatically (including a question added
+ * or imported afterward). Only "Shows at" stays per-question, since each
+ * one fires at a different point in the video.
+ *
+ * videoDurationSec (read client-side once the uploaded video's metadata
+ * loads — see ModuleEditorRow) turns each question's "Shows at" into a
+ * duration-aware slider; null until then, or if there's no video yet.
+ *
+ * A newly added/imported question starts with trigger_time_sec: null —
+ * the backend 400s on save until the admin fills in a time, same as any
+ * other required field left blank, rather than silently defaulting to 0s. */
 function WatchQuestionsBuilder({
-  courseId, moduleId, questions, onChange,
-}: { courseId: string; moduleId: string; questions: QuizQuestion[]; onChange: (q: QuizQuestion[]) => void }) {
+  courseId, moduleId, questions, onChange, videoDurationSec,
+}: { courseId: string; moduleId: string; questions: QuizQuestion[]; onChange: (q: QuizQuestion[]) => void; videoDurationSec: number | null }) {
   const [importing, setImporting] = useState(false);
+  const [defaultTimerSeconds, setDefaultTimerSeconds] = useState<number | null>(() => questions[0]?.timer_seconds ?? null);
+  const [defaultPoints, setDefaultPoints] = useState<number>(() => questions[0]?.points ?? 1);
+  const didMountRef = useRef(false);
+
+  // Keeps every question's timer_seconds/points in lockstep with the
+  // defaults above — fires when the admin changes a default, or when the
+  // question count changes (add/import/delete), so a freshly added or
+  // bank-imported question (which otherwise lands with timer_seconds:
+  // null, points: 1 from newQuestion/the backend) picks up the current
+  // defaults too, without the admin having to touch it.
+  useEffect(() => {
+    if (!didMountRef.current) { didMountRef.current = true; return; }
+    const changed = questions.some((q) => q.timer_seconds !== defaultTimerSeconds || q.points !== defaultPoints);
+    if (changed) onChange(questions.map((q) => ({ ...q, timer_seconds: defaultTimerSeconds, points: defaultPoints })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultTimerSeconds, defaultPoints, questions.length]);
+
   const updateQ = (id: string, next: QuizQuestion) => onChange(questions.map((q) => (q.id === id ? next : q)));
   const deleteQ = (id: string) => onChange(questions.filter((q) => q.id !== id));
   const sorted = [...questions].sort((a, b) => (a.trigger_time_sec ?? Infinity) - (b.trigger_time_sec ?? Infinity));
@@ -430,15 +486,41 @@ function WatchQuestionsBuilder({
       <p className="text-[11px] text-ink-soft">
         Pauses the video at each question's time below — no timer means playback stays paused until the learner submits.
       </p>
+
+      <div className="flex items-center gap-4 rounded-lg border border-line-soft bg-surface px-3 py-2">
+        <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+          Default timer
+          <input
+            type="number" min={1} value={defaultTimerSeconds ?? ""} placeholder="none"
+            onChange={(e) => setDefaultTimerSeconds(e.target.value === "" ? null : Number(e.target.value))}
+            className="h-6 w-16 rounded-md border border-line px-1.5 text-[11px]"
+          />
+          s
+        </label>
+        <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+          Default points
+          <input
+            type="number" min={1} value={defaultPoints}
+            onChange={(e) => setDefaultPoints(Number(e.target.value) || 1)}
+            className="h-6 w-14 rounded-md border border-line px-1.5 text-[11px]"
+          />
+        </label>
+        <span className="text-[10px] text-ink-faint">Applies to every in-video question on this module</span>
+      </div>
+
+      {videoDurationSec !== null && (
+        <p className="text-[10.5px] text-ink-faint">Video duration: {formatClock(videoDurationSec)}</p>
+      )}
+
       {sorted.map((q) => (
         <QuestionCard
           key={q.id} q={q} onChange={(next) => updateQ(q.id, next)} onDelete={() => deleteQ(q.id)}
-          showImagePicker={false} showTiming
+          showImagePicker={false} showTiming videoDurationSec={videoDurationSec}
         />
       ))}
       <div className="flex gap-2">
         <button
-          onClick={() => onChange([...questions, newQuestion("mcq")])}
+          onClick={() => onChange([...questions, { ...newQuestion("mcq"), timer_seconds: defaultTimerSeconds, points: defaultPoints }])}
           className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-dashed border-line py-2"
         >
           <Plus className="h-3 w-3 text-primary" /> <span className="text-xs font-medium text-primary">Add in-video question</span>
@@ -450,7 +532,7 @@ function WatchQuestionsBuilder({
           <Library className="h-3 w-3 text-primary" /> <span className="text-xs font-medium text-primary">Import from bank</span>
         </button>
       </div>
-      {importing && <BankImportPicker courseId={courseId} moduleId={moduleId} onDone={() => setImporting(false)} />}
+      {importing && <BankImportPicker courseId={courseId} moduleId={moduleId} onDone={() => setImporting(false)} excludePictureQuestions />}
     </div>
   );
 }
@@ -614,6 +696,17 @@ export function ModuleEditorRow({
   const { data: badges } = useBadges();
   const { data: certTemplates } = useCertTemplates();
 
+  // Read the uploaded video's real length client-side (there's no
+  // backend-stored duration — the file sits behind a presigned URL, not
+  // a DB column) so the in-video question timeline (WatchQuestionsBuilder)
+  // can show a duration-aware "Shows at" slider instead of a blind number.
+  // A hidden <video preload="metadata"> is the lightest way to get this —
+  // it only fetches enough of the file to read its length, not the whole
+  // video. Resets whenever the module's file changes (re-upload, or a
+  // different module opened).
+  const [videoDurationSec, setVideoDurationSec] = useState<number | null>(null);
+  useEffect(() => { setVideoDurationSec(null); }, [m.file_url]);
+
   // Restrictions get their own local draft + debounce, decoupled from the
   // parent's instant per-field patch (used by every other field here) —
   // an in-progress restriction (e.g. "+ Learner profile" just clicked,
@@ -708,9 +801,22 @@ export function ModuleEditorRow({
                   courseId={courseId} moduleId={m.id} label="Upload video" accept="video/mp4,video/webm,video/quicktime,video/x-matroska"
                   fileName={m.file_name} fileSizeLabel={m.file_size_label} fileUrl={m.file_url}
                 />
+                {m.file_url && (
+                  // Off-screen — only here to read the real duration once
+                  // its metadata loads (see videoDurationSec above); never
+                  // shown or played.
+                  // eslint-disable-next-line jsx-a11y/media-has-caption
+                  <video
+                    key={m.file_url} src={m.file_url} preload="metadata" className="hidden"
+                    onLoadedMetadata={(e) => setVideoDurationSec(e.currentTarget.duration)}
+                  />
+                )}
                 <div className="mt-3">
                   <p className="mb-1.5 text-[11px] text-ink-soft">In-video questions (optional)</p>
-                  <WatchQuestionsBuilder courseId={courseId} moduleId={m.id} questions={m.questions} onChange={(qs) => onChange({ questions: qs })} />
+                  <WatchQuestionsBuilder
+                    courseId={courseId} moduleId={m.id} questions={m.questions} onChange={(qs) => onChange({ questions: qs })}
+                    videoDurationSec={videoDurationSec}
+                  />
                 </div>
               </>
             )}
