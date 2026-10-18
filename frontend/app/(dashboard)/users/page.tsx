@@ -19,30 +19,42 @@ const roleOptions: RoleName[] = ["learner", "team_lead", "org_admin"];
 const roleLabel: Record<RoleName, string> = { super_admin: "Super Admin", org_admin: "Org Admin", team_lead: "Team Lead", learner: "Learner" };
 
 // A sensible example value per field type, so a downloaded template row
-// is something an admin can just overwrite rather than puzzle out.
+// is something an admin can just overwrite rather than puzzle out. A
+// required field gets a value that visibly flags itself as a stand-in
+// ("Required - replace", "REQUIRED_TRUE") rather than something that
+// looks like real data (an admin who re-uploads the template unedited
+// as a test should still get real example users, but notice instantly
+// which cells were the ones they had to fill in for real).
 function exampleValueFor(field: ProfileField): string {
+  const tag = field.required ? "REQUIRED" : "optional";
   switch (field.field_type) {
     case "checkbox":
-      return "true";
+      return field.required ? "true" : "false";
     case "radio":
     case "select":
-      return field.options[0] ?? "";
+      return field.options[0] ?? tag;
     case "textarea":
-      return "Some notes";
+      return field.required ? "Required - replace with real notes" : "Optional notes";
     default:
-      return "Example";
+      return field.required ? "Required - replace with real value" : "Optional";
   }
 }
 
-// One column per org-defined custom field (keyed by shortname — exactly
-// what the backend reads the CSV by), appended after the four fixed
-// columns, so the template an admin downloads always matches what
-// bulk-invite actually expects right now, required fields included.
-function downloadCsvTemplate(customFields: ProfileField[]) {
+// One column per field the org has actually defined (keyed by
+// shortname — exactly what the backend's CSV reader matches on),
+// appended after the four fixed columns, so the template an admin
+// downloads always matches what bulk-invite expects right now,
+// mandatory fields included. Takes the live field list directly rather
+// than trusting a value already in React state, so a template built
+// the instant after a field was added/removed is never stale.
+function buildCsvTemplate(customFields: ProfileField[]): string {
   const headers = ["name", "email", "team_name", "role", ...customFields.map((f) => f.shortname)];
   const exampleRow = ["Jane Doe", "jane.doe@example.com", "Assembly Line Ops", "learner", ...customFields.map(exampleValueFor)];
-  const csv = `${headers.join(",")}\n${exampleRow.join(",")}\n`;
-  const blob = new Blob([csv], { type: "text/csv" });
+  return `${headers.join(",")}\n${exampleRow.join(",")}\n`;
+}
+
+function downloadCsvTemplate(customFields: ProfileField[]) {
+  const blob = new Blob([buildCsvTemplate(customFields)], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -55,7 +67,7 @@ export default function UsersPage() {
   const { data: org } = useMyOrg();
   const { data: teams } = useTeams();
   const { data: users, isLoading } = useUsers();
-  const { data: profileFields } = useProfileFields();
+  const { data: profileFields, isLoading: fieldsLoading, refetch: refetchProfileFields } = useProfileFields();
   const requiredFields = profileFields?.filter((f) => f.required) ?? [];
 
   const invite = useInviteUser();
@@ -205,7 +217,22 @@ export default function UsersPage() {
               <button onClick={() => fileInputRef.current?.click()} className="mt-2.5 text-xs font-medium text-primary">
                 {bulkInvite.isPending ? "Uploading…" : "Choose CSV file"}
               </button>
-              <button onClick={() => downloadCsvTemplate(profileFields ?? [])} className="mt-1 text-[11px] text-ink-faint underline">Download template</button>
+              <button
+                onClick={async () => {
+                  // Org fields can be added/removed at any time, so pull
+                  // the latest list right before building the file
+                  // instead of trusting whatever happened to be cached —
+                  // a stale template missing a newly-required column is
+                  // exactly the "mandatory field nahi bana" bug this is
+                  // meant to prevent.
+                  const fresh = await refetchProfileFields();
+                  downloadCsvTemplate(fresh.data ?? profileFields ?? []);
+                }}
+                disabled={fieldsLoading}
+                className="mt-1 text-[11px] text-ink-faint underline disabled:opacity-50"
+              >
+                Download template
+              </button>
               <input ref={fileInputRef} type="file" accept=".csv" onChange={onCsvSelected} className="hidden" />
             </>
           )}
