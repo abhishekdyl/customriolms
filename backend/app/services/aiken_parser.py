@@ -15,14 +15,18 @@ format and one sample covers all of them:
     "ANSWER:" line — is read as a short-answer question, with the ANSWER
     line's text as the accepted answer. Multiple acceptable answers are
     separated by "/", e.g. "ANSWER: Paris/paris, France"
-  - a question or an option can carry a picture instead of (or alongside)
-    text via an "IMAGE: <filename>" line — "IMAGE: elephant.png" right
-    after the question text attaches a picture to the question itself;
-    "A) IMAGE: nike.png" makes that option a picture with no text of its
-    own. The filename is resolved against whatever other files were
-    uploaded alongside the .txt in a .zip (see import_aiken_file) — this
-    module only ever sees filenames, never image bytes, so parsing never
-    needs a database or storage backend.
+  - a question or an option can carry a picture instead of, or alongside,
+    text via an "IMAGE: <filename>" marker — "IMAGE: elephant.png" on its
+    own line right after the question text attaches a picture to the
+    question itself (optionally alongside question text on the lines
+    before it); "A) IMAGE: nike.png" makes that option a picture with no
+    text of its own, and "A) Nike swoosh IMAGE: nike.png" gives that same
+    option BOTH text and a picture — IMAGE: is read as a trailing marker
+    on the option line, so anything before it on that line is kept as the
+    option's text. The filename is resolved against whatever other files
+    were uploaded alongside the .txt in a .zip (see import_aiken_file) —
+    this module only ever sees filenames, never image bytes, so parsing
+    never needs a database or storage backend.
 
 Blocks are separated by one or more blank lines. parse_aiken() either
 returns every question (nothing partial) or raises AikenParseError with
@@ -42,6 +46,12 @@ from app.schemas.question import OptionIn, QuestionIn
 _OPTION_RE = re.compile(r"^\s*([A-Za-z])[.\)]\s*(.+?)\s*$")
 _ANSWER_RE = re.compile(r"^\s*ANSWER\s*:\s*(.+?)\s*$", re.IGNORECASE)
 _IMAGE_RE = re.compile(r"^\s*IMAGE\s*:\s*(.+?)\s*$", re.IGNORECASE)
+# Matches an option's value whether it's text-only, picture-only, or both:
+# an IMAGE: marker is read as a trailing piece of the line, so whatever sits
+# before it (possibly nothing) is the option's text and whatever sits after
+# the colon is the filename. Anchored to the end of the line so a filename
+# can't accidentally swallow IMAGE: again if that word appeared earlier.
+_OPTION_IMAGE_RE = re.compile(r"^(.*?)\bIMAGE\s*:\s*(.+?)\s*$", re.IGNORECASE)
 
 
 class AikenParseError(ValueError):
@@ -130,9 +140,10 @@ def _parse_block(lines: list[str], start_line: int) -> ParsedQuestion:
         if m_opt:
             letter = m_opt.group(1).upper()
             value = m_opt.group(2).strip()
-            m_img = _IMAGE_RE.match(value)
+            m_img = _OPTION_IMAGE_RE.match(value)
             if m_img:
-                options.append(ParsedOption(id=letter, text=None, image_ref=m_img.group(1).strip()))
+                option_text = m_img.group(1).strip() or None
+                options.append(ParsedOption(id=letter, text=option_text, image_ref=m_img.group(2).strip()))
             else:
                 options.append(ParsedOption(id=letter, text=value, image_ref=None))
             continue

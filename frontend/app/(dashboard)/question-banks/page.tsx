@@ -107,10 +107,13 @@ function BankDetail({ bankId, onBack }: { bankId: string; onBack: () => void }) 
           </div>
         </div>
         <p className="mt-2 text-[11px] text-ink-faint">
-          Want pictures on a question or its options? Add a line right after the question (or as an option's whole
-          value) like <code className="rounded bg-surface-2 px-1">IMAGE: elephant.png</code>, then upload a{" "}
-          <strong>.zip</strong> containing your .txt plus those image files instead of a plain .txt. See the picture
-          sample above for a worked example.
+          Want pictures on a question or its options? Add{" "}
+          <code className="rounded bg-surface-2 px-1">IMAGE: elephant.png</code> right after the question for a
+          question picture, or at the end of an option line for an option picture —{" "}
+          <code className="rounded bg-surface-2 px-1">A) IMAGE: nike.png</code> for a picture with no text, or{" "}
+          <code className="rounded bg-surface-2 px-1">A) Nike swoosh IMAGE: nike.png</code> for text and a picture
+          together. Then upload a <strong>.zip</strong> containing your .txt plus those image files instead of a
+          plain .txt. See the picture sample above for a worked example.
         </p>
         {importedCount !== null && !importAiken.isError && (
           <p className="mt-2 text-[11.5px] text-success">Imported {importedCount} question{importedCount === 1 ? "" : "s"}.</p>

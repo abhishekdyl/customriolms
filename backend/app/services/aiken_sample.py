@@ -45,6 +45,11 @@ Which picture shows a circle?
 A) IMAGE: shape_a.png
 B) IMAGE: shape_b.png
 ANSWER: A
+
+Which shape name matches its picture?
+A) Circle IMAGE: shape_a.png
+B) Square IMAGE: shape_b.png
+ANSWER: A
 """
 
 
