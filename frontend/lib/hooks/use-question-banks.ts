@@ -105,6 +105,26 @@ export function useImportBankQuestions(courseId: string) {
   });
 }
 
+/** Bulk-adds questions to a bank from an uploaded Aiken-format .txt file
+ * — MCQ, True/False and short-answer all come from the same plain-text
+ * shape (see aiken_parser.py). Either every question in the file
+ * imports or none do; a malformed file's error lists every problem it
+ * found, not just the first, so it's safe to show the whole message. */
+export function useImportAikenQuestions(bankId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return api.upload<QuestionBank>(`/api/v1/question-banks/${bankId}/import-aiken`, formData);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["question-banks", bankId] });
+      qc.invalidateQueries({ queryKey: ["question-banks"] });
+    },
+  });
+}
+
 /** Uploads a question/option image once, up front — the returned
  * image_key is then embedded into whichever QuestionInput the admin is
  * authoring (bank question or module question). */

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_role
@@ -13,6 +13,7 @@ from app.schemas.question_bank import (
 from app.schemas.course import ModuleOut
 from app.services import question_bank_service as svc
 from app.services import storage_service
+from app.services.aiken_parser import AikenParseError, parse_aiken
 from app.services.course_service import _get_module_with_questions, get_course_or_404
 
 router = APIRouter(
@@ -77,6 +78,32 @@ async def delete_question(
     await svc.get_bank_or_404(db, bank_id, current_user.org_id)
     question = await svc.get_bank_question_or_404(db, bank_id, question_id)
     await svc.delete_question(db, question)
+
+
+@router.post("/{bank_id}/import-aiken", response_model=QuestionBankOut)
+async def import_aiken_file(
+    bank_id: uuid.UUID, file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Bulk-adds questions to this bank from an uploaded Aiken-format
+    .txt file — MCQ, True/False and short-answer all read from the same
+    plain-text shape (see aiken_parser.parse_aiken). Either every
+    question in the file imports, or none do — a malformed file is
+    rejected with every problem it found, not just the first."""
+    bank = await svc.get_bank_or_404(db, bank_id, current_user.org_id)
+    contents = await file.read()
+    try:
+        text = contents.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="Couldn't read that as a plain text file — save it as .txt and try again")
+
+    try:
+        questions = parse_aiken(text)
+    except AikenParseError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    await svc.import_aiken(db, bank, questions)
+    return bank
 
 
 @router.post("/{bank_id}/import-into/{course_id}/{module_id}", response_model=ModuleOut)

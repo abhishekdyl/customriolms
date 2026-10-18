@@ -1,15 +1,50 @@
 "use client";
-import { useState } from "react";
-import { Plus, Pencil, Trash2, ChevronLeft } from "lucide-react";
+import { useRef, useState } from "react";
+import { Plus, Pencil, Trash2, ChevronLeft, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QuestionCard } from "@/components/shell/courses/module-editor";
 import { newQuestion, toQuestionInput } from "@/lib/quiz-utils";
 import {
   useQuestionBanks, useQuestionBank, useCreateQuestionBank, useDeleteQuestionBank,
-  useAddBankQuestion, useUpdateBankQuestion, useDeleteBankQuestion,
+  useAddBankQuestion, useUpdateBankQuestion, useDeleteBankQuestion, useImportAikenQuestions,
 } from "@/lib/hooks/use-question-banks";
+import { ApiError } from "@/lib/api-client";
 import type { QuizQuestion } from "@/lib/types";
+
+// One file format, one sample, covering every question type the Aiken
+// importer reads: a plain MCQ, a True/False (auto-detected because its
+// two options are literally "True"/"False"), and two short-answer
+// questions — one with a single accepted answer, one with several
+// separated by "/". See aiken_parser.py for the full read-this-shape rules.
+const AIKEN_SAMPLE = `What is the capital of France?
+A) Paris
+B) London
+C) Berlin
+D) Madrid
+ANSWER: A
+
+The Great Wall of China is visible from space with the naked eye.
+A) True
+B) False
+ANSWER: B
+
+Name the largest planet in our solar system.
+ANSWER: Jupiter
+
+What is 2 + 2?
+ANSWER: 4/four
+`;
+
+function downloadAikenSample() {
+  const blob = new Blob([AIKEN_SAMPLE], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "aiken-questions-sample.txt";
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 /** Detail view for one bank — add/edit/delete its questions. Each
  * question is saved individually (not as one big PATCH like a module's
@@ -20,9 +55,23 @@ function BankDetail({ bankId, onBack }: { bankId: string; onBack: () => void }) 
   const addQ = useAddBankQuestion(bankId);
   const updateQ = useUpdateBankQuestion(bankId);
   const deleteQ = useDeleteBankQuestion(bankId);
+  const importAiken = useImportAikenQuestions(bankId);
   const [draft, setDraft] = useState<QuizQuestion | null>(null);
+  const [importedCount, setImportedCount] = useState<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (isLoading || !bank) return <p className="text-sm text-ink-faint">Loading…</p>;
+
+  const onAikenFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportedCount(null);
+    const before = bank.questions.length;
+    importAiken.mutate(file, {
+      onSuccess: (updated) => setImportedCount(updated.questions.length - before),
+    });
+    e.target.value = "";
+  };
 
   return (
     <div>
@@ -31,6 +80,33 @@ function BankDetail({ bankId, onBack }: { bankId: string; onBack: () => void }) 
       </button>
       <h1 className="font-head text-xl text-ink mb-1">{bank.name}</h1>
       {bank.description && <p className="mb-4 text-sm text-ink-faint">{bank.description}</p>}
+
+      <div className="mb-5 rounded-xl border border-dashed border-line bg-surface p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Upload className="h-4 w-4 text-ink-faint" />
+          <span className="text-[13px] text-ink">Bulk-add questions from an Aiken-format .txt file</span>
+          <span className="text-[11px] text-ink-faint">— MCQ, True/False and short-answer all supported</span>
+          <div className="ml-auto flex items-center gap-3">
+            <button onClick={downloadAikenSample} className="text-[11px] text-ink-faint underline">Download sample</button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="text-xs font-medium text-primary"
+              disabled={importAiken.isPending}
+            >
+              {importAiken.isPending ? "Importing…" : "Choose file"}
+            </button>
+            <input ref={fileInputRef} type="file" accept=".txt" onChange={onAikenFileSelected} className="hidden" />
+          </div>
+        </div>
+        {importedCount !== null && !importAiken.isError && (
+          <p className="mt-2 text-[11.5px] text-success">Imported {importedCount} question{importedCount === 1 ? "" : "s"}.</p>
+        )}
+        {importAiken.isError && (
+          <pre className="mt-2 whitespace-pre-wrap text-[11.5px] text-danger">
+            {importAiken.error instanceof ApiError ? importAiken.error.message : "Import failed."}
+          </pre>
+        )}
+      </div>
 
       <div className="flex flex-col gap-2.5">
         {bank.questions.map((q) => (

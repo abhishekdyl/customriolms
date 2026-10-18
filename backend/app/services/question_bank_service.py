@@ -67,6 +67,20 @@ async def add_question(db: AsyncSession, bank: QuestionBank, body: QuestionIn) -
     return question
 
 
+async def import_aiken(db: AsyncSession, bank: QuestionBank, questions: list[QuestionIn]) -> int:
+    """Writes every parsed Aiken question (see aiken_parser.parse_aiken)
+    as a new BankQuestion at the end of the bank, in one commit. The
+    parse step has already rejected the whole file if anything in it was
+    malformed, so every question handed to this is already known-good —
+    this never partially imports a bad file."""
+    max_position = max((q.position for q in bank.questions), default=-1)
+    for i, q in enumerate(questions):
+        db.add(BankQuestion(bank_id=bank.id, position=max_position + 1 + i, **_question_fields(q)))
+    await db.commit()
+    await db.refresh(bank, attribute_names=["questions"])
+    return len(questions)
+
+
 async def get_bank_question_or_404(db: AsyncSession, bank_id: uuid.UUID, question_id: uuid.UUID) -> BankQuestion:
     result = await db.execute(
         select(BankQuestion).where(BankQuestion.id == question_id, BankQuestion.bank_id == bank_id)
