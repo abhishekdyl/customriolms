@@ -151,6 +151,18 @@ def validate_image_upload(file: UploadFile, size: int) -> None:
         raise HTTPException(status_code=400, detail=f"Image is too large — max {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
 
 
+def validate_image_bytes(filename: str, size: int) -> None:
+    """Same rule as validate_image_upload, for raw bytes that didn't
+    arrive as an UploadFile — e.g. one image pulled out of a .zip during
+    a bulk Aiken-with-pictures import (see aiken_parser.py)."""
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    content_type = mimetypes.guess_type(filename)[0] or ""
+    if ext not in _IMAGE_EXTS and content_type not in _IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail=f'Unsupported image type for "{filename}" ({ext or content_type or "unknown"}) — use JPG, PNG, WEBP or GIF')
+    if size > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail=f'"{filename}" is too large — max {MAX_IMAGE_BYTES // (1024 * 1024)} MB')
+
+
 def size_label(num_bytes: int) -> str:
     mb = num_bytes / 1_000_000
     if mb >= 1:

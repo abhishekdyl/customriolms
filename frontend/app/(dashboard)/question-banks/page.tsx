@@ -9,7 +9,7 @@ import {
   useQuestionBanks, useQuestionBank, useCreateQuestionBank, useDeleteQuestionBank,
   useAddBankQuestion, useUpdateBankQuestion, useDeleteBankQuestion, useImportAikenQuestions,
 } from "@/lib/hooks/use-question-banks";
-import { ApiError } from "@/lib/api-client";
+import { api, ApiError } from "@/lib/api-client";
 import type { QuizQuestion } from "@/lib/types";
 
 // One file format, one sample, covering every question type the Aiken
@@ -44,6 +44,13 @@ function downloadAikenSample() {
   a.download = "aiken-questions-sample.txt";
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// Questions with pictures need a .zip instead of a plain .txt — the server
+// builds this one on demand (see aiken_sample.py) rather than it being a
+// static asset here, since it bundles actual placeholder image files.
+function downloadAikenPictureSample() {
+  api.download("/api/v1/question-banks/aiken-sample.zip", "aiken-picture-questions-sample.zip");
 }
 
 /** Detail view for one bank — add/edit/delete its questions. Each
@@ -88,6 +95,7 @@ function BankDetail({ bankId, onBack }: { bankId: string; onBack: () => void }) 
           <span className="text-[11px] text-ink-faint">— MCQ, True/False and short-answer all supported</span>
           <div className="ml-auto flex items-center gap-3">
             <button onClick={downloadAikenSample} className="text-[11px] text-ink-faint underline">Download sample</button>
+            <button onClick={downloadAikenPictureSample} className="text-[11px] text-ink-faint underline">Download picture sample (.zip)</button>
             <button
               onClick={() => fileInputRef.current?.click()}
               className="text-xs font-medium text-primary"
@@ -95,9 +103,15 @@ function BankDetail({ bankId, onBack }: { bankId: string; onBack: () => void }) 
             >
               {importAiken.isPending ? "Importing…" : "Choose file"}
             </button>
-            <input ref={fileInputRef} type="file" accept=".txt" onChange={onAikenFileSelected} className="hidden" />
+            <input ref={fileInputRef} type="file" accept=".txt,.zip" onChange={onAikenFileSelected} className="hidden" />
           </div>
         </div>
+        <p className="mt-2 text-[11px] text-ink-faint">
+          Want pictures on a question or its options? Add a line right after the question (or as an option's whole
+          value) like <code className="rounded bg-surface-2 px-1">IMAGE: elephant.png</code>, then upload a{" "}
+          <strong>.zip</strong> containing your .txt plus those image files instead of a plain .txt. See the picture
+          sample above for a worked example.
+        </p>
         {importedCount !== null && !importAiken.isError && (
           <p className="mt-2 text-[11.5px] text-success">Imported {importedCount} question{importedCount === 1 ? "" : "s"}.</p>
         )}

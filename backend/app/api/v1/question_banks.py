@@ -1,6 +1,9 @@
+import mimetypes
 import uuid
+import zipfile
+from io import BytesIO
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_role
@@ -13,8 +16,15 @@ from app.schemas.question_bank import (
 from app.schemas.course import ModuleOut
 from app.services import question_bank_service as svc
 from app.services import storage_service
-from app.services.aiken_parser import AikenParseError, parse_aiken
+from app.services.aiken_parser import AikenParseError, parse_aiken, required_image_refs
+from app.services.aiken_sample import build_aiken_sample_zip
 from app.services.course_service import _get_module_with_questions, get_course_or_404
+
+# A plain-text file's root: no images possible. A .zip's root: the .txt
+# with the questions, plus whatever image files sit alongside it in the
+# same archive, referenced by filename from the .txt's IMAGE: lines (see
+# aiken_parser.py). Any other extension is refused up front.
+_TEXT_EXTS = (".txt", ".aiken")
 
 router = APIRouter(
     prefix="/api/v1/question-banks", tags=["question-banks"],
@@ -35,6 +45,21 @@ async def list_banks(db: AsyncSession = Depends(get_db), current_user: User = De
 async def create_bank(body: QuestionBankCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     bank = await svc.create_bank(db, current_user.org_id, body.name, body.description)
     return bank
+
+
+@router.get("/aiken-sample.zip")
+async def download_aiken_sample():
+    """Demo file for the Aiken bulk-question importer below — one .txt
+    covering every question type and both picture patterns (question-level
+    and option-level), plus the placeholder images it references. Must stay
+    registered before GET /{bank_id}: that route takes a single path segment
+    too, and FastAPI/Starlette match routes in registration order, so a
+    request for this fixed path would otherwise be caught there first and
+    fail UUID coercion instead of reaching this route."""
+    return Response(
+        content=build_aiken_sample_zip(), media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="aiken-picture-questions-sample.zip"'},
+    )
 
 
 @router.get("/{bank_id}", response_model=QuestionBankOut)
@@ -85,23 +110,83 @@ async def import_aiken_file(
     bank_id: uuid.UUID, file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
-    """Bulk-adds questions to this bank from an uploaded Aiken-format
-    .txt file — MCQ, True/False and short-answer all read from the same
-    plain-text shape (see aiken_parser.parse_aiken). Either every
-    question in the file imports, or none do — a malformed file is
-    rejected with every problem it found, not just the first."""
+    """Bulk-adds questions to this bank from an uploaded Aiken-format file —
+    MCQ, True/False, short-answer, and picture questions/options all read
+    from the same plain-text shape (see aiken_parser.parse_aiken). A plain
+    .txt works as before for text-only questions; a .zip containing that
+    .txt plus the image files its IMAGE: lines name is how pictures come
+    along (see aiken_sample.py for a worked example of both). Either every
+    question in the file imports, or none do — a malformed file, or a zip
+    missing an image it references, is rejected with every problem found,
+    not just the first, and nothing is uploaded or written until the whole
+    file checks out."""
     bank = await svc.get_bank_or_404(db, bank_id, current_user.org_id)
     contents = await file.read()
-    try:
-        text = contents.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="Couldn't read that as a plain text file — save it as .txt and try again")
+    filename = (file.filename or "").lower()
+
+    image_bytes: dict[str, bytes] = {}
+    if filename.endswith(".zip"):
+        try:
+            zf = zipfile.ZipFile(BytesIO(contents))
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=400, detail="Couldn't read that as a .zip file")
+
+        text = None
+        with zf:
+            for name in zf.namelist():
+                if name.endswith("/"):
+                    continue
+                basename = name.rsplit("/", 1)[-1]
+                if basename.lower().endswith(_TEXT_EXTS):
+                    if text is not None:
+                        raise HTTPException(status_code=400, detail="That .zip has more than one .txt/.aiken file — it needs exactly one")
+                    try:
+                        text = zf.read(name).decode("utf-8-sig")
+                    except UnicodeDecodeError:
+                        raise HTTPException(status_code=400, detail=f'Couldn\'t read "{basename}" as a plain text file')
+                else:
+                    image_bytes[basename.lower()] = zf.read(name)
+        if text is None:
+            raise HTTPException(status_code=400, detail="That .zip doesn't contain a .txt/.aiken file with the questions")
+    elif filename.endswith(_TEXT_EXTS) or not filename:
+        try:
+            text = contents.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="Couldn't read that as a plain text file — save it as .txt, or as a .zip if it includes pictures")
+    else:
+        raise HTTPException(status_code=400, detail="Upload a .txt file (or a .zip if it includes pictures)")
 
     try:
-        questions = parse_aiken(text)
+        parsed = parse_aiken(text)
     except AikenParseError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    needed = required_image_refs(parsed)
+    missing = sorted({ref for ref in needed if ref.lower() not in image_bytes})
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail="These IMAGE: files are referenced in the text but weren't found in the .zip: " + ", ".join(missing),
+        )
+
+    # Upload every referenced image before resolving any question, so a bad
+    # image (wrong type, too large) is caught — and nothing written — before
+    # any question is saved either.
+    image_keys: dict[str, str] = {}
+    for ref in needed:
+        key = ref.lower()
+        data = image_bytes[key]
+        storage_service.validate_image_bytes(ref, len(data))
+        record = await storage_service.store_bytes(
+            db, data, org_id=current_user.org_id, component="question", filearea="image",
+            itemid=None, filename=ref, filepath=uuid.uuid4().hex, content_type=mimetypes.guess_type(ref)[0],
+            user=current_user,
+        )
+        image_keys[key] = storage_service.file_key(record)
+    if needed:
+        await db.commit()  # store_bytes only flushes; same rule as store_file above
+
+    questions = [pq.resolve(image_keys) for pq in parsed]
     await svc.import_aiken(db, bank, questions)
     return bank
 

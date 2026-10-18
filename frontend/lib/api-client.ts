@@ -93,4 +93,22 @@ export const api = {
       return res.json() as Promise<T>;
     });
   },
+  // For downloading a binary response (e.g. the Aiken picture-question
+  // sample .zip) from an authenticated endpoint — a plain <a href> can't
+  // carry the Authorization header, so this fetches it here and saves it
+  // via a throwaway object URL instead.
+  download: async (path: string, filename: string) => {
+    const token = getToken();
+    const res = await fetch(`${API_URL}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.statusText, res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 };
