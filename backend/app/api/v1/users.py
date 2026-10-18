@@ -75,7 +75,7 @@ async def invite_single_user(body: InviteUserRequest, db: AsyncSession = Depends
     org = await _get_org_or_404(db, current_user.org_id)
     try:
         user = await invite_user(
-            db, org_id=org.id, email=body.email.lower(),
+            db, org=org, email=body.email.lower(),
             name=(body.name or "").strip() or body.email.split("@")[0], role=body.role, team_id=body.team_id,
         )
         await db.commit()
@@ -91,7 +91,7 @@ async def bulk_invite(file: UploadFile, db: AsyncSession = Depends(get_db), curr
     org = await _get_org_or_404(db, current_user.org_id)
     contents = await file.read()
     try:
-        return await bulk_invite_from_csv(db, org_id=org.id, file_bytes=contents)
+        return await bulk_invite_from_csv(db, org=org, file_bytes=contents)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

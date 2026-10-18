@@ -8,17 +8,40 @@ import { Input } from "@/components/ui/input";
 import { QRCodeSVG } from "@/components/shell/qr-code";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { useTeams } from "@/lib/hooks/use-teams";
+import { useProfileFields } from "@/lib/hooks/use-profile-fields";
 import {
   useUsers, useInviteUser, useBulkInvite, useChangeRole, useChangeTeam, useUpdateUserStatus, useRemoveUser,
 } from "@/lib/hooks/use-users";
 import { ApiError } from "@/lib/api-client";
-import type { AppUser, BulkInviteResult, RoleName } from "@/lib/types";
+import type { AppUser, BulkInviteResult, ProfileField, RoleName } from "@/lib/types";
 
 const roleOptions: RoleName[] = ["learner", "team_lead", "org_admin"];
 const roleLabel: Record<RoleName, string> = { super_admin: "Super Admin", org_admin: "Org Admin", team_lead: "Team Lead", learner: "Learner" };
 
-function downloadCsvTemplate() {
-  const csv = "name,email,team_name,role\nJane Doe,jane.doe@example.com,Assembly Line Ops,learner\n";
+// A sensible example value per field type, so a downloaded template row
+// is something an admin can just overwrite rather than puzzle out.
+function exampleValueFor(field: ProfileField): string {
+  switch (field.field_type) {
+    case "checkbox":
+      return "true";
+    case "radio":
+    case "select":
+      return field.options[0] ?? "";
+    case "textarea":
+      return "Some notes";
+    default:
+      return "Example";
+  }
+}
+
+// One column per org-defined custom field (keyed by shortname — exactly
+// what the backend reads the CSV by), appended after the four fixed
+// columns, so the template an admin downloads always matches what
+// bulk-invite actually expects right now, required fields included.
+function downloadCsvTemplate(customFields: ProfileField[]) {
+  const headers = ["name", "email", "team_name", "role", ...customFields.map((f) => f.shortname)];
+  const exampleRow = ["Jane Doe", "jane.doe@example.com", "Assembly Line Ops", "learner", ...customFields.map(exampleValueFor)];
+  const csv = `${headers.join(",")}\n${exampleRow.join(",")}\n`;
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -32,6 +55,8 @@ export default function UsersPage() {
   const { data: org } = useMyOrg();
   const { data: teams } = useTeams();
   const { data: users, isLoading } = useUsers();
+  const { data: profileFields } = useProfileFields();
+  const requiredFields = profileFields?.filter((f) => f.required) ?? [];
 
   const invite = useInviteUser();
   const bulkInvite = useBulkInvite();
@@ -168,6 +193,11 @@ export default function UsersPage() {
           <div className="mt-1 text-xs text-ink-faint">
             Assigns team and role automatically from the file{domainRestricted ? ` — rows outside ${org!.allowed_domains.map((d) => "@" + d).join("/")} are skipped` : ""}
           </div>
+          {requiredFields.length > 0 && (
+            <div className="mt-1 text-[11px] text-ink-faint">
+              Must also include: {requiredFields.map((f) => f.shortname).join(", ")}
+            </div>
+          )}
           {atLimit ? (
             <div className="mt-2.5 text-[11.5px] text-danger">Blocked — no seats left</div>
           ) : (
@@ -175,7 +205,7 @@ export default function UsersPage() {
               <button onClick={() => fileInputRef.current?.click()} className="mt-2.5 text-xs font-medium text-primary">
                 {bulkInvite.isPending ? "Uploading…" : "Choose CSV file"}
               </button>
-              <button onClick={downloadCsvTemplate} className="mt-1 text-[11px] text-ink-faint underline">Download template</button>
+              <button onClick={() => downloadCsvTemplate(profileFields ?? [])} className="mt-1 text-[11px] text-ink-faint underline">Download template</button>
               <input ref={fileInputRef} type="file" accept=".csv" onChange={onCsvSelected} className="hidden" />
             </>
           )}

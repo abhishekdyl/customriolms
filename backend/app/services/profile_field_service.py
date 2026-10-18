@@ -78,10 +78,17 @@ async def get_values_for_user(db: AsyncSession, org_id: uuid.UUID, user_id: uuid
     ]
 
 
-async def set_values_for_user(db: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID, values_by_shortname: dict[str, str | None]) -> None:
+async def set_values_for_user(
+    db: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID, values_by_shortname: dict[str, str | None],
+    commit: bool = True,
+) -> None:
     """Upserts each given shortname's value. Unknown shortnames (a field
     that doesn't exist, or belongs to a different org) are silently
-    skipped — see ProfileFieldValuesUpdate's docstring for why."""
+    skipped — see ProfileFieldValuesUpdate's docstring for why.
+
+    commit=False lets a caller that's writing many users in one request
+    (the bulk CSV importer) batch every row's values into its own single
+    transaction instead of committing after each one."""
     if not values_by_shortname:
         return
     fields = (await db.execute(
@@ -102,4 +109,5 @@ async def set_values_for_user(db: AsyncSession, org_id: uuid.UUID, user_id: uuid
             db.add(UserInfoData(field_id=f.id, user_id=user_id, value=new_value))
         else:
             row.value = new_value
-    await db.commit()
+    if commit:
+        await db.commit()
