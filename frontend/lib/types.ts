@@ -68,6 +68,10 @@ export interface AppUser {
   country?: string | null;
   timezone?: string | null;
   companyname?: string | null;
+  phone?: string | null;
+  job_title?: string | null;
+  location?: string | null;
+  bio?: string | null;
 }
 
 export interface BulkInviteResult {

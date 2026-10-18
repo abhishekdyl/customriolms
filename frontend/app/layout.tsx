@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Providers } from "./providers";
+import { ImpersonationBanner } from "@/components/shell/impersonation-banner";
 import "./globals.css";
 // Video.js 10's default video skin — used by the learner's WatchPlayer
 // (app/(learner)/learn/courses/[id]/page.tsx). Imported once here, same
@@ -22,7 +23,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        <Providers>{children}</Providers>
+        <Providers>
+          <ImpersonationBanner />
+          {children}
+        </Providers>
       </body>
     </html>
   );

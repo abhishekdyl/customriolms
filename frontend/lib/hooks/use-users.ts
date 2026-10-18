@@ -7,6 +7,32 @@ export function useUsers() {
   return useQuery({ queryKey: ["users"], queryFn: () => api.get<AppUser[]>("/api/v1/users") });
 }
 
+/** One user's full profile — the Org Admin / Team Lead "view profile" panel. */
+export function useUser(userId: string | null) {
+  return useQuery({
+    queryKey: ["users", userId],
+    queryFn: () => api.get<AppUser>(`/api/v1/users/${userId}`),
+    enabled: !!userId,
+  });
+}
+
+/** The Org-Admin-only "edit profile" form — full name/email/role are
+ * mandatory (same trio required at creation); team and the rest are
+ * optional extras left untouched when omitted. */
+export function useUpdateUserProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string; name: string; email: string; role: RoleName; team_id: string | null;
+      phone?: string | null; job_title?: string | null; location?: string | null; bio?: string | null; country?: string | null;
+    }) => api.patch<AppUser>(`/api/v1/users/${id}/profile`, body),
+    onSuccess: (updated) => {
+      qc.invalidateQueries({ queryKey: ["users"] });
+      qc.setQueryData(["users", updated.id], updated);
+    },
+  });
+}
+
 export function useInviteUser() {
   const qc = useQueryClient();
   return useMutation({

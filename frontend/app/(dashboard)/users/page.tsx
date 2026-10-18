@@ -1,14 +1,16 @@
 "use client";
 import { useRef, useState } from "react";
 import {
-  Upload, Send, QrCode, Smartphone, ShieldCheck, ShieldQuestion, UserMinus, Check, X,
+  Upload, Send, QrCode, Smartphone, ShieldCheck, ShieldQuestion, UserMinus, Check, X, UserCog,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QRCodeSVG } from "@/components/shell/qr-code";
+import { UserProfileDialog } from "@/components/shell/users/user-profile-dialog";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { useTeams } from "@/lib/hooks/use-teams";
 import { useProfileFields } from "@/lib/hooks/use-profile-fields";
+import { useCurrentUser } from "@/lib/hooks/use-auth";
 import {
   useUsers, useInviteUser, useBulkInvite, useChangeRole, useChangeTeam, useUpdateUserStatus, useRemoveUser,
 } from "@/lib/hooks/use-users";
@@ -69,6 +71,11 @@ export default function UsersPage() {
   const { data: users, isLoading } = useUsers();
   const { data: profileFields, isLoading: fieldsLoading, refetch: refetchProfileFields } = useProfileFields();
   const requiredFields = profileFields?.filter((f) => f.required) ?? [];
+  const { data: me } = useCurrentUser();
+  // Edit + "Login as" are Org-Admin-only on the backend; Team Leads who
+  // can also open this page get a read-only view of the same dialog.
+  const canEditProfiles = me?.role === "org_admin" || me?.role === "super_admin";
+  const [profileUserId, setProfileUserId] = useState<string | null>(null);
 
   const invite = useInviteUser();
   const bulkInvite = useBulkInvite();
@@ -440,7 +447,13 @@ export default function UsersPage() {
                     </td>
                     <td className="border-b border-line-soft px-5 py-3">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-ink">{u.full_name}</span>
+                        <button
+                          onClick={() => setProfileUserId(u.id)}
+                          className="font-medium text-ink underline-offset-2 hover:text-primary hover:underline"
+                          title={canEditProfiles ? "View / edit profile" : "View profile"}
+                        >
+                          {u.full_name}
+                        </button>
                         {suspended && <span className="rounded-full bg-amber-soft px-2 py-0.5 text-[10px] text-amber">Suspended</span>}
                         {u.status === "invited" && <span className="rounded-full bg-primary-soft px-2 py-0.5 text-[10px] text-primary">Invited</span>}
                       </div>
@@ -469,6 +482,9 @@ export default function UsersPage() {
                         </div>
                       ) : (
                         <div className="flex items-center gap-1">
+                          <button title="View / edit profile" onClick={() => setProfileUserId(u.id)}>
+                            <UserCog className="h-3.5 w-3.5 text-ink-soft" />
+                          </button>
                           <button
                             title={suspended ? "Reactivate" : "Suspend"}
                             onClick={() => updateStatus.mutate({ id: u.id, status: suspended ? "active" : "suspended" })}
@@ -488,6 +504,8 @@ export default function UsersPage() {
           </table>
         )}
       </div>
+
+      <UserProfileDialog userId={profileUserId} canEdit={canEditProfiles} onClose={() => setProfileUserId(null)} />
     </div>
   );
 }

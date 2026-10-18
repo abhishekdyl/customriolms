@@ -37,6 +37,26 @@ export function useDeleteProfileField() {
   });
 }
 
+/** An Org Admin/Team Lead viewing one user's custom-field answers —
+ * GET/PATCH /api/v1/users/{id}/custom-fields. Same shape as the user's
+ * own GET /auth/me/custom-fields, just scoped to someone else. */
+export function useUserCustomFields(userId: string | null) {
+  return useQuery({
+    queryKey: ["user-custom-fields", userId],
+    queryFn: () => api.get<ProfileFieldValue[]>(`/api/v1/users/${userId}/custom-fields`),
+    enabled: !!userId,
+  });
+}
+
+export function useUpdateUserCustomFields(userId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (values: Record<string, string | null>) =>
+      api.patch<ProfileFieldValue[]>(`/api/v1/users/${userId}/custom-fields`, { values }),
+    onSuccess: (data) => qc.setQueryData(["user-custom-fields", userId], data),
+  });
+}
+
 /** The current user's own custom field values — GET/PATCH /api/v1/auth/me/custom-fields. */
 export function useMyCustomFields() {
   return useQuery({

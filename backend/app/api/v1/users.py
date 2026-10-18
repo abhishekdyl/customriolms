@@ -6,13 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_role
 from app.core.database import get_db
-from app.core.security import hash_password
-from app.core.session import revoke_all_sessions
+from app.core.security import create_access_token, create_refresh_token, hash_password
+from app.core.session import create_session, revoke_all_sessions
 from app.models.org import Org
 from app.models.team import Team
-from app.models.user import RoleName, User, UserStatus
+from app.models.user import RoleName, User, UserStatus, split_full_name
+from app.schemas.auth import TokenResponse
 from app.schemas.user import (
     AcceptInviteRequest,
+    AdminUpdateUserRequest,
     BulkInviteResult,
     InviteUserRequest,
     LearnerProgressOut,
@@ -25,6 +27,13 @@ from app.schemas.profile_field import ProfileFieldValueOut, ProfileFieldValuesUp
 from app.services import dashboard_service
 from app.services import profile_field_service
 from app.services.invite_service import bulk_invite_from_csv, invite_user
+
+# An Org Admin can impersonate a lower-privileged account to see exactly
+# what that person sees ("login as") — never another Org Admin and never
+# platform staff. Keeps the feature a support tool, not a way for one
+# admin account to quietly take over another admin's or a platform
+# account's session.
+_IMPERSONATABLE_ROLES = (RoleName.TEAM_LEAD, RoleName.LEARNER)
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
@@ -164,6 +173,108 @@ async def update_user_status(user_id: uuid.UUID, body: UpdateUserStatusRequest, 
         await revoke_all_sessions(str(user.id))
 
     return user
+
+
+@router.get(
+    "/{user_id}", response_model=UserOut,
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+)
+async def get_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """One user's full profile — the Org Admin / Team Lead "view profile"
+    panel. Scoped the same as the rest of this router: anyone outside the
+    caller's own org is a 404, same as if they didn't exist."""
+    user = await _get_user_or_404(db, user_id, current_user.org_id)
+    team_name = None
+    if user.team_id is not None:
+        team_name = (await db.execute(select(Team.name).where(Team.id == user.team_id))).scalar_one_or_none()
+    row = UserOut.model_validate(user)
+    row.team_name = team_name
+    return row
+
+
+@router.patch("/{user_id}/profile", response_model=UserOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def update_user_profile(
+    user_id: uuid.UUID, body: AdminUpdateUserRequest,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """The Org Admin "edit profile" form — full name/email/role are
+    mandatory (AdminUpdateUserRequest enforces that), same as creating a
+    user in the first place; team and the rest are optional extras. Use
+    your own /auth/me to edit your own profile instead — blocked here for
+    the same reason /role and /status block self-targeting, so an admin
+    can't accidentally strip or change their own role through this form."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Edit your own profile from your account settings instead")
+
+    user = await _get_user_or_404(db, user_id, current_user.org_id)
+
+    email = body.email.lower()
+    if email != user.email:
+        existing = await db.execute(select(User.id).where(User.email == email, User.id != user.id))
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"{email} is already registered to another account")
+        # Keep the login-identifier column in sync only when it was still
+        # the default (a copy of the old email) — a custom username the
+        # user picked for themselves is left untouched.
+        if user.username == user.email:
+            user.username = email
+        user.email = email
+
+    if body.team_id is not None:
+        team_check = await db.execute(select(Team.id).where(Team.id == body.team_id, Team.org_id == current_user.org_id))
+        if team_check.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+    user.firstname, user.lastname = split_full_name(body.name)
+    user.role = body.role
+    user.team_id = body.team_id
+    user.phone = body.phone
+    user.job_title = body.job_title
+    user.location = body.location
+    user.bio = body.bio
+    user.country = body.country
+
+    await db.commit()
+    await db.refresh(user)
+    team_name = None
+    if user.team_id is not None:
+        team_name = (await db.execute(select(Team.name).where(Team.id == user.team_id))).scalar_one_or_none()
+    row = UserOut.model_validate(user)
+    row.team_name = team_name
+    return row
+
+
+@router.post("/{user_id}/login-as", response_model=TokenResponse, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def login_as_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """"Login as" — issues the target user a real access/refresh token
+    pair exactly like a normal login, so the Org Admin sees the product
+    precisely as that person does. Restricted to Team Lead/Learner targets
+    (see _IMPERSONATABLE_ROLES) so this can't be used to take over another
+    admin's or platform staff's account, and to active accounts only — a
+    suspended/deactivated/not-yet-activated user can't be "seen as" to
+    route around their own lock. The admin's own session is untouched;
+    the frontend keeps the admin's token aside and restores it for
+    "Return to admin" rather than this endpoint doing anything special to
+    end the impersonation itself."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="You're already logged in as yourself")
+
+    user = await _get_user_or_404(db, user_id, current_user.org_id)
+    if user.role not in _IMPERSONATABLE_ROLES:
+        raise HTTPException(status_code=403, detail="Can't log in as another admin or platform account")
+    if user.status != UserStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail=f"{user.full_name}'s account isn't active ({user.status.value})")
+
+    # TODO(audit log module): AuditLog.record(actor=current_user, action="login_as", target=user)
+    access_token, jti, ttl_seconds = create_access_token(str(user.id), str(user.org_id), user.role.value)
+    await create_session(str(user.id), jti, ttl_seconds)
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=create_refresh_token(str(user.id)),
+        must_change_password=user.must_change_password,
+        role=user.role.value,
+    )
 
 
 @router.delete("/{user_id}", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
