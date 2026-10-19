@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.activity import ActivityDay
+from app.models.attempt_override import ModuleAttemptOverride
 from app.models.badge import Badge, BadgeCriteria
 from app.models.certificate import Certificate
 from app.models.course import Course
@@ -56,13 +57,30 @@ async def attempts_used_map(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.U
     return {module_id: count for module_id, count in rows.all()}
 
 
-def _retake_gate(module: Module, attempts_used: int) -> int | None:
-    """The total number of attempts this module allows (first try
-    included), or None for unlimited. retake_enabled off means exactly
-    one attempt ever, regardless of pass/fail — see Module's docstring.
-    Shared by submit_quiz's server-side enforcement and build_progress-
-    adjacent code that just wants to know the cap."""
-    return 1 if not module.retake_enabled else module.retake_limit
+async def attempt_overrides_map(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, int]:
+    """This learner's own per-module extra-attempts grants (see
+    ModuleAttemptOverride) — an admin-set exception on top of whatever
+    the module's retake_limit already allows them. Scoped to one user
+    (never every learner's), since this is only ever used to compute
+    what THIS learner is allowed."""
+    rows = await db.execute(
+        select(ModuleAttemptOverride.module_id, ModuleAttemptOverride.extra_attempts)
+        .where(ModuleAttemptOverride.user_id == user_id)
+    )
+    return {module_id: extra for module_id, extra in rows.all()}
+
+
+def _retake_gate(module: Module, extra_attempts: int = 0) -> int | None:
+    """The total number of attempts this module allows this learner
+    (first try included), or None for unlimited. retake_enabled off
+    means exactly one attempt ever, regardless of pass/fail — see
+    Module's docstring. extra_attempts is this specific learner's own
+    admin-granted exception (ModuleAttemptOverride), added on top —
+    it applies even when retake_enabled is off, since an explicit
+    per-learner grant is deliberately independent of the module's
+    general policy. Has no effect when the module is already unlimited."""
+    base = 1 if not module.retake_enabled else module.retake_limit
+    return None if base is None else base + extra_attempts
 
 
 def _counted_modules(course: Course) -> list[Module]:
@@ -446,7 +464,11 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
     attempts_so_far = (await db.execute(
         select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
     )).scalar_one()
-    limit = _retake_gate(module, attempts_so_far)
+    override = (await db.execute(
+        select(ModuleAttemptOverride.extra_attempts)
+        .where(ModuleAttemptOverride.user_id == user.id, ModuleAttemptOverride.module_id == module.id)
+    )).scalar_one_or_none()
+    limit = _retake_gate(module, override or 0)
     if limit is not None and attempts_so_far >= limit:
         detail = (
             "Retakes aren't allowed for this quiz — you've already submitted your one attempt."

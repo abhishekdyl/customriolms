@@ -1,7 +1,9 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { Course, CourseListItem, CourseModuleProgress, EnrolledLearner, Module, QuestionInput, QuizAttempt } from "@/lib/types";
+import type {
+  AttemptOverride, Course, CourseListItem, CourseModuleProgress, EnrolledLearner, Module, QuestionInput, QuizAttempt,
+} from "@/lib/types";
 
 export function useCourses() {
   return useQuery({ queryKey: ["courses"], queryFn: () => api.get<CourseListItem[]>("/api/v1/courses") });
@@ -157,6 +159,29 @@ export function useQuizAttempts(courseId: string) {
     queryKey: ["courses", courseId, "quiz-attempts"],
     queryFn: () => api.get<QuizAttempt[]>(`/api/v1/courses/${courseId}/quiz-attempts`),
     enabled: !!courseId,
+  });
+}
+
+/** Every learner anywhere on this course who's been granted extra quiz
+ * attempts on top of their module's own retake_limit — see
+ * ModuleAttemptOverride on the backend. */
+export function useAttemptOverrides(courseId: string) {
+  return useQuery({
+    queryKey: ["courses", courseId, "attempt-overrides"],
+    queryFn: () => api.get<AttemptOverride[]>(`/api/v1/courses/${courseId}/attempt-overrides`),
+    enabled: !!courseId,
+  });
+}
+
+/** Sets (Org Admin only) one learner's extra-attempts exception on one
+ * quiz module — 0 revokes it. Independent of, and on top of, that
+ * module's retake_enabled/retake_limit for everyone else. */
+export function useSetAttemptOverride(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ moduleId, userId, extraAttempts }: { moduleId: string; userId: string; extraAttempts: number }) =>
+      api.put<AttemptOverride>(`/api/v1/courses/${courseId}/modules/${moduleId}/attempt-overrides/${userId}`, { extra_attempts: extraAttempts }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId, "attempt-overrides"] }),
   });
 }
 

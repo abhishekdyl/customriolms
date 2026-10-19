@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.attempt_override import ModuleAttemptOverride
 from app.models.badge import Badge
 from app.models.category import Category
 from app.models.course import Course
@@ -14,7 +15,7 @@ from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    CourseListItem, CourseModuleProgressOut, EnrolledLearnerOut, LearnerCourseOut, LearnerModuleOut,
+    AttemptOverrideOut, CourseListItem, CourseModuleProgressOut, EnrolledLearnerOut, LearnerCourseOut, LearnerModuleOut,
     LearnerModuleProgressOut, ModuleCreate, ModuleProgressCellOut, ModuleSummaryOut, ModuleUpdate, MyCourseItem,
     QuizAttemptOut,
 )
@@ -121,6 +122,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
 
     done = await progress_svc.completed_map(db, user.id)
     attempts = await progress_svc.attempts_used_map(db, user.id)
+    overrides = await progress_svc.attempt_overrides_map(db, user.id)
     pct, completed_count, _ = progress_svc.course_progress(course, done)
     modules = []
     for m in course.modules:
@@ -149,7 +151,13 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
             score=done[m.id].score if m.id in done else None,
             locked=locked,
             lock_reason=lock_reason,
-            retake_enabled=m.retake_enabled, retake_limit=m.retake_limit, attempts_used=attempts.get(m.id, 0),
+            # Effective for THIS learner — folds in their own
+            # ModuleAttemptOverride grant (if any), so the frontend never
+            # needs to know overrides exist at all; it just sees a bigger
+            # allowance for whoever got one. See learn_service._retake_gate.
+            retake_enabled=m.retake_enabled or overrides.get(m.id, 0) > 0,
+            retake_limit=progress_svc._retake_gate(m, overrides.get(m.id, 0)),
+            attempts_used=attempts.get(m.id, 0),
         ))
     return LearnerCourseOut(
         id=course.id, title=course.title, description=course.description,
@@ -494,3 +502,46 @@ async def list_quiz_attempts(db: AsyncSession, course: Course, viewer: User) -> 
             answers=attempt.answers_json or [],
         ))
     return out
+
+
+async def list_attempt_overrides(db: AsyncSession, course: Course, viewer: User) -> list[AttemptOverrideOut]:
+    """Every per-learner extra-attempts grant on this course's modules —
+    same visibility rule as list_quiz_attempts (Team Lead sees only their
+    own team). Only rows with extra_attempts > 0 are returned; a learner
+    who was granted some and then had it reset to 0 just goes back to
+    not appearing here, same as never having had an override."""
+    rows = await db.execute(
+        select(ModuleAttemptOverride, User.team_id)
+        .join(Module, Module.id == ModuleAttemptOverride.module_id)
+        .join(User, User.id == ModuleAttemptOverride.user_id)
+        .where(Module.course_id == course.id, ModuleAttemptOverride.org_id == course.org_id, ModuleAttemptOverride.extra_attempts > 0)
+    )
+    out = []
+    for override, team_id in rows.all():
+        if viewer.role == RoleName.TEAM_LEAD and team_id != viewer.team_id:
+            continue
+        out.append(AttemptOverrideOut(module_id=override.module_id, user_id=override.user_id, extra_attempts=override.extra_attempts))
+    return out
+
+
+async def set_attempt_override(db: AsyncSession, module: Module, user_id: uuid.UUID, extra_attempts: int, org_id: uuid.UUID) -> AttemptOverrideOut:
+    """Sets (not adds to) this one learner's extra-attempts exception on
+    this one module — see ModuleAttemptOverride's docstring. 0 just
+    deletes the row (a zero-row has no meaning to keep around, and this
+    keeps list_attempt_overrides' "only rows that matter" filter trivially
+    correct instead of needing to also filter zeros there)."""
+    existing = (await db.execute(
+        select(ModuleAttemptOverride).where(ModuleAttemptOverride.module_id == module.id, ModuleAttemptOverride.user_id == user_id)
+    )).scalar_one_or_none()
+    if extra_attempts == 0:
+        if existing:
+            await db.delete(existing)
+            await db.commit()
+        return AttemptOverrideOut(module_id=module.id, user_id=user_id, extra_attempts=0)
+    if existing:
+        existing.extra_attempts = extra_attempts
+    else:
+        existing = ModuleAttemptOverride(org_id=org_id, module_id=module.id, user_id=user_id, extra_attempts=extra_attempts)
+        db.add(existing)
+    await db.commit()
+    return AttemptOverrideOut(module_id=module.id, user_id=user_id, extra_attempts=extra_attempts)

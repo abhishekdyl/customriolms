@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Check, X } from "lucide-react";
-import { useQuizAttempts } from "@/lib/hooks/use-courses";
+import { ChevronDown, ChevronRight, Check, X, Plus } from "lucide-react";
+import { useAttemptOverrides, useQuizAttempts, useSetAttemptOverride } from "@/lib/hooks/use-courses";
 import type { QuizAttempt, QuizAttemptAnswer } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -42,15 +42,16 @@ export function AttemptAnswers({ answers }: { answers: QuizAttemptAnswer[] }) {
   );
 }
 
-function AttemptRow({ attempt }: { attempt: QuizAttempt }) {
+function AttemptRow({
+  attempt, courseId, extraAttempts,
+}: { attempt: QuizAttempt; courseId: string; extraAttempts: number }) {
   const [open, setOpen] = useState(false);
+  const setOverride = useSetAttemptOverride(courseId);
+
   return (
     <div className="border-b border-line-soft last:border-0">
-      <button
-        type="button" onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 py-2.5 text-left"
-      >
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="flex w-full items-center justify-between gap-3 py-2.5">
+        <button type="button" onClick={() => setOpen((v) => !v)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
           {open ? <ChevronDown className="h-3.5 w-3.5 text-ink-faint shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-ink-faint shrink-0" />}
           <div className="min-w-0">
             <p className="truncate text-sm text-ink">{attempt.user_name}</p>
@@ -58,7 +59,7 @@ function AttemptRow({ attempt }: { attempt: QuizAttempt }) {
               {attempt.module_title} · {new Date(attempt.created_at).toLocaleString()}
             </p>
           </div>
-        </div>
+        </button>
         <div className="flex flex-shrink-0 items-center gap-2">
           <span className="text-xs text-ink-soft">
             {attempt.score}%{attempt.total_points !== null && ` · ${attempt.earned_points}/${attempt.total_points} marks`}
@@ -71,8 +72,38 @@ function AttemptRow({ attempt }: { attempt: QuizAttempt }) {
           >
             {attempt.passed ? "Passed" : "Failed"}
           </span>
+          {/* Grants THIS learner one more attempt on THIS module, on top
+           * of whatever its retake_limit already allows everyone else —
+           * see ModuleAttemptOverride on the backend. The badge (when
+           * extraAttempts > 0) shows what's currently granted; clicking
+           * "Reset" clears it back to the module's own default. */}
+          {extraAttempts > 0 && (
+            <span className="rounded-full bg-primary-soft px-2 py-0.5 text-[10.5px] text-primary" title="Extra attempts granted to this learner on this module">
+              +{extraAttempts} extra
+            </span>
+          )}
+          <button
+            type="button"
+            title="Grant this learner one more attempt on this module"
+            onClick={() => setOverride.mutate({ moduleId: attempt.module_id, userId: attempt.user_id, extraAttempts: extraAttempts + 1 })}
+            disabled={setOverride.isPending}
+            className="flex items-center gap-0.5 rounded-md border border-line px-1.5 py-0.5 text-[10.5px] text-ink-soft disabled:opacity-50"
+          >
+            <Plus className="h-3 w-3" /> attempt
+          </button>
+          {extraAttempts > 0 && (
+            <button
+              type="button"
+              title="Revoke the extra attempts granted to this learner on this module"
+              onClick={() => setOverride.mutate({ moduleId: attempt.module_id, userId: attempt.user_id, extraAttempts: 0 })}
+              disabled={setOverride.isPending}
+              className="text-[10.5px] text-ink-faint underline disabled:opacity-50"
+            >
+              Reset
+            </button>
+          )}
         </div>
-      </button>
+      </div>
       {open && <div className="mb-3">{<AttemptAnswers answers={attempt.answers} />}</div>}
     </div>
   );
@@ -88,7 +119,11 @@ function AttemptRow({ attempt }: { attempt: QuizAttempt }) {
  * ke grade" instead of one long mixed list. */
 export function QuizAttemptsSection({ courseId }: { courseId: string }) {
   const { data: attempts, isLoading } = useQuizAttempts(courseId);
+  const { data: overrides } = useAttemptOverrides(courseId);
   const [moduleFilter, setModuleFilter] = useState<string>("all");
+
+  const overrideFor = (moduleId: string, userId: string) =>
+    overrides?.find((o) => o.module_id === moduleId && o.user_id === userId)?.extra_attempts ?? 0;
 
   // Module titles present in the data, in first-seen (= newest-attempt)
   // order — good enough for a short dropdown without a separate modules
@@ -129,7 +164,9 @@ export function QuizAttemptsSection({ courseId }: { courseId: string }) {
       )}
       {filtered.length > 0 && (
         <div className="flex flex-col">
-          {filtered.map((a) => <AttemptRow key={a.id} attempt={a} />)}
+          {filtered.map((a) => (
+            <AttemptRow key={a.id} attempt={a} courseId={courseId} extraAttempts={overrideFor(a.module_id, a.user_id)} />
+          ))}
         </div>
       )}
     </div>

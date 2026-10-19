@@ -480,6 +480,17 @@ export interface QuizAttempt {
   answers: QuizAttemptAnswer[];
 }
 
+/** A per-learner exception to a quiz module's retake_limit — "give THIS
+ * learner N extra attempts" without changing the module for anyone else.
+ * From GET /courses/{id}/attempt-overrides (Org Admin / Team Lead); set
+ * via PUT /courses/{id}/modules/{module_id}/attempt-overrides/{user_id}
+ * (Org Admin only). Only rows with extra_attempts > 0 are ever listed. */
+export interface AttemptOverride {
+  module_id: string;
+  user_id: string;
+  extra_attempts: number;
+}
+
 export type ProfileFieldType = "input" | "textarea" | "checkbox" | "radio" | "select";
 
 /** Org-admin-defined custom profile field. Mirrors ProfileFieldOut. */

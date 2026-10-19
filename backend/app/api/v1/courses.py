@@ -13,15 +13,15 @@ from app.models.course import Course
 from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    CourseAssignRequest, CourseCreate, CourseListItem, CourseModuleProgressOut, CourseOut, CourseUpdate,
-    EnrolledLearnerOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem,
-    QuizAttemptOut,
+    AttemptOverrideOut, AttemptOverrideSet, CourseAssignRequest, CourseCreate, CourseListItem, CourseModuleProgressOut,
+    CourseOut, CourseUpdate, EnrolledLearnerOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest,
+    ModuleUpdate, MyCourseItem, QuizAttemptOut,
 )
 from app.schemas.learn import CompleteRequest, CompleteResult, QuizResult, QuizSubmit
 from app.services.course_service import (
-    _assigned_to, add_module, assign_course, get_course_or_404, get_my_course, list_courses, list_enrolled,
-    list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules, update_module,
-    upload_module_content, upload_scorm_package,
+    _assigned_to, add_module, assign_course, get_course_or_404, get_my_course, list_attempt_overrides, list_courses,
+    list_enrolled, list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules,
+    set_attempt_override, update_module, upload_module_content, upload_scorm_package,
 )
 from app.services import learn_service as progress_svc
 from app.services import storage_service
@@ -184,6 +184,36 @@ async def get_quiz_attempts(course_id: uuid.UUID, db: AsyncSession = Depends(get
     sees. A Team Lead only sees their own team's members."""
     course = await get_course_or_404(db, course_id, current_user.org_id)
     return await list_quiz_attempts(db, course, current_user)
+
+
+@router.get(
+    "/{course_id}/attempt-overrides", response_model=list[AttemptOverrideOut],
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+)
+async def get_attempt_overrides(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Every learner who's been granted extra attempts (on top of their
+    module's normal retake_limit) anywhere on this course — see
+    ModuleAttemptOverride. A Team Lead only sees their own team."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    return await list_attempt_overrides(db, course, current_user)
+
+
+@router.put(
+    "/{course_id}/modules/{module_id}/attempt-overrides/{user_id}", response_model=AttemptOverrideOut,
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
+async def put_attempt_override(
+    course_id: uuid.UUID, module_id: uuid.UUID, user_id: uuid.UUID, body: AttemptOverrideSet,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Grants (or revokes, with extra_attempts=0) one specific learner
+    extra attempts on one specific quiz module — independent of, and on
+    top of, that module's own retake_enabled/retake_limit setting for
+    everyone else. Org Admin only, same as every other module-editing
+    action."""
+    await get_course_or_404(db, course_id, current_user.org_id)  # ownership check
+    module = await _get_module_or_404(db, module_id, course_id)
+    return await set_attempt_override(db, module, user_id, body.extra_attempts, current_user.org_id)
 
 
 # ---------- Modules — nested under their course, not a flat /api/v1/modules,

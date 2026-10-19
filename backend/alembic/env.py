@@ -8,7 +8,7 @@ from sqlalchemy import pool
 from app.core.config import settings
 from app.core.database import Base
 # Import every model here so Alembic's autogenerate can see them
-from app.models import org, team, user, category, course, module, skill, badge, certificate, platform_settings, notification, module_progress, quiz_attempt, activity, question_bank  # noqa: F401
+from app.models import org, team, user, category, course, module, skill, badge, certificate, platform_settings, notification, module_progress, quiz_attempt, activity, question_bank, attempt_override  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

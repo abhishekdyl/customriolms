@@ -300,6 +300,20 @@ class QuizAttemptOut(BaseModel):
     answers: list[QuizAttemptAnswerOut]
 
 
+class AttemptOverrideSet(BaseModel):
+    """Body for PUT .../modules/{module_id}/attempt-overrides/{user_id} —
+    sets (replacing, not adding to) this one learner's extra attempts on
+    this one module, on top of whatever the module's own retake_limit
+    already allows them. 0 clears/revokes the exception."""
+    extra_attempts: int = Field(ge=0)
+
+
+class AttemptOverrideOut(BaseModel):
+    module_id: uuid.UUID
+    user_id: uuid.UUID
+    extra_attempts: int
+
+
 class CourseOut(BaseModel):
     id: uuid.UUID
     title: str
