@@ -20,9 +20,39 @@ export function useCourse(id: string) {
 export function useCreateCourse() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { title: string; category_id?: string | null; opens_at?: string | null; closes_at?: string | null }) =>
+    // opens_at is mandatory (not nullable) — the backend requires a real
+    // create/open date, today or later, and rejects a past one. closes_at
+    // stays optional; when given, it must also not be in the past.
+    mutationFn: (body: { title: string; category_id?: string | null; opens_at: string; closes_at?: string | null }) =>
       api.post<Course>("/api/v1/courses", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
+  });
+}
+
+/** Uploads/replaces the course's cover image. */
+export function useUploadCourseCoverImage(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return api.upload<Course>(`/api/v1/courses/${courseId}/cover-image`, formData);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+      qc.invalidateQueries({ queryKey: ["courses"] });
+    },
+  });
+}
+
+export function useRemoveCourseCoverImage(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete(`/api/v1/courses/${courseId}/cover-image`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+      qc.invalidateQueries({ queryKey: ["courses"] });
+    },
   });
 }
 

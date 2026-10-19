@@ -201,7 +201,22 @@ async def assign_course(db: AsyncSession, course: Course, team_ids: list[uuid.UU
     return await get_course_or_404(db, course.id, course.org_id)
 
 
+async def _assert_unique_module_title(db: AsyncSession, course_id: uuid.UUID, title: str, exclude_module_id: uuid.UUID | None = None) -> None:
+    """A module's title doubles as its identifying "shortname" in the
+    course-completion picker (More tab — "Watch video - Intro", etc.), so
+    two modules on the same course can't share one case-insensitively —
+    an admin picking from that list would otherwise have no way to tell
+    which one they actually meant."""
+    stmt = select(Module.id).where(Module.course_id == course_id, func.lower(Module.title) == title.strip().lower())
+    if exclude_module_id is not None:
+        stmt = stmt.where(Module.id != exclude_module_id)
+    clash = (await db.execute(stmt)).first()
+    if clash:
+        raise HTTPException(status_code=400, detail=f'Another module on this course is already named "{title.strip()}" — module names must be unique.')
+
+
 async def add_module(db: AsyncSession, course: Course, body: ModuleCreate) -> Module:
+    await _assert_unique_module_title(db, course.id, body.title)
     result = await db.execute(select(func.max(Module.position)).where(Module.course_id == course.id))
     max_position = result.scalar() or 0
     module = Module(
@@ -225,6 +240,8 @@ async def update_module(db: AsyncSession, module: Module, body: ModuleUpdate, or
         await _validate_ids_belong_to_org(db, Skill, body.skill_ids, org_id, "skill")
     if body.badge_ids is not None:
         await _validate_ids_belong_to_org(db, Badge, body.badge_ids, org_id, "badge")
+    if body.title is not None and body.title.strip().lower() != module.title.strip().lower():
+        await _assert_unique_module_title(db, module.course_id, body.title, exclude_module_id=module.id)
 
     data = body.model_dump(exclude_unset=True, exclude={"questions", "restrictions"})
     for key, value in data.items():

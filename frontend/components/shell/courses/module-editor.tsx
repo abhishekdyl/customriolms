@@ -1105,11 +1105,6 @@ export function ModuleEditorRow({
             </div>
           )}
 
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-ink-soft">Required for course completion</span>
-            <Switch checked={m.required} onCheckedChange={(v) => onChange({ required: v })} />
-          </div>
-
           <RestrictionsEditor
             restrictions={m.restrictions}
             otherModules={allModules.filter((om) => om.id !== m.id)}

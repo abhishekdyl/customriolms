@@ -254,9 +254,15 @@ export interface Course extends CourseListItem {
    * this list is done, instead of the default "every required module
    * done" rule — can be one module or several. */
   completion_module_ids: string[];
+  /** "all" (default) requires every module in completion_module_ids to be
+   * done; "any" requires just one of them. Meaningless when
+   * completion_module_ids is empty. */
+  completion_mode: "all" | "any";
   /** When true, modules unlock one at a time in position order — a
    * learner can't open/complete module N+1 until module N is done. */
   sequential_unlock: boolean;
+  /** Fresh presigned URL, null when no cover image is set. */
+  cover_image_url: string | null;
   modules: Module[];
 }
 

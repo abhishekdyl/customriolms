@@ -12,28 +12,32 @@ import { AssignModal } from "@/components/shell/courses/assign-modal";
 import { CourseCard } from "@/components/shell/courses/course-card";
 import { CoursePreviewModal } from "@/components/shell/courses/course-preview-modal";
 import { ApiError } from "@/lib/api-client";
+import { localToIso, nowLocal } from "@/lib/utils";
 
 function CreateCourseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { data: categories } = useCategories();
   const createCourse = useCreateCourse();
   const [title, setTitle] = useState("");
   const [categoryId, setCategoryId] = useState("");
-  const [opensAt, setOpensAt] = useState("");
+  // opens_at is mandatory (see useCreateCourse) — pre-filled to right now
+  // so the form starts valid rather than forcing an extra click.
+  const [opensAt, setOpensAt] = useState(() => nowLocal());
   const [closesAt, setClosesAt] = useState("");
+  const minDate = nowLocal();
 
-  const dateError = opensAt && closesAt && closesAt <= opensAt;
+  const dateError = closesAt && closesAt <= opensAt;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || dateError) return;
+    if (!title.trim() || !opensAt || dateError) return;
     createCourse.mutate(
       {
         title: title.trim(), category_id: categoryId || null,
-        opens_at: opensAt || null, closes_at: closesAt || null,
+        opens_at: localToIso(opensAt), closes_at: closesAt ? localToIso(closesAt) : null,
       },
       {
         onSuccess: () => {
-          setTitle(""); setOpensAt(""); setClosesAt("");
+          setTitle(""); setOpensAt(nowLocal()); setClosesAt("");
           onOpenChange(false);
         },
       }
@@ -53,7 +57,7 @@ function CreateCourseDialog({ open, onOpenChange }: { open: boolean; onOpenChang
             </p>
           )}
           <p className="text-xs text-ink-faint">
-            Start with just a title — you&apos;ll add modules, quizzes, and completion rules on the next screen.
+            Start with just a title — you&apos;ll add modules, quizzes, completion rules and a cover image on the next screen.
           </p>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Course title" autoFocus required />
           <select
@@ -69,26 +73,29 @@ function CreateCourseDialog({ open, onOpenChange }: { open: boolean; onOpenChang
 
           <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <p className="mb-1 text-[11px] text-ink-soft">Opens (optional)</p>
+              <p className="mb-1 text-[11px] text-ink-soft">Opens / create date *</p>
               <input
-                type="date" value={opensAt} onChange={(e) => setOpensAt(e.target.value)}
+                type="datetime-local" value={opensAt} min={minDate} required
+                onChange={(e) => setOpensAt(e.target.value)}
                 className="h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-xs outline-none focus-visible:border-primary"
               />
             </div>
             <div>
               <p className="mb-1 text-[11px] text-ink-soft">Closes (optional)</p>
               <input
-                type="date" value={closesAt} onChange={(e) => setClosesAt(e.target.value)}
+                type="datetime-local" value={closesAt} min={minDate}
+                onChange={(e) => setClosesAt(e.target.value)}
                 className="h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-xs outline-none focus-visible:border-primary"
               />
             </div>
           </div>
           {dateError && <p className="text-xs text-danger">Close date must be after the open date.</p>}
           <p className="text-[11px] text-ink-faint">
-            After the close date, no one new can be assigned and learners can&apos;t make further progress — anything already completed stays.
+            The open date can&apos;t be in the past, and a close date (if set) must be later than it. After closing,
+            no one new can be assigned and learners can&apos;t make further progress — anything already completed stays.
           </p>
 
-          <Button type="submit" disabled={createCourse.isPending || !!dateError}>
+          <Button type="submit" disabled={createCourse.isPending || !opensAt || !!dateError}>
             {createCourse.isPending ? "Creating…" : "Create & add modules"}
           </Button>
         </form>

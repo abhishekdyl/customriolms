@@ -72,6 +72,22 @@ class Course(Base):
     # False (the default) leaves every module open in any order, same as
     # before this existed.
     sequential_unlock: Mapped[bool] = mapped_column(Boolean, default=False)
+    # completion_mode: only matters when completion_module_ids is
+    # non-empty (see above) — "all" (default) requires every listed
+    # module to be done, "any" requires just one of them. Mirrors
+    # Moodle's "Condition requires: ALL/ANY selected activities" control.
+    # Plain string, not a DB enum, for the same cheap-migration reasons
+    # as everywhere else in this file — validated as a Literal at the API
+    # layer (schemas/course.py).
+    completion_mode: Mapped[str] = mapped_column(String(10), default="all", nullable=False)
+
+    # Course cover image — same dedup-ledger pattern as a module's own
+    # file (see Module.file_key / storage_service.store_file): a storage
+    # object key, not a URL, so the actual presigned URL is always
+    # generated fresh on read (CourseOut._resolve_cover_image_url) and
+    # never goes stale. Null = no cover set, the course card falls back
+    # to its own placeholder.
+    cover_image_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     org: Mapped["Org"] = relationship()
     # lazy="selectin": both of these get read into CourseOut on every

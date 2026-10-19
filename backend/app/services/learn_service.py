@@ -108,19 +108,22 @@ def course_progress(course: Course, done: dict) -> tuple[int, int, int]:
 
     If the course has completion_module_ids set, that overrides the
     "every required module" rule entirely: the course is 100% complete
-    the moment EVERY module in that list is done, whatever state anything
-    else is in (e.g. "video + quiz together complete the course" even
-    with a required, still-unwatched 3rd module). completed_modules/total
-    still reflect the normal required-module count underneath, so the
-    progress bar/matrix numbers stay meaningful even when the gate hasn't
-    fired yet."""
+    the moment either EVERY module in that list is done (completion_mode
+    "all", the default) or just ONE of them is (completion_mode "any"),
+    whatever state anything else is in (e.g. "video + quiz together
+    complete the course" even with a required, still-unwatched 3rd
+    module). completed_modules/total still reflect the normal
+    required-module count underneath, so the progress bar/matrix numbers
+    stay meaningful even when the gate hasn't fired yet."""
     counted = _counted_modules(course)
     if not counted:
         return 0, 0, 0
     n = sum(1 for m in counted if m.id in done)
     gate_ids = course.completion_module_ids or []
-    if gate_ids and all(gid in done for gid in gate_ids):
-        return 100, n, len(counted)
+    if gate_ids:
+        gate_met = any(gid in done for gid in gate_ids) if course.completion_mode == "any" else all(gid in done for gid in gate_ids)
+        if gate_met:
+            return 100, n, len(counted)
     return round(100 * n / len(counted)), n, len(counted)
 
 

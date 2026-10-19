@@ -1,18 +1,19 @@
 "use client";
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Plus, ChevronUp, ChevronDown, Users, Award, Lock, BookOpen, Settings as SettingsIcon,
-  BarChart3, MoreHorizontal, Trash2, Loader2,
+  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   useCourse, useAddModule, useUpdateModule, useDeleteModule, useDeleteCourse, useReorderModules, useUpdateCourse,
-  useEnrolledLearners,
+  useEnrolledLearners, useUploadCourseCoverImage, useRemoveCourseCoverImage,
 } from "@/lib/hooks/use-courses";
+import { useCategories } from "@/lib/hooks/use-categories";
 import { useBadges } from "@/lib/hooks/use-badges";
 import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
 import { ModuleEditorRow, restrictionValid } from "@/components/shell/courses/module-editor";
@@ -20,24 +21,26 @@ import { AssignModal } from "@/components/shell/courses/assign-modal";
 import { QuizAttemptsSection } from "@/components/shell/courses/quiz-attempts";
 import { ModuleProgressMatrix } from "@/components/shell/courses/module-progress-matrix";
 import { toQuestionInput } from "@/lib/quiz-utils";
-import { cn } from "@/lib/utils";
+import { cn, isoToLocal, localToIso, nowLocal } from "@/lib/utils";
+import { MODULE_TYPE_LABEL } from "@/lib/learner-courses";
 import type { Module } from "@/lib/types";
 
 // Mirrors the learner-side course page's own tab bar (see
 // (learner)/learn/courses/[id]/page.tsx) — everything that used to sit on
 // one long scrolling page is now grouped under these:
-//  - Course: the course's real working view — description, at-a-glance
-//    stats, the completion-rule summary, the module list (add/reorder/
-//    edit/delete), and the certificate/badge. Each section below is
-//    wrapped with its own id + className (see the comments inline) so it
-//    can be targeted directly — #course-section-stats,
-//    #course-section-completion, #course-section-modules,
-//    #course-section-certificate.
-//  - Settings: open/close dates + the detailed completion-policy controls
-//    (the "Course" tab above only shows a one-line summary of these).
+//  - Course: the course's real working view — at-a-glance stats, the
+//    completion-rule summary, the module list (add/reorder/edit/delete),
+//    and the certificate/badge. Each section below is wrapped with its
+//    own id + className (see the comments inline) so it can be targeted
+//    directly — #course-section-stats, #course-section-completion,
+//    #course-section-modules, #course-section-certificate.
+//  - Settings: the course's own identity — name, description, category,
+//    cover image, and the mandatory open/optional close dates.
 //  - Participants: who's enrolled and their progress.
 //  - Grades: the completion matrix + quiz/video-question grading.
-//  - More: rarer, higher-stakes actions (delete course).
+//  - More: the Moodle-style completion-rules picker (which modules must
+//    finish, ALL vs ANY, sequential unlock) and the delete-course danger
+//    zone.
 const TABS = [
   { id: "course", label: "Course", icon: BookOpen },
   { id: "settings", label: "Settings", icon: SettingsIcon },
@@ -46,11 +49,6 @@ const TABS = [
   { id: "more", label: "More", icon: MoreHorizontal },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
-
-// "2026-03-01T00:00:00+00:00" -> "2026-03-01", for a <input type="date"> value.
-function toDateInputValue(iso: string | null): string {
-  return iso ? iso.slice(0, 10) : "";
-}
 
 const isClosed = (closesAt: string | null) => !!closesAt && new Date(closesAt) < new Date();
 
@@ -64,13 +62,16 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   const updateModuleMutation = useUpdateModule(id);
   const deleteModule = useDeleteModule(id);
   const reorder = useReorderModules(id);
+  const uploadCover = useUploadCourseCoverImage(id);
+  const removeCover = useRemoveCourseCoverImage(id);
+  const { data: categories } = useCategories();
   const { data: badges } = useBadges();
   const { data: certTemplates } = useCertTemplates();
   const { data: enrolled, isLoading: enrolledLoading } = useEnrolledLearners(id);
+  const coverInputRef = useRef<HTMLInputElement>(null);
 
   const [tab, setTab] = useState<TabId>("course");
   const [newModuleTitle, setNewModuleTitle] = useState("");
-  const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [assigning, setAssigning] = useState(false);
 
   // Local module state is the editor's working draft — every field edit
@@ -188,17 +189,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
       </Link>
 
       <div className="mb-1">
-        {titleDraft !== null ? (
-          <Input
-            value={titleDraft} autoFocus
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onBlur={() => { updateCourse.mutate({ title: titleDraft }); setTitleDraft(null); }}
-            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-            className="font-head text-xl h-auto py-1"
-          />
-        ) : (
-          <h1 onClick={() => setTitleDraft(course.title)} className="font-head text-xl text-ink cursor-text">{course.title}</h1>
-        )}
+        <h1 className="font-head text-xl text-ink">{course.title}</h1>
+        <p className="text-[11px] text-ink-faint">Rename it, change its description, category or cover image under the Settings tab.</p>
       </div>
 
       {isClosed(course.closes_at) && (
@@ -225,19 +217,6 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
       {tab === "course" && (
         <div className="flex flex-col gap-6">
-          {/* Section 0 — About this course (intro, not one of the four
-              ordered sections below, so no number in its id). */}
-          <div id="course-section-about" className="course-section course-section-about">
-            <p className="mb-1 text-xs font-medium text-ink-faint">About this course</p>
-            <textarea
-              defaultValue={course.description ?? ""}
-              onBlur={(e) => updateCourse.mutate({ description: e.target.value })}
-              placeholder="What's this course about?"
-              className="w-full resize-none rounded-lg border border-line bg-surface p-2.5 text-sm text-ink outline-none focus-visible:border-primary"
-              rows={3}
-            />
-          </div>
-
           {/* Section 1 — at-a-glance stats. */}
           <div id="course-section-stats" className="course-section course-section-stats grid grid-cols-3 gap-2.5">
             <div className="rounded-xl border border-line bg-surface p-3.5">
@@ -264,11 +243,11 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
             <p className="mb-1 text-xs font-medium text-ink-faint">Course completes when…</p>
             <p className="text-[12.5px] text-ink">
               {course.completion_module_ids.length > 0
-                ? `A specific set of ${course.completion_module_ids.length} module(s) are passed`
-                : "Every module marked \"required\" is done"}
+                ? `${course.completion_mode === "any" ? "Any one" : "All"} of ${course.completion_module_ids.length} selected module(s) ${course.completion_mode === "any" ? "is" : "are"} done`
+                : "Every module in the course is done"}
               {course.sequential_unlock && " · modules unlock one at a time, in order"}
             </p>
-            <p className="mt-1 text-[11px] text-ink-faint">Change this under the Settings tab.</p>
+            <p className="mt-1 text-[11px] text-ink-faint">Change this under the More tab.</p>
           </div>
 
           {/* Section 3 — the module list itself: add, reorder, edit, delete. */}
@@ -371,87 +350,93 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
       {tab === "settings" && (
         <div className="flex flex-col gap-6">
           <div className="rounded-xl border border-line bg-surface p-4">
+            <p className="mb-3 text-xs font-medium text-ink-faint">Course details</p>
+
+            <div className="mb-3">
+              <p className="mb-1 text-[10.5px] text-ink-faint">Course name</p>
+              <Input defaultValue={course.title} onBlur={(e) => { if (e.target.value.trim()) updateCourse.mutate({ title: e.target.value.trim() }); }} />
+            </div>
+
+            <div className="mb-3">
+              <p className="mb-1 text-[10.5px] text-ink-faint">Description</p>
+              <textarea
+                defaultValue={course.description ?? ""}
+                onBlur={(e) => updateCourse.mutate({ description: e.target.value })}
+                placeholder="What's this course about?"
+                className="w-full resize-none rounded-lg border border-line bg-surface p-2.5 text-sm text-ink outline-none focus-visible:border-primary"
+                rows={3}
+              />
+            </div>
+
+            <div>
+              <p className="mb-1 text-[10.5px] text-ink-faint">Category</p>
+              <select
+                value={course.category_id ?? ""}
+                onChange={(e) => updateCourse.mutate({ category_id: e.target.value || null })}
+                className="h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-sm outline-none focus-visible:border-primary"
+              >
+                <option value="">No category</option>
+                {categories?.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-line bg-surface p-4">
+            <p className="mb-3 text-xs font-medium text-ink-faint">Cover image</p>
+            {course.cover_image_url ? (
+              <div className="mb-3 flex items-center gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={course.cover_image_url} alt="" className="h-20 w-32 rounded-lg border border-line object-cover" />
+                <Button
+                  variant="secondary" size="sm"
+                  onClick={() => removeCover.mutate()}
+                  disabled={removeCover.isPending}
+                >
+                  <X className="h-3.5 w-3.5" /> Remove
+                </Button>
+              </div>
+            ) : (
+              <p className="mb-3 text-[11px] text-ink-faint">No cover image yet — shown on the course card and preview.</p>
+            )}
+            <input
+              ref={coverInputRef} type="file" accept="image/*" className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadCover.mutate(f); e.target.value = ""; }}
+            />
+            <Button variant="secondary" size="sm" onClick={() => coverInputRef.current?.click()} disabled={uploadCover.isPending}>
+              {uploadCover.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
+              {course.cover_image_url ? "Replace image" : "Upload image"}
+            </Button>
+          </div>
+
+          <div className="rounded-xl border border-line bg-surface p-4">
             <p className="mb-3 text-xs font-medium text-ink-faint">Open / close dates</p>
             <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <p className="mb-1 text-[10.5px] text-ink-faint">Opens (optional)</p>
+                <p className="mb-1 text-[10.5px] text-ink-faint">Opens / create date *</p>
                 <input
-                  type="date"
-                  defaultValue={toDateInputValue(course.opens_at)}
-                  onBlur={(e) => updateCourse.mutate({ opens_at: e.target.value || null })}
+                  type="datetime-local"
+                  defaultValue={isoToLocal(course.opens_at) || nowLocal()}
+                  min={nowLocal()}
+                  onBlur={(e) => { if (e.target.value) updateCourse.mutate({ opens_at: localToIso(e.target.value) }); }}
                   className="h-8 w-full rounded-md border border-line bg-surface px-2 text-xs outline-none focus-visible:border-primary"
                 />
               </div>
               <div>
                 <p className="mb-1 text-[10.5px] text-ink-faint">Closes (optional)</p>
                 <input
-                  type="date"
-                  defaultValue={toDateInputValue(course.closes_at)}
-                  onBlur={(e) => updateCourse.mutate({ closes_at: e.target.value || null })}
+                  type="datetime-local"
+                  defaultValue={isoToLocal(course.closes_at)}
+                  min={nowLocal()}
+                  onBlur={(e) => updateCourse.mutate({ closes_at: e.target.value ? localToIso(e.target.value) : null })}
                   className="h-8 w-full rounded-md border border-line bg-surface px-2 text-xs outline-none focus-visible:border-primary"
                 />
               </div>
             </div>
-          </div>
-
-          <div className="rounded-xl border border-line bg-surface p-4">
-            <p className="mb-3 text-xs font-medium text-ink-faint">Course completion rules</p>
-
-            <div className="mb-3">
-              <p className="mb-1 text-[10.5px] text-ink-faint">Course completes when…</p>
-              <div className="mb-1.5 flex items-center gap-2">
-                <input
-                  type="radio" id="gate-default" checked={course.completion_module_ids.length === 0}
-                  onChange={() => updateCourse.mutate({ completion_module_ids: [] })}
-                />
-                <label htmlFor="gate-default" className="text-xs text-ink">All required modules are done (default)</label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="radio" id="gate-custom" checked={course.completion_module_ids.length > 0}
-                  onChange={() => {
-                    if (course.completion_module_ids.length === 0 && modules[0]) {
-                      updateCourse.mutate({ completion_module_ids: [modules[0].id] });
-                    }
-                  }}
-                />
-                <label htmlFor="gate-custom" className="text-xs text-ink">Only these specific modules are passed:</label>
-              </div>
-              {course.completion_module_ids.length > 0 && (
-                <div className="mt-1.5 ml-5 flex flex-col gap-1">
-                  {modules.map((m) => {
-                    const checked = course.completion_module_ids.includes(m.id);
-                    return (
-                      <label key={m.id} className="flex items-center gap-2 text-xs text-ink-soft">
-                        <input
-                          type="checkbox" checked={checked}
-                          onChange={() => {
-                            const next = checked
-                              ? course.completion_module_ids.filter((x) => x !== m.id)
-                              : [...course.completion_module_ids, m.id];
-                            updateCourse.mutate({ completion_module_ids: next });
-                          }}
-                        />
-                        {m.title}
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-              <p className="mt-1.5 text-[11px] text-ink-faint">
-                {course.completion_module_ids.length > 0
-                  ? "Picking modules here means the course finishes the instant ALL of them are passed — any other required module can stay unfinished."
-                  : "Leave this on default to require every module marked \"required\" under the Course tab."}
-              </p>
-            </div>
-
-            <div className="flex items-center justify-between border-t border-line-soft pt-3">
-              <div>
-                <span className="text-sm text-ink">Lock modules in order</span>
-                <p className="text-[11px] text-ink-faint">A learner must finish each module before the next one (by the order under the Course tab) unlocks.</p>
-              </div>
-              <Switch checked={course.sequential_unlock} onCheckedChange={(v) => updateCourse.mutate({ sequential_unlock: v })} />
-            </div>
+            <p className="mt-2 text-[11px] text-ink-faint">
+              The open date can&apos;t be in the past, and a close date (if set) must be later than it.
+            </p>
           </div>
         </div>
       )}
@@ -501,24 +486,91 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
       )}
 
       {tab === "more" && (
-        <div className="rounded-xl border border-danger/30 bg-surface p-4">
-          <p className="mb-1 text-xs font-medium text-danger">Danger zone</p>
-          <p className="mb-3 text-[11.5px] text-ink-faint">
-            Deleting a course removes it for every assigned learner — their progress, attempts, and certificates on
-            it are gone too. This can't be undone.
-          </p>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              if (!confirm(`Delete "${course.title}" permanently? This can't be undone.`)) return;
-              deleteCourse.mutate(course.id, { onSuccess: () => router.push("/courses") });
-            }}
-            disabled={deleteCourse.isPending}
-            className="border-danger/40 text-danger hover:bg-danger-soft"
-          >
-            {deleteCourse.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-            Delete course
-          </Button>
+        <div className="flex flex-col gap-6">
+          <div className="rounded-xl border border-line bg-surface p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-xs font-medium text-ink-faint">Course completion rules</p>
+              {modules.length > 0 && (
+                <button
+                  onClick={() => updateCourse.mutate({
+                    completion_module_ids: course.completion_module_ids.length === modules.length ? [] : modules.map((m) => m.id),
+                  })}
+                  className="text-[11px] text-primary"
+                >
+                  {course.completion_module_ids.length === modules.length ? "Select none" : "Select all"}
+                </button>
+              )}
+            </div>
+
+            <p className="mb-1.5 text-[10.5px] text-ink-faint">
+              Condition: Activity completion — choose which modules the course completes on.
+            </p>
+            {modules.length === 0 && <p className="text-xs text-ink-faint">Add modules under the Course tab first.</p>}
+            <div className="mb-3 flex flex-col gap-1.5">
+              {modules.map((m) => {
+                const checked = course.completion_module_ids.includes(m.id);
+                return (
+                  <label key={m.id} className="flex items-center gap-2 text-xs text-ink-soft">
+                    <input
+                      type="checkbox" checked={checked}
+                      onChange={() => {
+                        const next = checked
+                          ? course.completion_module_ids.filter((x) => x !== m.id)
+                          : [...course.completion_module_ids, m.id];
+                        updateCourse.mutate({ completion_module_ids: next });
+                      }}
+                    />
+                    {MODULE_TYPE_LABEL[m.type as keyof typeof MODULE_TYPE_LABEL] ?? m.type} - {m.title}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="mb-3 text-[11px] text-ink-faint">
+              Leaving every module unchecked means the course completes once all of them are done.
+            </p>
+
+            {course.completion_module_ids.length > 0 && (
+              <div className="mb-3 flex items-center gap-2 border-t border-line-soft pt-3">
+                <p className="text-xs text-ink">Condition requires:</p>
+                <select
+                  value={course.completion_mode}
+                  onChange={(e) => updateCourse.mutate({ completion_mode: e.target.value as "all" | "any" })}
+                  className="h-8 rounded-md border border-line bg-surface px-2 text-xs outline-none focus-visible:border-primary"
+                >
+                  <option value="all">ALL selected modules to be completed</option>
+                  <option value="any">ANY selected module to be completed</option>
+                </select>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between border-t border-line-soft pt-3">
+              <div>
+                <span className="text-sm text-ink">Lock modules in order</span>
+                <p className="text-[11px] text-ink-faint">A learner must finish each module before the next one (by the order under the Course tab) unlocks.</p>
+              </div>
+              <Switch checked={course.sequential_unlock} onCheckedChange={(v) => updateCourse.mutate({ sequential_unlock: v })} />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-danger/30 bg-surface p-4">
+            <p className="mb-1 text-xs font-medium text-danger">Danger zone</p>
+            <p className="mb-3 text-[11.5px] text-ink-faint">
+              Deleting a course removes it for every assigned learner — their progress, attempts, and certificates on
+              it are gone too. This can't be undone.
+            </p>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (!confirm(`Delete "${course.title}" permanently? This can't be undone.`)) return;
+                deleteCourse.mutate(course.id, { onSuccess: () => router.push("/courses") });
+              }}
+              disabled={deleteCourse.isPending}
+              className="border-danger/40 text-danger hover:bg-danger-soft"
+            >
+              {deleteCourse.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              Delete course
+            </Button>
+          </div>
         </div>
       )}
 

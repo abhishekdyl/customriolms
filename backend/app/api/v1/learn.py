@@ -97,12 +97,21 @@ async def complete(
     module_id: uuid.UUID, body: CompleteRequest | None = None,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    pct, completed, code, video_question_results, video_earned_points, video_total_points = await svc.complete_module(
+    # complete_module returns 9 values (it grew the trailing
+    # attempts_used/attempts_remaining/retake_allowed trio for the WATCH
+    # resume/retake feature) — mirrors courses.py's complete_my_module,
+    # which already unpacks all 9; this endpoint previously unpacked only
+    # the first 6 and crashed with a ValueError on every call.
+    (
+        pct, completed, code, video_question_results, video_earned_points, video_total_points,
+        attempts_used, attempts_remaining, retake_allowed,
+    ) = await svc.complete_module(
         db, user, module_id, (body.watched_pct if body else None), (body.answers if body else None),
     )
     return CompleteResult(progress=pct, course_completed=completed, certificate_code=code,
                            video_question_results=video_question_results,
-                           video_earned_points=video_earned_points, video_total_points=video_total_points)
+                           video_earned_points=video_earned_points, video_total_points=video_total_points,
+                           attempts_used=attempts_used, attempts_remaining=attempts_remaining, retake_allowed=retake_allowed)
 
 
 @router.post("/modules/{module_id}/quiz", response_model=QuizResult)

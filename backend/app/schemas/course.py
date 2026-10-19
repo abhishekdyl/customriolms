@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -177,13 +177,36 @@ class ModuleReorderRequest(BaseModel):
 
 
 # ---------- Courses ----------
+def _reject_past(v: datetime | None) -> datetime | None:
+    """Shared by opens_at/closes_at on both create and update — a date
+    sent as naive (no tzinfo) is treated as UTC, same as everywhere else
+    this codebase compares a client-sent datetime against "now". Allows
+    anything from the start of today onward (not a strict >= this exact
+    second), so picking today's date with an earlier clock time than
+    "right now" — a perfectly normal thing to do in a date+time picker —
+    still passes."""
+    if v is None:
+        return v
+    dt = v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    if dt < today_start:
+        raise ValueError("can't be in the past")
+    return v
+
+
 class CourseCreate(BaseModel):
     title: str
     category_id: uuid.UUID | None = None
     description: str | None = None
     duration_label: str = ""
-    opens_at: datetime | None = None
+    # Mandatory (unlike closes_at) — every course needs a real create/open
+    # date, and it must be today or later, never backdated. closes_at
+    # stays optional; when given, it's checked the same way.
+    opens_at: datetime
     closes_at: datetime | None = None
+
+    _check_opens = field_validator("opens_at")(_reject_past)
+    _check_closes = field_validator("closes_at")(_reject_past)
 
 
 class CourseUpdate(BaseModel):
@@ -201,10 +224,14 @@ class CourseUpdate(BaseModel):
     # [] or null clears the rule ("every required module" again);
     # otherwise every id must be one of this course's own module ids —
     # validated in the endpoint, not here, since that needs the course
-    # loaded. Non-empty means "every module in this list must be done",
-    # not just one — see learn_service.course_progress.
+    # loaded. Non-empty means completion_mode below decides ALL vs ANY of
+    # them must be done — see learn_service.course_progress.
     completion_module_ids: list[uuid.UUID] | None = None
+    completion_mode: Literal["all", "any"] | None = None
     sequential_unlock: bool | None = None
+
+    _check_opens = field_validator("opens_at")(_reject_past)
+    _check_closes = field_validator("closes_at")(_reject_past)
 
 
 class CourseAssignRequest(BaseModel):
@@ -331,11 +358,23 @@ class CourseOut(BaseModel):
     certificate_org_name: str | None
     badge_ids: list[uuid.UUID]
     completion_module_ids: list[uuid.UUID] = []
+    completion_mode: Literal["all", "any"] = "all"
     sequential_unlock: bool = False
+    cover_image_url: str | None = None
+    # Not sent to the client (exclude=True) — same file_key/file_url
+    # pattern as ModuleOut above: the storage key is permanent, the
+    # presigned URL is regenerated fresh on every read.
+    cover_image_key: str | None = Field(default=None, exclude=True)
     modules: list[ModuleOut] = []
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="after")
+    def _resolve_cover_image_url(self):
+        if self.cover_image_key:
+            self.cover_image_url = storage_service.presigned_get_url(self.cover_image_key)
+        return self
 
 
 class CourseListItem(BaseModel):

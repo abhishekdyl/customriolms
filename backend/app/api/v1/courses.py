@@ -156,6 +156,17 @@ async def get_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), c
 async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     data = body.model_dump(exclude_unset=True)
+    # Resolve what opens_at/closes_at will actually be AFTER this patch
+    # (an update may touch only one of the two) before checking the pair
+    # against each other — same rule create_course enforces up front.
+    resolved_opens = data.get("opens_at", course.opens_at)
+    resolved_closes = data.get("closes_at", course.closes_at)
+    if resolved_opens and resolved_closes and resolved_closes <= resolved_opens:
+        raise HTTPException(status_code=400, detail="Close date must be after the open date")
+    if "category_id" in data and data["category_id"]:
+        cat = await db.execute(select(Category).where(Category.id == data["category_id"], Category.org_id == current_user.org_id))
+        if cat.scalar_one_or_none() is None:
+            raise HTTPException(status_code=400, detail="Category not found in this organization")
     if "completion_module_ids" in data:
         ids = data["completion_module_ids"] or []
         # completion_module_ids isn't a real FK array (see Course model's
@@ -169,6 +180,40 @@ async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSessi
         setattr(course, key, value)
     await db.commit()
     return await get_course_or_404(db, course_id, current_user.org_id)
+
+
+@router.post("/{course_id}/cover-image", response_model=CourseOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def upload_course_cover_image(
+    course_id: uuid.UUID, file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Course cover image — same dedup-ledger upload as a user avatar
+    (storage_service.store_file keyed by component/filearea/itemid), so a
+    re-upload replaces this course's one cover slot rather than piling up
+    orphaned blobs."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    file.file.seek(0, 2)
+    size = file.file.tell()
+    file.file.seek(0)
+    storage_service.validate_image_upload(file, size)
+    record = await storage_service.store_file(
+        db, file, org_id=current_user.org_id, component="course", filearea="cover",
+        itemid=course.id, user=current_user,
+    )
+    course.cover_image_key = storage_service.file_key(record)
+    await db.commit()
+    return await get_course_or_404(db, course_id, current_user.org_id)
+
+
+@router.delete("/{course_id}/cover-image", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def delete_course_cover_image(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    had_cover = bool(course.cover_image_key)
+    course.cover_image_key = None
+    await db.commit()
+    if had_cover:
+        await storage_service.delete_file_ref(db, component="course", filearea="cover", itemid=course.id)
+        await db.commit()
 
 
 @router.delete("/{course_id}", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
