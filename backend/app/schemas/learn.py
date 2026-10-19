@@ -125,6 +125,13 @@ class QuizResult(BaseModel):
     progress: int
     course_completed: bool
     certificate_code: str | None = None
+    # How many attempts (this one included) the learner has made on this
+    # module, and whether another is still allowed — see Module.docstring
+    # and learn_service.submit_quiz. attempts_remaining is null when
+    # retakes are unlimited.
+    attempts_used: int = 1
+    attempts_remaining: int | None = None
+    retake_allowed: bool = False
 
 
 class SkillScore(BaseModel):

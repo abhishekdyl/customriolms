@@ -161,6 +161,11 @@ export interface Module {
   // WATCH-only extra completion gate: min correct in-video answers,
   // alongside threshold (watched-%) above. Null = no such gate.
   video_question_min_correct: number | null;
+  // Retake control (QUIZ modules only, currently) — off means exactly
+  // one attempt ever; on, retake_limit caps the TOTAL attempts allowed
+  // (null = unlimited). See backend Module's docstring.
+  retake_enabled: boolean;
+  retake_limit: number | null;
   // Draft/published gate — a brand-new module starts false (hidden from
   // every learner) and flips true the first time it's explicitly saved,
   // or whenever this is set directly (manual publish/un-publish). See
@@ -368,6 +373,13 @@ export interface LearnerModule {
   /** Human-readable reason for the lock above (null when not locked) —
    * comes straight from the backend, so the frontend never re-derives it. */
   lock_reason: string | null;
+  /** Retake settings (QUIZ modules only) plus how many attempts this
+   * learner has already made — see backend Module's docstring.
+   * retake_limit null means unlimited. attempts_used is 0 before the
+   * first attempt. */
+  retake_enabled: boolean;
+  retake_limit: number | null;
+  attempts_used: number;
 }
 
 /** One assigned course, learner-safe. From GET /api/v1/courses/mine/{id}. */
@@ -420,6 +432,12 @@ export interface QuizResult {
   progress: number;
   course_completed: boolean;
   certificate_code: string | null;
+  /** How many attempts (this one included) on this module so far, and
+   * whether another is allowed — see backend Module's retake docstring.
+   * attempts_remaining is null when retakes are unlimited. */
+  attempts_used: number;
+  attempts_remaining: number | null;
+  retake_allowed: boolean;
 }
 
 /** One question's answer on one attempt, as it was snapshotted at submit

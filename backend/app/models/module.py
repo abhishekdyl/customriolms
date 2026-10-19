@@ -56,6 +56,26 @@ class Module(Base):
     required: Mapped[bool] = mapped_column(Boolean, default=True)
     threshold: Mapped[int] = mapped_column(Integer, default=90)  # min % watched (WATCH) or min score (QUIZ)
 
+    # Retake control — currently only enforced for QUIZ modules (see
+    # learn_service.submit_quiz). retake_enabled off means exactly one
+    # attempt ever, pass or fail. On, retake_limit caps the TOTAL number
+    # of attempts (first try included) a learner may make; null means
+    # unlimited. A learner who already passed may keep attempting (up to
+    # the limit) for a higher score — every attempt is kept in
+    # QuizAttempt, but ModuleProgress.score only ever rises, never falls
+    # (see learn_service._mark_done), so "the highest grade counts" falls
+    # out of logic that already existed before this feature.
+    #
+    # New modules default retake_enabled=False (Python-side default,
+    # applies to every ORM-created row) — a quiz is single-attempt unless
+    # an admin turns retakes on. The migration that added this column
+    # backfilled every *existing* module with retake_enabled=true /
+    # retake_limit=null (via a server_default, not this Python default)
+    # so no course already relying on the old "always allowed to retry a
+    # failed quiz" behavior silently became single-attempt.
+    retake_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    retake_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # WATCH / READ content
     # file_url is never written directly anymore — it's recomputed from
     # file_key as a fresh presigned R2 URL every time a module is

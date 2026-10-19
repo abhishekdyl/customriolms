@@ -1047,6 +1047,37 @@ export function ModuleEditorRow({
             </div>
           )}
 
+          {m.type === "quiz" && (
+            <div className="flex flex-col gap-2 rounded-lg border border-line-soft p-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-ink-soft">Allow retakes</span>
+                <Switch
+                  checked={m.retake_enabled}
+                  onCheckedChange={(v) => onChange({ retake_enabled: v, retake_limit: v ? m.retake_limit : null })}
+                />
+              </div>
+              {m.retake_enabled ? (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-ink-faint">
+                    Learners can keep retaking — even after passing, for a higher score
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number" min={1}
+                      value={m.retake_limit ?? ""}
+                      placeholder="Unlimited"
+                      onChange={(e) => onChange({ retake_limit: e.target.value === "" ? null : Math.max(1, Number(e.target.value)) })}
+                      className="h-7 w-20 rounded-md border border-line px-1.5 text-xs"
+                    />
+                    <span className="text-[10px] text-ink-faint">max attempts</span>
+                  </div>
+                </div>
+              ) : (
+                <span className="text-[11px] text-ink-faint">Off — a learner gets exactly one attempt, pass or fail.</span>
+              )}
+            </div>
+          )}
+
           {m.type === "watch" && m.questions.length > 0 && (
             <div className="flex items-center justify-between">
               <span className="text-xs text-ink-soft">Also require correct in-video answers</span>

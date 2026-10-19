@@ -44,6 +44,27 @@ async def completed_map(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID,
     return {mp.module_id: mp for mp in rows.scalars().all()}
 
 
+async def attempts_used_map(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, int]:
+    """How many QuizAttempt rows this learner already has per module —
+    one query for the whole course view rather than one per quiz module.
+    Used to show "X of Y attempts used" and to gate the retake button
+    client-side (the real gate is still enforced server-side in
+    submit_quiz — see _retake_gate)."""
+    rows = await db.execute(
+        select(QuizAttempt.module_id, func.count()).where(QuizAttempt.user_id == user_id).group_by(QuizAttempt.module_id)
+    )
+    return {module_id: count for module_id, count in rows.all()}
+
+
+def _retake_gate(module: Module, attempts_used: int) -> int | None:
+    """The total number of attempts this module allows (first try
+    included), or None for unlimited. retake_enabled off means exactly
+    one attempt ever, regardless of pass/fail — see Module's docstring.
+    Shared by submit_quiz's server-side enforcement and build_progress-
+    adjacent code that just wants to know the cap."""
+    return 1 if not module.retake_enabled else module.retake_limit
+
+
 def _counted_modules(course: Course) -> list[Module]:
     # A draft module (see Module.published) is invisible to the learner,
     # so it must never count toward — or block — their progress either.
@@ -421,6 +442,19 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
         raise HTTPException(status_code=400, detail="This module has no quiz")
     assert_course_open(course)
     await _assert_module_unlocked(db, user, course, module)
+
+    attempts_so_far = (await db.execute(
+        select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
+    )).scalar_one()
+    limit = _retake_gate(module, attempts_so_far)
+    if limit is not None and attempts_so_far >= limit:
+        detail = (
+            "Retakes aren't allowed for this quiz — you've already submitted your one attempt."
+            if limit == 1 else
+            f"You've used all {limit} attempts allowed for this quiz."
+        )
+        raise HTTPException(status_code=403, detail=detail)
+
     results, snapshot, right, earned_points, total_points = _score_questions(module.questions, answers)
     score = round(100 * right / len(module.questions))
     passed = score >= module.threshold
@@ -430,12 +464,20 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
         passed=passed, answers_json=snapshot,
     ))
     if passed:
+        # Only ever raises the recorded score (see _mark_done) — a later
+        # attempt that scores lower than an earlier pass never undoes it,
+        # so "the highest grade counts" holds even though every attempt
+        # is still written to QuizAttempt above.
         await _mark_done(db, user, course, module, score)
     await db.commit()
     pct, completed, code = await _finish_course_if_done(db, user, course)
+    attempts_used = attempts_so_far + 1
+    retake_allowed = limit is None or attempts_used < limit
     return {"score": score, "passed": passed, "threshold": module.threshold, "results": results,
             "earned_points": earned_points, "total_points": total_points,
-            "progress": pct, "course_completed": completed, "certificate_code": code}
+            "progress": pct, "course_completed": completed, "certificate_code": code,
+            "attempts_used": attempts_used, "attempts_remaining": (None if limit is None else max(0, limit - attempts_used)),
+            "retake_allowed": retake_allowed}
 
 
 # ---------- progress screen ----------

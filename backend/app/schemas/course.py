@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.module import ModuleType
 from app.schemas.question import QuestionIn, QuestionLearnerOut, QuestionOut
@@ -21,6 +21,18 @@ class ModuleCreate(BaseModel):
     # practice (the create form doesn't need it up front), but accepted
     # here too for symmetry.
     video_question_min_correct: int | None = None
+    # Retake control — see Module's docstring. Off (the default) means
+    # exactly one attempt ever; on, retake_limit caps the total number of
+    # attempts (null = unlimited).
+    retake_enabled: bool = False
+    retake_limit: int | None = None
+
+    @field_validator("retake_limit")
+    @classmethod
+    def _positive_limit(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("retake_limit must be at least 1, or omitted for unlimited")
+        return v
 
 
 class ModuleRestrictionIn(BaseModel):
@@ -73,6 +85,14 @@ class ModuleUpdate(BaseModel):
     required: bool | None = None
     threshold: int | None = None
     video_question_min_correct: int | None = None
+    retake_enabled: bool | None = None
+    # Sending this key with a value sets the cap; sending it explicitly
+    # as null clears it back to unlimited — model_dump(exclude_unset=True)
+    # in update_module tells "omitted" (field absent from the request,
+    # left alone) apart from "sent as null" (field present, value None),
+    # same pattern as every other nullable field here (e.g.
+    # certificate_template_id above).
+    retake_limit: int | None = None
     # file_url/file_name/file_size_label are deliberately not here — a
     # module's file is only ever set by the real upload endpoint (and
     # cleared by the matching delete endpoint), never by a free-text PATCH.
@@ -92,6 +112,13 @@ class ModuleUpdate(BaseModel):
     # publishes/un-publishes on demand.
     published: bool | None = None
 
+    @field_validator("retake_limit")
+    @classmethod
+    def _positive_limit(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("retake_limit must be at least 1, or omitted/null for unlimited")
+        return v
+
 
 class ModuleOut(BaseModel):
     id: uuid.UUID
@@ -101,6 +128,8 @@ class ModuleOut(BaseModel):
     required: bool
     threshold: int
     video_question_min_correct: int | None = None
+    retake_enabled: bool = False
+    retake_limit: int | None = None
     published: bool = True
     file_url: str | None
     file_name: str | None
@@ -348,6 +377,13 @@ class LearnerModuleOut(BaseModel):
     # until there's a passing attempt, since an in-progress/failed try
     # isn't persisted as module progress at all (see learn_service).
     score: int | None = None
+    # Retake settings (QUIZ modules only — see Module's docstring) plus
+    # how many attempts this learner has already made, so the frontend
+    # can show "2 of 3 attempts used" / disable the retake button without
+    # a separate round trip. attempts_used is 0 until the first attempt.
+    retake_enabled: bool = False
+    retake_limit: int | None = None
+    attempts_used: int = 0
     # True when sequential_unlock blocks this module OR any one of its
     # own restrictions isn't satisfied yet — see learn_service.module_locked.
     # file_url/questions are already stripped when this is true (see

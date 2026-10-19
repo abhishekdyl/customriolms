@@ -121,7 +121,9 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
       {
         moduleId,
         title: m.title, type: m.type, required: m.required, threshold: m.threshold,
-        video_question_min_correct: m.video_question_min_correct, instructions: m.instructions,
+        video_question_min_correct: m.video_question_min_correct,
+        retake_enabled: m.retake_enabled, retake_limit: m.retake_limit,
+        instructions: m.instructions,
         skill_ids: m.skill_ids, badge_ids: m.badge_ids,
         certificate_enabled: m.certificate_enabled, certificate_template_id: m.certificate_template_id,
         certificate_name: m.certificate_name,

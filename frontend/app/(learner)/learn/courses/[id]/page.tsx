@@ -435,15 +435,42 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
   // even with nothing picked (a skip, never scored as wrong — same rule
   // as an in-video question's timeout, see InVideoQuestionOverlay).
   const [expiredIds, setExpiredIds] = useState<Set<string>>(new Set());
+  // Explicitly chosen to retake after an EARLIER pass (loaded already
+  // completed, before this render submitted anything) — without this,
+  // resetting `result` after a just-submitted retake would just fall
+  // back into the "already passed" card below instead of the form.
+  const [retaking, setRetaking] = useState(false);
 
-  if (quizModule.completed && !result) {
+  // Retake limit as admin-configured — retake_enabled off means exactly
+  // 1 attempt ever, same rule the backend enforces (see Module's
+  // docstring); null = unlimited. attempts_used is this learner's count
+  // BEFORE any attempt made during this page load.
+  const limit = quizModule.retake_enabled ? quizModule.retake_limit : 1;
+  const attemptsLabel = limit !== null ? `attempt ${quizModule.attempts_used + 1} of ${limit}` : `attempt ${quizModule.attempts_used + 1}`;
+
+  if (quizModule.completed && !result && !retaking) {
+    const canRetake = limit === null || quizModule.attempts_used < limit;
     return (
       <div className="rounded-lg border border-line bg-surface p-4">
         <div className="font-head text-[15px] text-ink">{quizModule.title}</div>
         <div className="mt-3 flex items-center gap-2 rounded-lg bg-success-soft px-3 py-3">
           <CheckCircle2 size={14} color="var(--color-success)" />
-          <span className="text-[12.5px] text-ink">You've already passed this quiz.</span>
+          <span className="text-[12.5px] text-ink">
+            You've already passed this quiz{quizModule.score !== null && ` — best score ${quizModule.score}%`}.
+          </span>
         </div>
+        {canRetake ? (
+          <button
+            onClick={() => setRetaking(true)}
+            className="mt-3 self-start rounded-lg border border-line px-3 py-1.5 text-[12px] font-medium text-ink"
+          >
+            Retake for a higher score{limit !== null && ` (${quizModule.attempts_used}/${limit} attempts used)`}
+          </button>
+        ) : (
+          <p className="mt-2 text-[11.5px] text-ink-faint">
+            You've used all {limit} attempt{limit === 1 ? "" : "s"} allowed on this quiz.
+          </p>
+        )}
       </div>
     );
   }
@@ -476,7 +503,7 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
       <div className="font-head text-[15px] text-ink">{quizModule.title}</div>
       <div className="mt-1 text-[12.5px] text-ink-soft">
         {quizModule.questions.length} question{quizModule.questions.length > 1 ? "s" : ""} · pass mark{" "}
-        {quizModule.threshold}%
+        {quizModule.threshold}% · {attemptsLabel}
       </div>
 
       {result ? (
@@ -503,6 +530,12 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
             </span>
           </div>
 
+          <p className="text-[11px] text-ink-faint">
+            {result.attempts_remaining !== null
+              ? `${result.attempts_used} attempt${result.attempts_used === 1 ? "" : "s"} used · ${result.attempts_remaining} remaining`
+              : `${result.attempts_used} attempt${result.attempts_used === 1 ? "" : "s"} used`}
+          </p>
+
           <div className="flex flex-col gap-2">
             {quizModule.questions.map((q, qi) => {
               const r = result.results.find((x) => x.question_id === q.id);
@@ -524,14 +557,18 @@ function QuizPanel({ module: quizModule, courseId }: { module: LearnerModule; co
             })}
           </div>
 
-          {!result.passed && (
+          {result.retake_allowed ? (
             <button
-              onClick={() => { setResult(null); setExpiredIds(new Set()); }}
+              onClick={() => { setResult(null); setExpiredIds(new Set()); setRetaking(true); }}
               className="self-start rounded-lg border border-line px-3 py-1.5 text-[12px] font-medium text-ink"
             >
-              Retake to try for a passing score
+              {result.passed ? "Retake for a higher score" : "Retake to try for a passing score"}
             </button>
-          )}
+          ) : !result.passed ? (
+            <p className="text-[11.5px] text-danger">
+              No more attempts allowed on this quiz — talk to your instructor if you need another chance.
+            </p>
+          ) : null}
         </div>
       ) : (
         <div className="mt-3 flex flex-col gap-4">

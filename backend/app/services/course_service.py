@@ -120,6 +120,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
         raise HTTPException(status_code=404, detail="Course not found")
 
     done = await progress_svc.completed_map(db, user.id)
+    attempts = await progress_svc.attempts_used_map(db, user.id)
     pct, completed_count, _ = progress_svc.course_progress(course, done)
     modules = []
     for m in course.modules:
@@ -148,6 +149,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
             score=done[m.id].score if m.id in done else None,
             locked=locked,
             lock_reason=lock_reason,
+            retake_enabled=m.retake_enabled, retake_limit=m.retake_limit, attempts_used=attempts.get(m.id, 0),
         ))
     return LearnerCourseOut(
         id=course.id, title=course.title, description=course.description,
@@ -192,6 +194,7 @@ async def add_module(db: AsyncSession, course: Course, body: ModuleCreate) -> Mo
     module = Module(
         course_id=course.id, title=body.title, type=body.type,
         required=body.required, threshold=body.threshold, position=max_position + 1,
+        retake_enabled=body.retake_enabled, retake_limit=body.retake_limit,
         # Starts as a draft — invisible to any learner (see Module.published's
         # docstring and learn_service's ordered_modules/_counted_modules) —
         # until the admin's first explicit Save on it, in update_module below.
