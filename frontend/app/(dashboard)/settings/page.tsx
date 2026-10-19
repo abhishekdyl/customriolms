@@ -158,7 +158,10 @@ const timezoneOptions = ["Asia/Kolkata", "America/New_York", "America/Sao_Paulo"
 
 const planLabel: Record<string, string> = { starter: "Starter", growth: "Growth", enterprise: "Enterprise" };
 
-type Draft = { name: string; slug: string; industry: string; timezone: string; contact_email: string };
+type Draft = {
+  name: string; slug: string; industry: string; timezone: string; contact_email: string;
+  allow_custom_username: boolean;
+};
 
 export default function OrgSettingsPage() {
   const { data: org, isLoading } = useMyOrg();
@@ -180,6 +183,7 @@ export default function OrgSettingsPage() {
         industry: org.industry ?? industryOptions[0],
         timezone: org.timezone,
         contact_email: org.contact_email ?? "",
+        allow_custom_username: org.allow_custom_username,
       });
     }
   }, [org]);
@@ -193,7 +197,8 @@ export default function OrgSettingsPage() {
     draft.slug !== org.slug ||
     draft.industry !== (org.industry ?? industryOptions[0]) ||
     draft.timezone !== org.timezone ||
-    draft.contact_email !== (org.contact_email ?? "");
+    draft.contact_email !== (org.contact_email ?? "") ||
+    draft.allow_custom_username !== org.allow_custom_username;
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
@@ -324,6 +329,25 @@ export default function OrgSettingsPage() {
           <Input type="email" value={draft.contact_email} onChange={(e) => setDraft({ ...draft, contact_email: e.target.value })} />
         </div>
 
+        <div className="mt-5 flex items-center justify-between gap-3 border-t border-line-soft pt-4">
+          <div>
+            <div className="mb-0.5 text-[13px] font-medium text-ink">Allow custom usernames</div>
+            <p className="text-[12px] text-ink-soft">
+              By default every user logs in with their email. Turn this on to let users set their own
+              username from their profile — they can still log in with their email either way.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDraft({ ...draft, allow_custom_username: !draft.allow_custom_username })}
+            className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${draft.allow_custom_username ? "bg-primary" : "bg-line"}`}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${draft.allow_custom_username ? "translate-x-5" : "translate-x-0.5"}`}
+            />
+          </button>
+        </div>
+
         {updateOrg.isError && (
           <p className="mt-3 text-[12px] text-danger">
             {updateOrg.error instanceof ApiError ? updateOrg.error.message : "Couldn't save — try again."}
@@ -334,32 +358,22 @@ export default function OrgSettingsPage() {
           <Button type="submit" disabled={!dirty || updateOrg.isPending}>
             {updateOrg.isPending ? "Saving…" : "Save changes"}
           </Button>
+          {dirty && (
+            <button
+              type="button"
+              onClick={() => setDraft({
+                name: org.name, slug: org.slug, industry: org.industry ?? industryOptions[0],
+                timezone: org.timezone, contact_email: org.contact_email ?? "", allow_custom_username: org.allow_custom_username,
+              })}
+              disabled={updateOrg.isPending}
+              className="text-xs text-ink-faint"
+            >
+              Cancel
+            </button>
+          )}
           {saved && <span className="text-xs text-success">Saved</span>}
         </div>
       </form>
-
-      {/* Custom usernames */}
-      <div className="rounded-[10px] border border-line bg-surface p-5">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="mb-0.5 font-head text-sm text-ink">Allow custom usernames</div>
-            <p className="text-[12.5px] text-ink-soft">
-              By default every user logs in with their email. Turn this on to let users set their own
-              username from their profile — they can still log in with their email either way.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => updateOrg.mutate({ allow_custom_username: !org.allow_custom_username })}
-            disabled={updateOrg.isPending}
-            className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${org.allow_custom_username ? "bg-primary" : "bg-line"}`}
-          >
-            <span
-              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${org.allow_custom_username ? "translate-x-5" : "translate-x-0.5"}`}
-            />
-          </button>
-        </div>
-      </div>
 
       <CustomFieldsCard />
 

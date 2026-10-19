@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { usePlatformSettings, useUpdatePlatformSettings, useSuperAdmins, useOrgs } from "@/lib/hooks/use-orgs";
+import { useDraft } from "@/lib/hooks/use-draft";
+import { SaveBar } from "@/components/ui/save-bar";
 
 type TabId = "email" | "registration" | "ai" | "superadmins";
 
@@ -144,11 +146,14 @@ function EmailNotificationsTab() {
 function RegistrationTab() {
   const { data: settings, isLoading } = usePlatformSettings();
   const updateSettings = useUpdatePlatformSettings();
+  const serverValue = settings ? { allow_self_serve_signup: settings.allow_self_serve_signup } : undefined;
+  const { draft, setDraft, dirty, cancel } = useDraft(serverValue);
+  const [saved, setSaved] = useState(false);
 
   return (
     <div className="max-w-2xl">
       <section className="mb-5 rounded-xl border border-line bg-surface p-5">
-        {isLoading ? (
+        {isLoading || !draft ? (
           <p className="text-sm text-ink-faint">Loading…</p>
         ) : (
           <div className="flex items-center justify-between">
@@ -159,8 +164,8 @@ function RegistrationTab() {
               </div>
             </div>
             <Switch
-              checked={settings?.allow_self_serve_signup ?? true}
-              onCheckedChange={(checked) => updateSettings.mutate({ allow_self_serve_signup: checked })}
+              checked={draft.allow_self_serve_signup}
+              onCheckedChange={(checked) => setDraft({ allow_self_serve_signup: checked })}
             />
           </div>
         )}
@@ -172,6 +177,14 @@ function RegistrationTab() {
           through Riosmart directly — you can still create them yourself from the Organizations page.
         </p>
       </div>
+      <SaveBar
+        dirty={dirty}
+        saving={updateSettings.isPending}
+        savedFlash={saved}
+        onCancel={cancel}
+        onSave={() => updateSettings.mutate(draft!, { onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); } })}
+        className="mt-4 rounded-xl border-t-0"
+      />
     </div>
   );
 }

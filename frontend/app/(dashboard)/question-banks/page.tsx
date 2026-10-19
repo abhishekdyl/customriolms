@@ -66,6 +66,12 @@ function BankDetail({ bankId, onBack }: { bankId: string; onBack: () => void }) 
   const [draft, setDraft] = useState<QuizQuestion | null>(null);
   const [importedCount, setImportedCount] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Same draft-until-Save pattern as everywhere else — editing an existing
+  // question only touches this local map until its own Save is clicked;
+  // nothing reaches the server mid-edit. Keyed by question id so each
+  // question's edit (and Save/Cancel) is independent of the others.
+  const [edits, setEdits] = useState<Record<string, QuizQuestion>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
 
   if (isLoading || !bank) return <p className="text-sm text-ink-faint">Loading…</p>;
 
@@ -126,14 +132,46 @@ function BankDetail({ bankId, onBack }: { bankId: string; onBack: () => void }) 
       </div>
 
       <div className="flex flex-col gap-2.5">
-        {bank.questions.map((q) => (
-          <QuestionCard
-            key={q.id}
-            q={q}
-            onChange={(next) => updateQ.mutate({ questionId: q.id, ...toQuestionInput(next) })}
-            onDelete={() => { if (confirm("Delete this question?")) deleteQ.mutate(q.id); }}
-          />
-        ))}
+        {bank.questions.map((q) => {
+          const edited = edits[q.id];
+          const isDirty = !!edited;
+          return (
+            <div key={q.id}>
+              <QuestionCard
+                q={edited ?? q}
+                onChange={(next) => setEdits((prev) => ({ ...prev, [q.id]: next }))}
+                onDelete={() => { if (confirm("Delete this question?")) deleteQ.mutate(q.id); }}
+              />
+              {isDirty && (
+                <div className="mt-1.5 flex items-center justify-end gap-3">
+                  <button
+                    onClick={() => setEdits((prev) => { const next = { ...prev }; delete next[q.id]; return next; })}
+                    disabled={savingId === q.id}
+                    className="text-[12px] text-ink-faint"
+                  >
+                    Cancel
+                  </button>
+                  <Button
+                    size="sm"
+                    disabled={savingId === q.id}
+                    onClick={() => {
+                      setSavingId(q.id);
+                      updateQ.mutate(
+                        { questionId: q.id, ...toQuestionInput(edited) },
+                        {
+                          onSuccess: () => setEdits((prev) => { const next = { ...prev }; delete next[q.id]; return next; }),
+                          onSettled: () => setSavingId(null),
+                        },
+                      );
+                    }}
+                  >
+                    {savingId === q.id ? "Saving…" : "Save changes"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          );
+        })}
 
         {draft && (
           <QuestionCard

@@ -859,6 +859,7 @@ export function ModuleEditorRow({
   isDirty,
   saving,
   onSave,
+  onCancel,
 }: {
   courseId: string;
   module: Module;
@@ -877,6 +878,9 @@ export function ModuleEditorRow({
   // restrictionValid) and questions converted to the authoring input
   // shape happen at the call site in CourseManagePage, not here.
   onSave: () => void;
+  // Discards every unsaved local edit on this module, resetting its
+  // draft back to the last value the server actually returned.
+  onCancel: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const { data: skills } = useSkills();
@@ -1162,14 +1166,21 @@ export function ModuleEditorRow({
             <button onClick={onDelete} className="flex items-center gap-1.5">
               <Trash2 className="h-3 w-3 text-danger" /> <span className="text-[11.5px] text-danger">Remove module</span>
             </button>
-            <button
-              onClick={onSave}
-              disabled={!isDirty || saving}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-[12px] font-medium text-white disabled:opacity-40"
-            >
-              {saving && <Loader2 className="h-3 w-3 animate-spin" />}
-              {saving ? "Saving…" : isDirty ? "Save changes" : "Saved"}
-            </button>
+            <div className="flex items-center gap-3">
+              {isDirty && (
+                <button onClick={onCancel} disabled={saving} className="text-[12px] text-ink-faint">
+                  Cancel
+                </button>
+              )}
+              <button
+                onClick={onSave}
+                disabled={!isDirty || saving}
+                className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+              >
+                {saving && <Loader2 className="h-3 w-3 animate-spin" />}
+                {saving ? "Saving…" : isDirty ? "Save changes" : "Saved"}
+              </button>
+            </div>
           </div>
         </div>
       )}

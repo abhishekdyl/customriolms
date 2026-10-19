@@ -84,6 +84,12 @@ export default function UsersPage() {
   const updateStatus = useUpdateUserStatus();
   const remove = useRemoveUser();
 
+  // Same draft-until-Save pattern as everywhere else: picking a new role
+  // in a row's dropdown only edits this local map — it doesn't reach the
+  // server until that row's own Save is clicked, and Cancel discards it.
+  const [roleDrafts, setRoleDrafts] = useState<Record<string, RoleName>>({});
+  const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
+
   const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteTeamId, setInviteTeamId] = useState("");
@@ -461,16 +467,51 @@ export default function UsersPage() {
                     </td>
                     <td className="border-b border-line-soft px-5 py-3 text-ink-soft">{u.team_name ?? "—"}</td>
                     <td className="border-b border-line-soft px-5 py-3">
-                      <select
-                        value={u.role}
-                        disabled={isSelf}
-                        onChange={(e) => changeRole.mutate({ id: u.id, role: e.target.value as RoleName })}
-                        className="rounded-md border border-line px-2 py-1 text-xs text-ink"
-                      >
-                        {roleOptions.map((r) => (
-                          <option key={r} value={r}>{roleLabel[r]}</option>
-                        ))}
-                      </select>
+                      {(() => {
+                        const draftRole = roleDrafts[u.id] ?? u.role;
+                        const dirty = draftRole !== u.role;
+                        return (
+                          <div className="flex flex-col gap-1">
+                            <select
+                              value={draftRole}
+                              disabled={isSelf}
+                              onChange={(e) => setRoleDrafts((prev) => ({ ...prev, [u.id]: e.target.value as RoleName }))}
+                              className="rounded-md border border-line px-2 py-1 text-xs text-ink"
+                            >
+                              {roleOptions.map((r) => (
+                                <option key={r} value={r}>{roleLabel[r]}</option>
+                              ))}
+                            </select>
+                            {dirty && (
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => setRoleDrafts((prev) => { const next = { ...prev }; delete next[u.id]; return next; })}
+                                  disabled={savingRoleId === u.id}
+                                  className="text-[10.5px] text-ink-faint"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setSavingRoleId(u.id);
+                                    changeRole.mutate(
+                                      { id: u.id, role: draftRole },
+                                      {
+                                        onSuccess: () => setRoleDrafts((prev) => { const next = { ...prev }; delete next[u.id]; return next; }),
+                                        onSettled: () => setSavingRoleId(null),
+                                      },
+                                    );
+                                  }}
+                                  disabled={savingRoleId === u.id}
+                                  className="text-[10.5px] font-medium text-primary"
+                                >
+                                  {savingRoleId === u.id ? "Saving…" : "Save"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="border-b border-line-soft px-5 py-3 text-xs text-ink-faint" title="Course progress tracking isn't built yet">—</td>
                     <td className="border-b border-line-soft px-5 py-3">

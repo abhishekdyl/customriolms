@@ -16,12 +16,15 @@ import {
 import { useCategories } from "@/lib/hooks/use-categories";
 import { useBadges } from "@/lib/hooks/use-badges";
 import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
+import { useDraft } from "@/lib/hooks/use-draft";
+import { SaveBar } from "@/components/ui/save-bar";
 import { ModuleEditorRow, restrictionValid } from "@/components/shell/courses/module-editor";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
 import { QuizAttemptsSection } from "@/components/shell/courses/quiz-attempts";
 import { ModuleProgressMatrix } from "@/components/shell/courses/module-progress-matrix";
 import { toQuestionInput } from "@/lib/quiz-utils";
 import { cn, isoToLocal, localToIso, nowLocal } from "@/lib/utils";
+import { ApiError } from "@/lib/api-client";
 import { MODULE_TYPE_LABEL } from "@/lib/learner-courses";
 import type { Module } from "@/lib/types";
 
@@ -122,7 +125,73 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
     );
   }, [course, dirtyIds]);
 
+  // Settings tab (name/description/category/dates) and More tab
+  // (completion rules) each get their own draft-until-Save form — see
+  // useDraft/SaveBar, the one shared pattern every settings-style page in
+  // the app now uses. Nothing here reaches updateCourse until the admin
+  // explicitly clicks Save in that tab's SaveBar; Cancel discards back to
+  // whatever the server last returned.
+  const settingsServerValue = course
+    ? {
+        title: course.title,
+        description: course.description ?? "",
+        category_id: course.category_id ?? "",
+        opens_at: isoToLocal(course.opens_at) || nowLocal(),
+        closes_at: isoToLocal(course.closes_at),
+      }
+    : undefined;
+  const { draft: settingsDraftRaw, setDraft: setSettingsDraft, dirty: settingsDirty, cancel: cancelSettingsRaw } = useDraft(settingsServerValue);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+
+  const rulesServerValue = course
+    ? {
+        completion_module_ids: course.completion_module_ids,
+        completion_mode: course.completion_mode,
+        sequential_unlock: course.sequential_unlock,
+      }
+    : undefined;
+  const { draft: rulesDraftRaw, setDraft: setRulesDraft, dirty: rulesDirty, cancel: cancelRulesRaw } = useDraft(rulesServerValue);
+  const [rulesSaved, setRulesSaved] = useState(false);
+
   if (isLoading || !course) return <div className="p-8 text-sm text-ink-faint">Loading…</div>;
+
+  // Safe to assert non-null past the guard above — both drafts seed from
+  // course, which is now guaranteed defined.
+  const settingsDraft = settingsDraftRaw!;
+  const rulesDraft = rulesDraftRaw!;
+
+  const cancelSettings = () => { cancelSettingsRaw(); setSettingsError(null); };
+  const cancelRules = () => cancelRulesRaw();
+
+  const saveSettings = () => {
+    if (!settingsDraft.title.trim()) { setSettingsError("Course name can't be empty."); return; }
+    if (!settingsDraft.opens_at) { setSettingsError("Pick an open/create date."); return; }
+    if (settingsDraft.closes_at && settingsDraft.closes_at <= settingsDraft.opens_at) {
+      setSettingsError("Close date must be after the open date.");
+      return;
+    }
+    setSettingsError(null);
+    updateCourse.mutate(
+      {
+        title: settingsDraft.title.trim(),
+        description: settingsDraft.description,
+        category_id: settingsDraft.category_id || null,
+        opens_at: localToIso(settingsDraft.opens_at),
+        closes_at: settingsDraft.closes_at ? localToIso(settingsDraft.closes_at) : null,
+      },
+      {
+        onSuccess: () => { setSettingsSaved(true); setTimeout(() => setSettingsSaved(false), 2000); },
+        onError: (err) => setSettingsError(err instanceof ApiError ? err.message : "Couldn't save — try again."),
+      },
+    );
+  };
+
+  const saveRules = () => {
+    updateCourse.mutate(rulesDraft, {
+      onSuccess: () => { setRulesSaved(true); setTimeout(() => setRulesSaved(false), 2000); },
+    });
+  };
 
   const move = (index: number, dir: -1 | 1) => {
     const target = index + dir;
@@ -137,6 +206,16 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
     setModules((prev) => prev.map((m) => (m.id === moduleId ? { ...m, ...patch } : m)));
     setDirtyIds((prev) => new Set(prev).add(moduleId));
     if ("published" in patch) setPublishOverrides((prev) => new Set(prev).add(moduleId));
+  };
+
+  // Discards every unsaved local edit on one module, resetting its draft
+  // back to what the server last actually returned for it.
+  const cancelModule = (moduleId: string) => {
+    const serverMod = course.modules.find((sm) => sm.id === moduleId);
+    if (!serverMod) return;
+    setModules((prev) => prev.map((m) => (m.id === moduleId ? serverMod : m)));
+    setDirtyIds((prev) => { const next = new Set(prev); next.delete(moduleId); return next; });
+    setPublishOverrides((prev) => { const next = new Set(prev); next.delete(moduleId); return next; });
   };
 
   const saveModule = (moduleId: string) => {
@@ -273,6 +352,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                       isDirty={dirtyIds.has(m.id)}
                       saving={savingId === m.id}
                       onSave={() => saveModule(m.id)}
+                      onCancel={() => cancelModule(m.id)}
                     />
                   </div>
                 </div>
@@ -348,20 +428,20 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
       )}
 
       {tab === "settings" && (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-6 pb-2">
           <div className="rounded-xl border border-line bg-surface p-4">
             <p className="mb-3 text-xs font-medium text-ink-faint">Course details</p>
 
             <div className="mb-3">
               <p className="mb-1 text-[10.5px] text-ink-faint">Course name</p>
-              <Input defaultValue={course.title} onBlur={(e) => { if (e.target.value.trim()) updateCourse.mutate({ title: e.target.value.trim() }); }} />
+              <Input value={settingsDraft.title} onChange={(e) => setSettingsDraft((d) => ({ ...d, title: e.target.value }))} />
             </div>
 
             <div className="mb-3">
               <p className="mb-1 text-[10.5px] text-ink-faint">Description</p>
               <textarea
-                defaultValue={course.description ?? ""}
-                onBlur={(e) => updateCourse.mutate({ description: e.target.value })}
+                value={settingsDraft.description}
+                onChange={(e) => setSettingsDraft((d) => ({ ...d, description: e.target.value }))}
                 placeholder="What's this course about?"
                 className="w-full resize-none rounded-lg border border-line bg-surface p-2.5 text-sm text-ink outline-none focus-visible:border-primary"
                 rows={3}
@@ -371,8 +451,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
             <div>
               <p className="mb-1 text-[10.5px] text-ink-faint">Category</p>
               <select
-                value={course.category_id ?? ""}
-                onChange={(e) => updateCourse.mutate({ category_id: e.target.value || null })}
+                value={settingsDraft.category_id}
+                onChange={(e) => setSettingsDraft((d) => ({ ...d, category_id: e.target.value }))}
                 className="h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-sm outline-none focus-visible:border-primary"
               >
                 <option value="">No category</option>
@@ -385,6 +465,9 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
           <div className="rounded-xl border border-line bg-surface p-4">
             <p className="mb-3 text-xs font-medium text-ink-faint">Cover image</p>
+            <p className="mb-3 text-[11px] text-ink-faint">
+              Uploading or removing the cover takes effect immediately — it&apos;s its own action, not part of the form below.
+            </p>
             {course.cover_image_url ? (
               <div className="mb-3 flex items-center gap-3">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -417,9 +500,9 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                 <p className="mb-1 text-[10.5px] text-ink-faint">Opens / create date *</p>
                 <input
                   type="datetime-local"
-                  defaultValue={isoToLocal(course.opens_at) || nowLocal()}
+                  value={settingsDraft.opens_at}
                   min={nowLocal()}
-                  onBlur={(e) => { if (e.target.value) updateCourse.mutate({ opens_at: localToIso(e.target.value) }); }}
+                  onChange={(e) => setSettingsDraft((d) => ({ ...d, opens_at: e.target.value }))}
                   className="h-8 w-full rounded-md border border-line bg-surface px-2 text-xs outline-none focus-visible:border-primary"
                 />
               </div>
@@ -427,9 +510,9 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                 <p className="mb-1 text-[10.5px] text-ink-faint">Closes (optional)</p>
                 <input
                   type="datetime-local"
-                  defaultValue={isoToLocal(course.closes_at)}
+                  value={settingsDraft.closes_at}
                   min={nowLocal()}
-                  onBlur={(e) => updateCourse.mutate({ closes_at: e.target.value ? localToIso(e.target.value) : null })}
+                  onChange={(e) => setSettingsDraft((d) => ({ ...d, closes_at: e.target.value }))}
                   className="h-8 w-full rounded-md border border-line bg-surface px-2 text-xs outline-none focus-visible:border-primary"
                 />
               </div>
@@ -438,6 +521,15 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
               The open date can&apos;t be in the past, and a close date (if set) must be later than it.
             </p>
           </div>
+
+          <SaveBar
+            dirty={settingsDirty}
+            saving={updateCourse.isPending}
+            error={settingsError}
+            savedFlash={settingsSaved}
+            onCancel={cancelSettings}
+            onSave={saveSettings}
+          />
         </div>
       )}
 
@@ -486,18 +578,19 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
       )}
 
       {tab === "more" && (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-6 pb-2">
           <div className="rounded-xl border border-line bg-surface p-4">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-xs font-medium text-ink-faint">Course completion rules</p>
               {modules.length > 0 && (
                 <button
-                  onClick={() => updateCourse.mutate({
-                    completion_module_ids: course.completion_module_ids.length === modules.length ? [] : modules.map((m) => m.id),
-                  })}
+                  onClick={() => setRulesDraft((d) => ({
+                    ...d,
+                    completion_module_ids: d.completion_module_ids.length === modules.length ? [] : modules.map((m) => m.id),
+                  }))}
                   className="text-[11px] text-primary"
                 >
-                  {course.completion_module_ids.length === modules.length ? "Select none" : "Select all"}
+                  {rulesDraft.completion_module_ids.length === modules.length ? "Select none" : "Select all"}
                 </button>
               )}
             </div>
@@ -508,16 +601,18 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
             {modules.length === 0 && <p className="text-xs text-ink-faint">Add modules under the Course tab first.</p>}
             <div className="mb-3 flex flex-col gap-1.5">
               {modules.map((m) => {
-                const checked = course.completion_module_ids.includes(m.id);
+                const checked = rulesDraft.completion_module_ids.includes(m.id);
                 return (
                   <label key={m.id} className="flex items-center gap-2 text-xs text-ink-soft">
                     <input
                       type="checkbox" checked={checked}
                       onChange={() => {
-                        const next = checked
-                          ? course.completion_module_ids.filter((x) => x !== m.id)
-                          : [...course.completion_module_ids, m.id];
-                        updateCourse.mutate({ completion_module_ids: next });
+                        setRulesDraft((d) => ({
+                          ...d,
+                          completion_module_ids: checked
+                            ? d.completion_module_ids.filter((x) => x !== m.id)
+                            : [...d.completion_module_ids, m.id],
+                        }));
                       }}
                     />
                     {MODULE_TYPE_LABEL[m.type as keyof typeof MODULE_TYPE_LABEL] ?? m.type} - {m.title}
@@ -529,12 +624,12 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
               Leaving every module unchecked means the course completes once all of them are done.
             </p>
 
-            {course.completion_module_ids.length > 0 && (
+            {rulesDraft.completion_module_ids.length > 0 && (
               <div className="mb-3 flex items-center gap-2 border-t border-line-soft pt-3">
                 <p className="text-xs text-ink">Condition requires:</p>
                 <select
-                  value={course.completion_mode}
-                  onChange={(e) => updateCourse.mutate({ completion_mode: e.target.value as "all" | "any" })}
+                  value={rulesDraft.completion_mode}
+                  onChange={(e) => setRulesDraft((d) => ({ ...d, completion_mode: e.target.value as "all" | "any" }))}
                   className="h-8 rounded-md border border-line bg-surface px-2 text-xs outline-none focus-visible:border-primary"
                 >
                   <option value="all">ALL selected modules to be completed</option>
@@ -548,8 +643,17 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                 <span className="text-sm text-ink">Lock modules in order</span>
                 <p className="text-[11px] text-ink-faint">A learner must finish each module before the next one (by the order under the Course tab) unlocks.</p>
               </div>
-              <Switch checked={course.sequential_unlock} onCheckedChange={(v) => updateCourse.mutate({ sequential_unlock: v })} />
+              <Switch checked={rulesDraft.sequential_unlock} onCheckedChange={(v) => setRulesDraft((d) => ({ ...d, sequential_unlock: v }))} />
             </div>
+
+            <SaveBar
+              dirty={rulesDirty}
+              saving={updateCourse.isPending}
+              savedFlash={rulesSaved}
+              onCancel={cancelRules}
+              onSave={saveRules}
+              className="-mb-4 mt-4"
+            />
           </div>
 
           <div className="rounded-xl border border-danger/30 bg-surface p-4">
