@@ -20,7 +20,14 @@ export function useUpdateCategory() {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; name: string; color: string }) =>
       api.patch<Category>(`/api/v1/categories/${id}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["categories"] }),
+    // CourseListItem/Course both carry a denormalized category_name, so a
+    // rename here must invalidate the courses list/detail too — otherwise
+    // the courses page keeps showing the old name until its own cache
+    // happens to expire (staleTime) or something else invalidates it.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["categories"] });
+      qc.invalidateQueries({ queryKey: ["courses"] });
+    },
   });
 }
 
@@ -28,8 +35,12 @@ export function useDeleteCategory() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/categories/${id}`),
-    // The backend reassigns that category's courses to Uncategorized rather
-    // than deleting them — invalidate courses too, once that query exists.
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["categories"] }),
+    // The backend reassigns that category's courses to Uncategorized
+    // rather than deleting them, so the courses list's category_name/
+    // category_id must refresh too.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["categories"] });
+      qc.invalidateQueries({ queryKey: ["courses"] });
+    },
   });
 }

@@ -4,6 +4,7 @@ import { Target } from "lucide-react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
+import { PageLoader } from "@/components/ui/loading";
 import { useCourses } from "@/lib/hooks/use-courses";
 import { useSkills } from "@/lib/hooks/use-skills";
 import { useTeams } from "@/lib/hooks/use-teams";
@@ -11,15 +12,18 @@ import { heatValue } from "@/lib/sample-data";
 import type { Course } from "@/lib/types";
 
 export function GapAnalysisTab() {
-  const { data: teams = [] } = useTeams();
-  const { data: skills = [] } = useSkills();
-  const { data: list = [] } = useCourses();
+  const { data: teams = [], isLoading: teamsLoading } = useTeams();
+  const { data: skills = [], isLoading: skillsLoading } = useSkills();
+  const { data: list = [], isLoading: coursesLoading } = useCourses();
   const [assignCourse, setAssignCourse] = useState<string | null>(null);
 
   const results = useQueries({
     queries: list.map((c) => ({ queryKey: ["courses", c.id], queryFn: () => api.get<Course>(`/api/v1/courses/${c.id}`) })),
   });
   const courses = results.map((r) => r.data).filter((c): c is Course => !!c);
+  const detailsLoading = list.length > 0 && results.some((r) => r.isLoading);
+
+  if (teamsLoading || skillsLoading || coursesLoading || detailsLoading) return <PageLoader />;
 
   const courseFor = (skillId: string, teamId: string) =>
     courses.find((c) => c.modules.some((m) => m.skill_ids.includes(skillId)) && !c.assigned_team_ids.includes(teamId));

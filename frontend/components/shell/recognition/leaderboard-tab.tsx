@@ -1,15 +1,18 @@
 "use client";
 import { useState } from "react";
 import { Award } from "lucide-react";
+import { PageLoader } from "@/components/ui/loading";
 import { useTeams } from "@/lib/hooks/use-teams";
 import { useUsers } from "@/lib/hooks/use-users";
 
 const medal: Record<number, string> = { 0: "#FFC542", 1: "#C7CBDB", 2: "#E0A672" };
 
 export function LeaderboardTab({ query = "" }: { query?: string }) {
-  const { data: users = [] } = useUsers();
-  const { data: teams = [] } = useTeams();
+  const { data: users = [], isLoading: usersLoading } = useUsers();
+  const { data: teams = [], isLoading: teamsLoading } = useTeams();
   const [teamFilter, setTeamFilter] = useState("All teams");
+
+  if (usersLoading || teamsLoading) return <PageLoader />;
 
   // No points ledger exists in the backend yet — everyone is at 0 until progress tracking lands,
   // so ranking falls back to name order.

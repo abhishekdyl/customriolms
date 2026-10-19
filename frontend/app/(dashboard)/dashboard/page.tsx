@@ -4,6 +4,7 @@ import { Fragment, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles, Plus } from "lucide-react";
 import { Topbar } from "@/components/shell/topbar";
+import { PageLoader } from "@/components/ui/loading";
 import { useTeams } from "@/lib/hooks/use-teams";
 import { useUsers } from "@/lib/hooks/use-users";
 import { useSkills } from "@/lib/hooks/use-skills";
@@ -33,12 +34,18 @@ function avgProgress(members: AppUser[], progressById: Map<string, { progress_pc
 }
 
 function OrgAdminDashboard() {
-  const { data: teamsData } = useTeams();
-  const { data: users } = useUsers();
-  const { data: skillsData } = useSkills();
-  const { data: progressData } = useLearnerProgress();
+  const { data: teamsData, isLoading: teamsLoading } = useTeams();
+  const { data: users, isLoading: usersLoading } = useUsers();
+  const { data: skillsData, isLoading: skillsLoading } = useSkills();
+  const { data: progressData, isLoading: progressLoading } = useLearnerProgress();
   const { data: coverageData } = useTeamSkillCoverage();
   const [search, setSearch] = useState("");
+
+  // Everything below computes real stats from these four, so rendering
+  // with them still undefined would show "0 active learners", "No teams
+  // yet" etc. for a moment and then jump to the real numbers the instant
+  // they land — a loader instead of that flash.
+  const loading = teamsLoading || usersLoading || skillsLoading || progressLoading;
 
   const progressById = useMemo(
     () => new Map((progressData ?? []).map((p) => [p.user_id, p])),
@@ -87,6 +94,9 @@ function OrgAdminDashboard() {
     <div className="flex flex-col h-screen min-w-0 flex-1">
       <Topbar title="Organization dashboard" search={search} onSearch={setSearch} placeholder="Search teams, skills…" />
 
+      {loading ? (
+        <PageLoader />
+      ) : (
       <div className="p-5 md:p-8 overflow-auto flex-1">
         <div className="grid gap-3 mb-6 grid-cols-2 md:grid-cols-3">
           <StatBlock label="Active learners" value={activeLearners} />
@@ -181,6 +191,7 @@ function OrgAdminDashboard() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
@@ -188,9 +199,10 @@ function OrgAdminDashboard() {
 function TeamLeadDashboard() {
   const router = useRouter();
   const { data: currentUser } = useCurrentUser();
-  const { data: teamsData } = useTeams();
-  const { data: users } = useUsers();
-  const { data: progressData } = useLearnerProgress();
+  const { data: teamsData, isLoading: teamsLoading } = useTeams();
+  const { data: users, isLoading: usersLoading } = useUsers();
+  const { data: progressData, isLoading: progressLoading } = useLearnerProgress();
+  const loading = teamsLoading || usersLoading || progressLoading;
 
   const progressById = useMemo(
     () => new Map((progressData ?? []).map((p) => [p.user_id, p])),
@@ -215,6 +227,9 @@ function TeamLeadDashboard() {
     <div className="flex flex-col h-screen min-w-0 flex-1">
       <Topbar title="My Team" />
 
+      {loading ? (
+        <PageLoader />
+      ) : (
       <div className="p-5 md:p-8 overflow-auto flex-1">
         <div className="grid gap-3 mb-6 grid-cols-2 md:grid-cols-3">
           <StatBlock label="Team members" value={memberCount} />
@@ -279,12 +294,17 @@ function TeamLeadDashboard() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
 
 export default function DashboardPage() {
-  const { data: currentUser } = useCurrentUser();
-  if (currentUser?.role === "team_lead") return <TeamLeadDashboard />;
+  const { data: currentUser, isLoading } = useCurrentUser();
+  // Without this, every admin briefly sees the ORG-wide dashboard flash
+  // before flipping to their real Team Lead view the instant currentUser
+  // resolves — wait for the role to actually be known first.
+  if (isLoading || !currentUser) return <PageLoader />;
+  if (currentUser.role === "team_lead") return <TeamLeadDashboard />;
   return <OrgAdminDashboard />;
 }

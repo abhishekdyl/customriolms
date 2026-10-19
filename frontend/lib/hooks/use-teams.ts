@@ -19,7 +19,13 @@ export function useRenameTeam() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => api.patch<Team>(`/api/v1/teams/${id}`, { name }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["teams"] }),
+    // AppUser carries a denormalized team_name — a rename here must
+    // invalidate the users list too, or Users & Access / the dashboard
+    // keeps showing the old team name until something else refreshes it.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["teams"] });
+      qc.invalidateQueries({ queryKey: ["users"] });
+    },
   });
 }
 
@@ -27,6 +33,12 @@ export function useDeleteTeam() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/teams/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["teams"] }),
+    // Deleting a team un-assigns its members (team_name -> null for them)
+    // and drops it from any course's assigned_team_count.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["teams"] });
+      qc.invalidateQueries({ queryKey: ["users"] });
+      qc.invalidateQueries({ queryKey: ["courses"] });
+    },
   });
 }
