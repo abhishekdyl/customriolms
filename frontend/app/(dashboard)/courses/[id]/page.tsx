@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Plus, ChevronUp, ChevronDown, Users, Award, Lock, BookOpen, Settings as SettingsIcon,
-  BarChart3, ListChecks, MoreHorizontal, Trash2, Loader2,
+  BarChart3, MoreHorizontal, Trash2, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,23 +25,24 @@ import type { Module } from "@/lib/types";
 
 // Mirrors the learner-side course page's own tab bar (see
 // (learner)/learn/courses/[id]/page.tsx) — everything that used to sit on
-// one long scrolling page is now grouped under these, since "sab kuch ek
-// hi page par" was the actual complaint:
-//  - Course: the course's own description + an at-a-glance summary.
-//  - Settings: open/close dates, completion policy, certificate & badge —
-//    the knobs touched rarely, once a course is already set up.
+// one long scrolling page is now grouped under these:
+//  - Course: the course's real working view — description, at-a-glance
+//    stats, the completion-rule summary, the module list (add/reorder/
+//    edit/delete), and the certificate/badge. Each section below is
+//    wrapped with its own id + className (see the comments inline) so it
+//    can be targeted directly — #course-section-stats,
+//    #course-section-completion, #course-section-modules,
+//    #course-section-certificate.
+//  - Settings: open/close dates + the detailed completion-policy controls
+//    (the "Course" tab above only shows a one-line summary of these).
 //  - Participants: who's enrolled and their progress.
 //  - Grades: the completion matrix + quiz/video-question grading.
-//  - Activities: the actual module list — add, reorder, edit, delete.
-//    This is where an admin spends most of their time, kept separate
-//    from Settings so it isn't buried under policy toggles.
 //  - More: rarer, higher-stakes actions (delete course).
 const TABS = [
   { id: "course", label: "Course", icon: BookOpen },
   { id: "settings", label: "Settings", icon: SettingsIcon },
   { id: "participants", label: "Participants", icon: Users },
   { id: "grades", label: "Grades", icon: BarChart3 },
-  { id: "activities", label: "Activities", icon: ListChecks },
   { id: "more", label: "More", icon: MoreHorizontal },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -224,7 +225,9 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
       {tab === "course" && (
         <div className="flex flex-col gap-6">
-          <div>
+          {/* Section 0 — About this course (intro, not one of the four
+              ordered sections below, so no number in its id). */}
+          <div id="course-section-about" className="course-section course-section-about">
             <p className="mb-1 text-xs font-medium text-ink-faint">About this course</p>
             <textarea
               defaultValue={course.description ?? ""}
@@ -235,7 +238,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5">
+          {/* Section 1 — at-a-glance stats. */}
+          <div id="course-section-stats" className="course-section course-section-stats grid grid-cols-3 gap-2.5">
             <div className="rounded-xl border border-line bg-surface p-3.5">
               <p className="text-[11px] text-ink-faint">Modules</p>
               <p className="font-head text-xl text-ink">{modules.length}</p>
@@ -254,7 +258,9 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
             </div>
           </div>
 
-          <div className="rounded-xl border border-line bg-surface p-4">
+          {/* Section 2 — completion-rule summary (full controls live under
+              the Settings tab; this is just the current state at a glance). */}
+          <div id="course-section-completion" className="course-section course-section-completion rounded-xl border border-line bg-surface p-4">
             <p className="mb-1 text-xs font-medium text-ink-faint">Course completes when…</p>
             <p className="text-[12.5px] text-ink">
               {course.completion_module_ids.length > 0
@@ -263,6 +269,101 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
               {course.sequential_unlock && " · modules unlock one at a time, in order"}
             </p>
             <p className="mt-1 text-[11px] text-ink-faint">Change this under the Settings tab.</p>
+          </div>
+
+          {/* Section 3 — the module list itself: add, reorder, edit, delete. */}
+          <div id="course-section-modules" className="course-section course-section-modules">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="font-head text-sm text-ink">Modules ({modules.length})</span>
+            </div>
+
+            <div className="mb-4 flex flex-col gap-2">
+              {modules.map((m, i) => (
+                <div key={m.id} className="flex items-start gap-2">
+                  <div className="flex flex-col gap-0.5 pt-3">
+                    <button onClick={() => move(i, -1)} disabled={i === 0} className="disabled:opacity-30"><ChevronUp className="h-3.5 w-3.5 text-ink-faint" /></button>
+                    <button onClick={() => move(i, 1)} disabled={i === modules.length - 1} className="disabled:opacity-30"><ChevronDown className="h-3.5 w-3.5 text-ink-faint" /></button>
+                  </div>
+                  <div className="flex-1">
+                    <ModuleEditorRow
+                      courseId={id}
+                      module={m}
+                      allModules={modules}
+                      onChange={(patch) => patchModule(m.id, patch)}
+                      onDelete={() => { if (confirm("Remove this module?")) deleteModule.mutate(m.id); }}
+                      isDirty={dirtyIds.has(m.id)}
+                      saving={savingId === m.id}
+                      onSave={() => saveModule(m.id)}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <form
+              onSubmit={(e) => { e.preventDefault(); if (!newModuleTitle.trim()) return; addModule.mutate({ title: newModuleTitle.trim() }, { onSuccess: () => setNewModuleTitle("") }); }}
+              className="flex gap-2"
+            >
+              <Input placeholder="New module title" value={newModuleTitle} onChange={(e) => setNewModuleTitle(e.target.value)} />
+              <Button type="submit" disabled={addModule.isPending}><Plus className="h-4 w-4" /> Add module</Button>
+            </form>
+          </div>
+
+          {/* Section 4 — certificate & badge. The course's real final step —
+              it only shows up for a learner once every required module is
+              done (see learn_service._finish_course_if_done). */}
+          <div id="course-section-certificate" className="course-section course-section-certificate rounded-xl border border-line bg-surface p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Award className="h-4 w-4 text-amber" />
+              <p className="text-xs font-medium text-ink-faint">Final step — certificate (optional)</p>
+            </div>
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-sm text-ink">Issue a certificate when the course is completed</span>
+              <Switch checked={course.certificate_enabled} onCheckedChange={(v) => updateCourse.mutate({ certificate_enabled: v })} />
+            </div>
+            {course.certificate_enabled && (
+              <div className="mb-3 grid grid-cols-2 gap-2">
+                <div>
+                  <p className="mb-1 text-[10.5px] text-ink-faint">Template</p>
+                  <select
+                    value={course.certificate_template_id ?? ""}
+                    onChange={(e) => updateCourse.mutate({ certificate_template_id: e.target.value || null })}
+                    className="w-full rounded-md border border-line px-2 py-1.5 text-xs"
+                  >
+                    <option value="">Select…</option>
+                    {certTemplates?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <p className="mb-1 text-[10.5px] text-ink-faint">Certification name</p>
+                  <Input defaultValue={course.certificate_name ?? course.title} onBlur={(e) => updateCourse.mutate({ certificate_name: e.target.value })} className="h-7 text-xs" />
+                </div>
+              </div>
+            )}
+            <p className="mb-3 text-[11px] text-ink-faint">
+              A learner only sees this on their Progress page once every required module is done — never before.
+            </p>
+
+            {(badges?.length ?? 0) > 0 && (
+              <div className="border-t border-line-soft pt-3">
+                <p className="mb-1.5 text-[11px] text-ink-soft">Badge on completing this course</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {badges!.map((b) => {
+                    const active = course.badge_ids.includes(b.id);
+                    return (
+                      <button
+                        key={b.id}
+                        onClick={() => toggleCourseBadge(b.id)}
+                        className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px]"
+                        style={{ borderColor: active ? b.color : "var(--color-line)", background: active ? `${b.color}1a` : "transparent", color: active ? b.color : undefined }}
+                      >
+                        <Award className="h-3 w-3" /> {b.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -340,74 +441,17 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
               <p className="mt-1.5 text-[11px] text-ink-faint">
                 {course.completion_module_ids.length > 0
                   ? "Picking modules here means the course finishes the instant ALL of them are passed — any other required module can stay unfinished."
-                  : "Leave this on default to require every module marked \"required\" under the Activities tab."}
+                  : "Leave this on default to require every module marked \"required\" under the Course tab."}
               </p>
             </div>
 
             <div className="flex items-center justify-between border-t border-line-soft pt-3">
               <div>
                 <span className="text-sm text-ink">Lock modules in order</span>
-                <p className="text-[11px] text-ink-faint">A learner must finish each module before the next one (by the order under Activities) unlocks.</p>
+                <p className="text-[11px] text-ink-faint">A learner must finish each module before the next one (by the order under the Course tab) unlocks.</p>
               </div>
               <Switch checked={course.sequential_unlock} onCheckedChange={(v) => updateCourse.mutate({ sequential_unlock: v })} />
             </div>
-          </div>
-
-          {/* Certificate is the course's real final step — it only shows up
-              for a learner once every required module is done (see
-              learn_service._finish_course_if_done). */}
-          <div className="rounded-xl border border-line bg-surface p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <Award className="h-4 w-4 text-amber" />
-              <p className="text-xs font-medium text-ink-faint">Final step — certificate (optional)</p>
-            </div>
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-sm text-ink">Issue a certificate when the course is completed</span>
-              <Switch checked={course.certificate_enabled} onCheckedChange={(v) => updateCourse.mutate({ certificate_enabled: v })} />
-            </div>
-            {course.certificate_enabled && (
-              <div className="mb-3 grid grid-cols-2 gap-2">
-                <div>
-                  <p className="mb-1 text-[10.5px] text-ink-faint">Template</p>
-                  <select
-                    value={course.certificate_template_id ?? ""}
-                    onChange={(e) => updateCourse.mutate({ certificate_template_id: e.target.value || null })}
-                    className="w-full rounded-md border border-line px-2 py-1.5 text-xs"
-                  >
-                    <option value="">Select…</option>
-                    {certTemplates?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <p className="mb-1 text-[10.5px] text-ink-faint">Certification name</p>
-                  <Input defaultValue={course.certificate_name ?? course.title} onBlur={(e) => updateCourse.mutate({ certificate_name: e.target.value })} className="h-7 text-xs" />
-                </div>
-              </div>
-            )}
-            <p className="mb-3 text-[11px] text-ink-faint">
-              A learner only sees this on their Progress page once every required module is done — never before.
-            </p>
-
-            {(badges?.length ?? 0) > 0 && (
-              <div className="border-t border-line-soft pt-3">
-                <p className="mb-1.5 text-[11px] text-ink-soft">Badge on completing this course</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {badges!.map((b) => {
-                    const active = course.badge_ids.includes(b.id);
-                    return (
-                      <button
-                        key={b.id}
-                        onClick={() => toggleCourseBadge(b.id)}
-                        className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px]"
-                        style={{ borderColor: active ? b.color : "var(--color-line)", background: active ? `${b.color}1a` : "transparent", color: active ? b.color : undefined }}
-                      >
-                        <Award className="h-3 w-3" /> {b.name}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -453,45 +497,6 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
         <div>
           <ModuleProgressMatrix courseId={id} />
           <QuizAttemptsSection courseId={id} />
-        </div>
-      )}
-
-      {tab === "activities" && (
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <span className="font-head text-sm text-ink">Modules ({modules.length})</span>
-          </div>
-
-          <div className="mb-4 flex flex-col gap-2">
-            {modules.map((m, i) => (
-              <div key={m.id} className="flex items-start gap-2">
-                <div className="flex flex-col gap-0.5 pt-3">
-                  <button onClick={() => move(i, -1)} disabled={i === 0} className="disabled:opacity-30"><ChevronUp className="h-3.5 w-3.5 text-ink-faint" /></button>
-                  <button onClick={() => move(i, 1)} disabled={i === modules.length - 1} className="disabled:opacity-30"><ChevronDown className="h-3.5 w-3.5 text-ink-faint" /></button>
-                </div>
-                <div className="flex-1">
-                  <ModuleEditorRow
-                    courseId={id}
-                    module={m}
-                    allModules={modules}
-                    onChange={(patch) => patchModule(m.id, patch)}
-                    onDelete={() => { if (confirm("Remove this module?")) deleteModule.mutate(m.id); }}
-                    isDirty={dirtyIds.has(m.id)}
-                    saving={savingId === m.id}
-                    onSave={() => saveModule(m.id)}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <form
-            onSubmit={(e) => { e.preventDefault(); if (!newModuleTitle.trim()) return; addModule.mutate({ title: newModuleTitle.trim() }, { onSuccess: () => setNewModuleTitle("") }); }}
-            className="flex gap-2"
-          >
-            <Input placeholder="New module title" value={newModuleTitle} onChange={(e) => setNewModuleTitle(e.target.value)} />
-            <Button type="submit" disabled={addModule.isPending}><Plus className="h-4 w-4" /> Add module</Button>
-          </form>
         </div>
       )}
 
