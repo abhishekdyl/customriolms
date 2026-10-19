@@ -398,6 +398,14 @@ class LearnerModuleOut(BaseModel):
     retake_enabled: bool = False
     retake_limit: int | None = None
     attempts_used: int = 0
+    # WATCH modules only — lets the player resume exactly where the
+    # learner left off (reload / new tab / fresh login) without a separate
+    # round trip: furthest point actually reached, and which in-video
+    # questions were already answered THIS attempt (so they're skipped on
+    # replay rather than asked again). Both reset to 0/[] by an explicit
+    # retake. See learn_service.checkpoint_watch_progress/retake_watch_module.
+    watch_furthest_pct: int = 0
+    watch_answered_question_ids: list[uuid.UUID] = []
     # True when sequential_unlock blocks this module OR any one of its
     # own restrictions isn't satisfied yet — see learn_service.module_locked.
     # file_url/questions are already stripped when this is true (see

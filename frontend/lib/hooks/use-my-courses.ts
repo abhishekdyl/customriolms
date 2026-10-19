@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { CompleteResult, LearnerCourse, MyCourse, QuizAnswer, QuizResult } from "@/lib/types";
+import type { CompleteResult, LearnerCourse, MyCourse, QuizAnswer, QuizResult, WatchProgressState } from "@/lib/types";
 
 /** Courses assigned to the logged-in user (via team or directly), with progress. */
 export function useMyCourses() {
@@ -37,6 +37,36 @@ export function useCompleteModule(courseId: string) {
       qc.invalidateQueries({ queryKey: ["courses", "mine", courseId] });
       qc.invalidateQueries({ queryKey: ["courses", "mine"] });
     },
+  });
+}
+
+/** Checkpoints a WATCH module's in-progress state — called on an interval
+ * for watched_pct, and immediately whenever an in-video question is
+ * submitted — so a reload / new tab / fresh login resumes exactly where
+ * the learner left off. Never gated and never invalidates the course
+ * query: this fires constantly during playback and isn't an "attempt", so
+ * refetching the whole course on every call would be wasteful and would
+ * fight the player's own local state. */
+export function useCheckpointWatchProgress(courseId: string) {
+  return useMutation({
+    mutationFn: ({ moduleId, watched_pct, answer }: { moduleId: string; watched_pct?: number; answer?: QuizAnswer }) =>
+      api.patch<WatchProgressState>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/watch-progress`, { watched_pct, answer }),
+  });
+}
+
+/** Explicit "retake" for a WATCH module's in-video questions — same
+ * attempts gate as a quiz retake (the module's retake_enabled/retake_limit
+ * plus any per-learner override). Resets the server's answered-question
+ * set so the next playthrough asks every in-video question again; 403s
+ * once attempts are exhausted. Invalidates the course query since this
+ * does change what the learner sees (fresh resume state, attempts_used
+ * unchanged until they actually submit again). */
+export function useRetakeWatchModule(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (moduleId: string) =>
+      api.post<WatchProgressState>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/watch-retake`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", "mine", courseId] }),
   });
 }
 

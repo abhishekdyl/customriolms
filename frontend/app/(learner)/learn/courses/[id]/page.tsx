@@ -7,7 +7,9 @@ import {
   ArrowLeft, BookOpen, CheckCircle2, Circle, Clock, HelpCircle, Loader2, Lock, PlayCircle, Sparkles, XCircle,
 } from "lucide-react";
 import { Video, VideoPlayer, VideoSkin } from "@videojs/react/video";
-import { useCompleteModule, useMyCourse, useSubmitQuiz } from "@/lib/hooks/use-my-courses";
+import {
+  useCheckpointWatchProgress, useCompleteModule, useMyCourse, useRetakeWatchModule, useSubmitQuiz,
+} from "@/lib/hooks/use-my-courses";
 import { MODULE_TYPE_LABEL } from "@/lib/learner-courses";
 import { cn } from "@/lib/utils";
 import { ScormPlayer } from "@/components/shell/courses/scorm-player";
@@ -135,23 +137,58 @@ function BackLink({ label }: { label: string }) {
  * this is just what keeps the button honestly disabled until then. */
 function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId: string }) {
   const complete = useCompleteModule(courseId);
+  const checkpoint = useCheckpointWatchProgress(courseId);
+  const retake = useRetakeWatchModule(courseId);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [watchedPct, setWatchedPct] = useState(m.score ?? 0);
+  const [watchedPct, setWatchedPct] = useState(Math.max(m.score ?? 0, m.watch_furthest_pct));
 
   // In-video questions (trigger_time_sec set) — ordered by when they fire.
   const inVideoQuestions = [...m.questions]
     .filter((q) => q.trigger_time_sec !== null)
     .sort((a, b) => (a.trigger_time_sec ?? 0) - (b.trigger_time_sec ?? 0));
   const [activeQuestion, setActiveQuestion] = useState<LearnerModule["questions"][number] | null>(null);
-  const [shownIds, setShownIds] = useState<Set<string>>(new Set());
+  // Seeded from the server on mount (m.watch_answered_question_ids) so a
+  // reload / new tab / fresh login never re-asks a question already
+  // submitted — that's checkpointed server-side the instant it's
+  // answered, well before "Mark complete" is ever clicked. Resuming is
+  // the whole point of this state living on the server, not just here.
+  const [shownIds, setShownIds] = useState<Set<string>>(new Set(m.watch_answered_question_ids));
   const [collectedAnswers, setCollectedAnswers] = useState<Record<string, InVideoAnswer>>({});
   const [completeResult, setCompleteResult] = useState<CompleteResult | null>(null);
-  // The furthest point actually reached via normal playback — used to
-  // snap back a forward scrub attempt, so a learner can't jump past an
-  // in-video question they haven't reached yet (rewinding to re-watch is
-  // still fine). Same "honest, not tamper-proof" design as watchedPct
-  // itself — the backend only ever sees the answers actually submitted.
+  // Set only by an explicit "Retake" click — mirrors QuizPanel's own
+  // `retaking`. m.completed, once true from an earlier pass, never goes
+  // back to false (the backend keeps the best-ever score), so this is
+  // what lets the form reappear for a fresh round instead of the
+  // "already completed" message swallowing it forever.
+  const [retaking, setRetaking] = useState(false);
+  // The furthest point actually reached via normal playback (in seconds)
+  // — used to snap back a forward scrub attempt, so a learner can't jump
+  // past an in-video question they haven't reached yet (rewinding to
+  // re-watch is still fine). Same "honest, not tamper-proof" design as
+  // watchedPct itself — the backend only ever sees the answers actually
+  // submitted. Resolved to real seconds once the video's duration is
+  // known (see onLoadedMetadata) — until then it just holds 0.
   const maxReachedRef = useRef(0);
+  const seekedOnLoadRef = useRef(false);
+  // Throttles how often a pure pct ping is checkpointed — no point
+  // hitting the server on every single timeupdate tick.
+  const lastCheckpointedPctRef = useRef(m.watch_furthest_pct);
+
+  // On the FIRST time the video's duration becomes known, jump playback
+  // to wherever the learner previously left off (server's furthest_pct)
+  // — "resume mode". They're still completely free to scrub back to the
+  // start and rewatch from there afterward; this only sets the starting
+  // point, it doesn't lock anything.
+  const onLoadedMetadata = () => {
+    const v = videoRef.current;
+    if (!v || !v.duration || seekedOnLoadRef.current) return;
+    seekedOnLoadRef.current = true;
+    if (m.watch_furthest_pct > 0) {
+      const seconds = (m.watch_furthest_pct / 100) * v.duration;
+      v.currentTime = seconds;
+      maxReachedRef.current = seconds;
+    }
+  };
 
   const onTimeUpdate = () => {
     const v = videoRef.current;
@@ -159,6 +196,11 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
     const pct = Math.round((v.currentTime / v.duration) * 100);
     setWatchedPct((prev) => Math.max(prev, pct));
     maxReachedRef.current = Math.max(maxReachedRef.current, v.currentTime);
+
+    if (pct - lastCheckpointedPctRef.current >= 5 || pct >= 100) {
+      lastCheckpointedPctRef.current = pct;
+      checkpoint.mutate({ moduleId: m.id, watched_pct: pct });
+    }
 
     if (!activeQuestion) {
       const due = inVideoQuestions.find((q) => !shownIds.has(q.id) && (q.trigger_time_sec ?? 0) <= v.currentTime);
@@ -192,6 +234,13 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
     if (!activeQuestion) return;
     if (answer) {
       setCollectedAnswers((prev) => ({ ...prev, [activeQuestion.id]: answer }));
+      // Checkpointed immediately — not held back for the eventual "Mark
+      // complete" click — so a reload right after answering still counts
+      // this one as already submitted (see shownIds' seeding above).
+      checkpoint.mutate({
+        moduleId: m.id,
+        answer: { question_id: activeQuestion.id, option_id: answer.option_id ?? null, text: answer.text ?? null },
+      });
     }
     setShownIds((prev) => new Set(prev).add(activeQuestion.id));
     setActiveQuestion(null);
@@ -199,6 +248,19 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
   };
 
   const needsMore = watchedPct < m.threshold;
+  const hasQuestions = inVideoQuestions.length > 0;
+  const allAnsweredAlready = hasQuestions && inVideoQuestions.every((q) => shownIds.has(q.id));
+  // Retake settings — same rule as a QUIZ module's (Module.retake_enabled/
+  // retake_limit), plus any per-learner ModuleAttemptOverride already
+  // folded into these by the backend. Only meaningful once the learner
+  // has actually submitted at least once (attempts_used > 0) — before
+  // that, finishing all the in-video questions just means they're ready
+  // to click "Mark complete" for the very first time, not that a retake
+  // is needed.
+  const limit = m.retake_enabled ? m.retake_limit : 1;
+  const canRetake = hasQuestions && (limit === null || m.attempts_used < limit);
+  const showRetakeGate = hasQuestions && allAnsweredAlready && m.attempts_used > 0 && !completeResult;
+  const showMarkComplete = (!m.completed || retaking) && !showRetakeGate;
 
   const handleComplete = () => {
     const answers: QuizAnswer[] = Object.entries(collectedAnswers).map(([question_id, a]) => ({
@@ -208,6 +270,21 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
       { moduleId: m.id, watched_pct: watchedPct, answers },
       { onSuccess: (data) => setCompleteResult(data) },
     );
+  };
+
+  const handleRetake = () => {
+    retake.mutate(m.id, {
+      onSuccess: () => {
+        setShownIds(new Set());
+        setCollectedAnswers({});
+        setCompleteResult(null);
+        setWatchedPct(0);
+        maxReachedRef.current = 0;
+        lastCheckpointedPctRef.current = 0;
+        setRetaking(true);
+        if (videoRef.current) videoRef.current.currentTime = 0;
+      },
+    });
   };
 
   return (
@@ -234,7 +311,10 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
           <VideoPlayer title={m.title}>
             <VideoSkin className="max-h-[280px] w-full overflow-hidden rounded-lg bg-ink" style={{ aspectRatio: "16 / 9" }}>
               {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-              <Video ref={videoRef} src={m.file_url} onTimeUpdate={onTimeUpdate} onSeeking={onSeeking} onPlay={onPlay} />
+              <Video
+                ref={videoRef} src={m.file_url} onTimeUpdate={onTimeUpdate} onSeeking={onSeeking} onPlay={onPlay}
+                onLoadedMetadata={onLoadedMetadata}
+              />
             </VideoSkin>
           </VideoPlayer>
           {activeQuestion && <InVideoQuestionOverlay question={activeQuestion} onResolve={resolveActiveQuestion} />}
@@ -261,12 +341,12 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
         </div>
       ) : null}
 
-      {!m.completed && (
+      {showMarkComplete && (
         <>
           <div className="mb-1.5 text-[11.5px] text-ink-faint">
             Watched {watchedPct}% · need {m.threshold}% to mark this complete
             {m.video_question_min_correct !== null &&
-              ` · ${Object.keys(collectedAnswers).length}/${inVideoQuestions.length} in-video questions answered, need ${m.video_question_min_correct} correct`}
+              ` · ${shownIds.size}/${inVideoQuestions.length} in-video questions answered, need ${m.video_question_min_correct} correct`}
           </div>
           {complete.isError && (
             <div className="mb-1.5 text-[11px] text-danger">
@@ -282,6 +362,37 @@ function WatchPlayer({ module: m, courseId }: { module: LearnerModule; courseId:
             {complete.isPending && <Loader2 size={12} className="animate-spin" />}
             Mark complete
           </button>
+        </>
+      )}
+
+      {showRetakeGate && (
+        <>
+          <div className="mb-1.5 text-[11.5px] text-ink-faint">
+            {m.completed
+              ? `You've already passed this video's in-video questions${m.score !== null ? ` — scored ${m.score}%` : ""}.`
+              : "You've already answered every in-video question on your last attempt."}
+            {" "}Replaying the video won't ask them again — watch it as many times as you like.
+          </div>
+          {retake.isError && (
+            <div className="mb-1.5 text-[11px] text-danger">
+              {(retake.error as Error)?.message || "Couldn't start a retake. Try again."}
+            </div>
+          )}
+          {canRetake ? (
+            <button
+              onClick={handleRetake}
+              disabled={retake.isPending}
+              className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12px] font-medium text-ink disabled:opacity-40"
+            >
+              {retake.isPending && <Loader2 size={12} className="animate-spin" />}
+              {m.completed ? "Retake for a higher score" : "Retake to try for a passing score"}
+              {limit !== null && ` (${m.attempts_used}/${limit} attempts used)`}
+            </button>
+          ) : (
+            <p className="text-[11.5px] text-danger">
+              You've used all {limit} attempt{limit === 1 ? "" : "s"} allowed for this video's questions — you can still rewatch the video anytime.
+            </p>
+          )}
         </>
       )}
     </div>

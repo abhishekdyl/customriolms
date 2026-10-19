@@ -380,6 +380,13 @@ export interface LearnerModule {
   retake_enabled: boolean;
   retake_limit: number | null;
   attempts_used: number;
+  /** WATCH modules only — lets the player resume exactly where the
+   * learner left off (reload / new tab / fresh login): the furthest
+   * point actually reached, and which in-video questions were already
+   * answered this attempt (skip these on replay instead of re-asking).
+   * Both reset to 0/[] by an explicit retake. */
+  watch_furthest_pct: number;
+  watch_answered_question_ids: string[];
 }
 
 /** One assigned course, learner-safe. From GET /api/v1/courses/mine/{id}. */
@@ -401,6 +408,21 @@ export interface CompleteResult {
    * when the module had none. */
   video_earned_points: number | null;
   video_total_points: number | null;
+  /** Same retake bookkeeping as QuizResult, for a WATCH module's in-video
+   * questions — meaningless (left at the defaults) for a module with no
+   * in-video questions. */
+  attempts_used: number;
+  attempts_remaining: number | null;
+  retake_allowed: boolean;
+}
+
+/** Response from PATCH .../modules/{id}/watch-progress and POST
+ * .../modules/{id}/watch-retake — the learner's persisted WATCH-module
+ * resume state right after this call. */
+export interface WatchProgressState {
+  furthest_pct: number;
+  answered_question_ids: string[];
+  attempt_number: number;
 }
 
 /** One answer to one question, submitted by question_id (not position) —

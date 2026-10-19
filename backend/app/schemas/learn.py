@@ -113,6 +113,38 @@ class CompleteResult(BaseModel):
     # when the module had none.
     video_earned_points: int | None = None
     video_total_points: int | None = None
+    # Same retake bookkeeping as QuizResult, for a WATCH module's in-video
+    # questions — meaningless (left at the defaults) for a module with no
+    # in-video questions. See learn_service.complete_module/retake_watch_module.
+    attempts_used: int = 1
+    attempts_remaining: int | None = None
+    retake_allowed: bool = False
+
+
+class WatchCheckpointAnswer(BaseModel):
+    """One in-video question answer, checkpointed the moment it's
+    submitted — same shape as QuizAnswerIn, kept separate so a checkpoint
+    call can omit it entirely (watched_pct-only ping) without an awkward
+    all-optional QuizAnswerIn floating around."""
+    question_id: uuid.UUID
+    option_id: str | None = None
+    text: str | None = None
+
+
+class WatchCheckpointIn(BaseModel):
+    """Body for PATCH .../modules/{id}/watch-progress — called continuously
+    during playback so a reload/new-tab/relogin resumes exactly where the
+    learner left off. Both fields optional: a pure pct ping sends only
+    watched_pct; answering an in-video question sends only `answer`
+    (sending both in one call is fine too)."""
+    watched_pct: int | None = None
+    answer: WatchCheckpointAnswer | None = None
+
+
+class WatchProgressOut(BaseModel):
+    furthest_pct: int
+    answered_question_ids: list[uuid.UUID]
+    attempt_number: int
 
 
 class QuizResult(BaseModel):

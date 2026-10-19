@@ -17,6 +17,7 @@ from app.models.quiz_attempt import QuizAttempt
 from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User, UserStatus
+from app.models.watch_progress import WatchProgress
 from app.services.certificate_service import issue_certificate
 
 POINTS_PER_MODULE = 10
@@ -68,6 +69,16 @@ async def attempt_overrides_map(db: AsyncSession, user_id: uuid.UUID) -> dict[uu
         .where(ModuleAttemptOverride.user_id == user_id)
     )
     return {module_id: extra for module_id, extra in rows.all()}
+
+
+async def watch_progress_map(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, WatchProgress]:
+    """This learner's resumable state for every WATCH module they've ever
+    started — one query for the whole course view, same batching pattern
+    as attempts_used_map/attempt_overrides_map above. Used to seed
+    LearnerModuleOut.watch_furthest_pct/watch_answered_question_ids so the
+    player can resume on mount without a separate round trip."""
+    rows = await db.execute(select(WatchProgress).where(WatchProgress.user_id == user_id))
+    return {wp.module_id: wp for wp in rows.scalars().all()}
 
 
 def _retake_gate(module: Module, extra_attempts: int = 0) -> int | None:
@@ -317,9 +328,93 @@ async def _assert_module_unlocked(db: AsyncSession, user: User, course: Course, 
         raise HTTPException(status_code=403, detail=reason or "This module is locked.")
 
 
+async def _get_or_create_watch_progress(db: AsyncSession, user: User, module: Module) -> WatchProgress:
+    wp = (await db.execute(
+        select(WatchProgress).where(WatchProgress.user_id == user.id, WatchProgress.module_id == module.id)
+    )).scalar_one_or_none()
+    if wp is None:
+        wp = WatchProgress(org_id=user.org_id, user_id=user.id, module_id=module.id)
+        db.add(wp)
+        await db.flush()
+    return wp
+
+
+class _CollectedAnswer:
+    """Reconstructs a QuizAnswerIn-shaped object from a persisted
+    WatchProgress.answers_json entry, so _score_questions (which expects
+    .question_id/.option_id/.text attributes) can score the FULL merged
+    answer set — not just whatever the client happened to send in this one
+    request — without needing a second, JSONB-flavored scoring path."""
+    def __init__(self, question_id: uuid.UUID, option_id: str | None, text: str | None):
+        self.question_id = question_id
+        self.option_id = option_id
+        self.text = text
+
+
+async def checkpoint_watch_progress(
+    db: AsyncSession, user: User, module_id: uuid.UUID, watched_pct: int | None, answer,
+) -> WatchProgress:
+    """Called continuously during playback (on an interval for pct, and
+    immediately whenever the learner submits an in-video question) so a
+    reload / new tab / fresh login resumes exactly where they left off —
+    the whole point of this feature. Never gated: checkpointing is not an
+    attempt, only submitting the module via complete_module is, so there's
+    nothing here to block even on a module with no attempts left."""
+    module, _course = await _module_in_assigned_course(db, user, module_id)
+    if module.type != ModuleType.WATCH:
+        raise HTTPException(status_code=400, detail="This module isn't a WATCH module")
+    wp = await _get_or_create_watch_progress(db, user, module)
+    if watched_pct is not None:
+        wp.furthest_pct = max(wp.furthest_pct, watched_pct)
+    if answer is not None:
+        merged = dict(wp.answers_json or {})
+        merged[str(answer.question_id)] = {"option_id": answer.option_id, "text": answer.text}
+        wp.answers_json = merged  # reassigned (not mutated in place) so SQLAlchemy sees the change
+    await db.commit()
+    return wp
+
+
+async def retake_watch_module(db: AsyncSession, user: User, module_id: uuid.UUID) -> WatchProgress:
+    """Explicit "retake" action for a WATCH module's in-video questions —
+    mirrors submit_quiz's retake gate exactly (same _retake_gate, same
+    attempts-used count, same per-learner ModuleAttemptOverride), since the
+    user asked for "same as quiz" here. Resets the persisted progress row
+    (fresh answers, fresh furthest_pct, attempt_number bumped) so the next
+    playthrough asks every in-video question again instead of skipping the
+    ones already answered in the just-finished attempt. The video itself
+    was always freely replayable — this only resets which QUESTIONS show."""
+    module, course = await _module_in_assigned_course(db, user, module_id)
+    if module.type != ModuleType.WATCH:
+        raise HTTPException(status_code=400, detail="This module isn't a WATCH module")
+    assert_course_open(course)
+
+    attempts_so_far = (await db.execute(
+        select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
+    )).scalar_one()
+    override = (await db.execute(
+        select(ModuleAttemptOverride.extra_attempts)
+        .where(ModuleAttemptOverride.user_id == user.id, ModuleAttemptOverride.module_id == module.id)
+    )).scalar_one_or_none()
+    limit = _retake_gate(module, override or 0)
+    if limit is not None and attempts_so_far >= limit:
+        detail = (
+            "Retakes aren't allowed for this video's questions — you've already submitted your one attempt."
+            if limit == 1 else
+            f"You've used all {limit} attempts allowed for this video's questions."
+        )
+        raise HTTPException(status_code=403, detail=detail)
+
+    wp = await _get_or_create_watch_progress(db, user, module)
+    wp.attempt_number += 1
+    wp.furthest_pct = 0
+    wp.answers_json = {}
+    await db.commit()
+    return wp
+
+
 async def complete_module(
     db: AsyncSession, user: User, module_id: uuid.UUID, watched_pct: int | None = None, answers: list | None = None,
-) -> tuple[int, bool, str | None, list[dict], int | None, int | None]:
+) -> tuple[int, bool, str | None, list[dict], int | None, int | None, int, int | None, bool]:
     module, course = await _module_in_assigned_course(db, user, module_id)
     if module.type == ModuleType.QUIZ:
         raise HTTPException(status_code=400, detail="Quiz modules are completed by passing the quiz")
@@ -330,6 +425,9 @@ async def complete_module(
     video_question_results: list[dict] = []
     video_earned_points: int | None = None
     video_total_points: int | None = None
+    attempts_used = 1
+    attempts_remaining: int | None = None
+    retake_allowed = False
     if module.type == ModuleType.WATCH:
         # Mirrors the QUIZ gate below — a WATCH module's own `threshold` is
         # its pass mark too ("min % watched (WATCH) or min score (QUIZ)",
@@ -353,31 +451,77 @@ async def complete_module(
         # same behavior as before this feature existed.
         in_video_questions = [q for q in module.questions if q.trigger_time_sec is not None]
         if in_video_questions:
-            video_question_results, snapshot, right, earned_points, total_points = _score_questions(in_video_questions, answers or [])
-            min_correct = module.video_question_min_correct
-            if min_correct is not None and right < min_correct:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Answer at least {min_correct} in-video question(s) correctly — you got {right}.",
+            # Same retake gate as submit_quiz, checked BEFORE scoring —
+            # once this module's attempts are exhausted, no further
+            # submission is scored at all (an explicit retake_watch_module
+            # call is what resets the WatchProgress row for a fresh round;
+            # see its docstring). This also means a double "Mark complete"
+            # click behaves exactly like a double quiz submit does today.
+            attempts_so_far = (await db.execute(
+                select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
+            )).scalar_one()
+            override = (await db.execute(
+                select(ModuleAttemptOverride.extra_attempts)
+                .where(ModuleAttemptOverride.user_id == user.id, ModuleAttemptOverride.module_id == module.id)
+            )).scalar_one_or_none()
+            limit = _retake_gate(module, override or 0)
+            if limit is not None and attempts_so_far >= limit:
+                detail = (
+                    "Retakes aren't allowed for this video's questions — you've already submitted your one attempt."
+                    if limit == 1 else
+                    f"You've used all {limit} attempts allowed for this video's questions."
                 )
+                raise HTTPException(status_code=403, detail=detail)
+
+            # Score off the FULL persisted answer set (this submission's
+            # answers merged on top of whatever was already checkpointed),
+            # not just whatever happens to be in this one request — a
+            # reload mid-video must never cost the learner credit for
+            # questions they already answered before the reload.
+            wp = await _get_or_create_watch_progress(db, user, module)
+            wp.furthest_pct = max(wp.furthest_pct, pct)
+            merged = dict(wp.answers_json or {})
+            for a in (answers or []):
+                merged[str(a.question_id)] = {"option_id": a.option_id, "text": a.text}
+            wp.answers_json = merged
+            scoring_answers = [
+                _CollectedAnswer(uuid.UUID(qid), v.get("option_id"), v.get("text")) for qid, v in merged.items()
+            ]
+
+            video_question_results, snapshot, right, earned_points, total_points = _score_questions(in_video_questions, scoring_answers)
+            min_correct = module.video_question_min_correct
+            passed_gate = min_correct is None or right >= min_correct
+
             # Always persisted (pass or fail), same "every submission gets
             # a row" rule as a QUIZ module's QuizAttempt — score here is
             # the % of in-video questions answered correctly, independent
             # of watched_pct (which is what ModuleProgress.score ends up
             # holding instead, for the module-progress matrix/leaderboard).
+            # Committed BEFORE the gate can raise below, so a failed
+            # attempt is recorded too — this used to be silently discarded.
             iv_score = round(100 * right / len(in_video_questions))
             db.add(QuizAttempt(
                 org_id=user.org_id, user_id=user.id, module_id=module.id, score=iv_score,
                 earned_points=earned_points, total_points=total_points,
-                passed=min_correct is None or right >= min_correct, answers_json=snapshot,
+                passed=passed_gate, answers_json=snapshot,
             ))
+            await db.commit()
             video_earned_points, video_total_points = earned_points, total_points
+            attempts_used = attempts_so_far + 1
+            attempts_remaining = None if limit is None else max(0, limit - attempts_used)
+            retake_allowed = limit is None or attempts_used < limit
+
+            if not passed_gate:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Answer at least {min_correct} in-video question(s) correctly — you got {right}.",
+                )
         score = pct
 
     await _mark_done(db, user, course, module, score)
     await db.commit()
     pct, completed, code = await _finish_course_if_done(db, user, course)
-    return pct, completed, code, video_question_results, video_earned_points, video_total_points
+    return pct, completed, code, video_question_results, video_earned_points, video_total_points, attempts_used, attempts_remaining, retake_allowed
 
 
 async def _module_in_assigned_course(db: AsyncSession, user: User, module_id: uuid.UUID) -> tuple[Module, Course]:

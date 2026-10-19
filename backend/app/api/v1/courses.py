@@ -17,7 +17,7 @@ from app.schemas.course import (
     CourseOut, CourseUpdate, EnrolledLearnerOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest,
     ModuleUpdate, MyCourseItem, QuizAttemptOut,
 )
-from app.schemas.learn import CompleteRequest, CompleteResult, QuizResult, QuizSubmit
+from app.schemas.learn import CompleteRequest, CompleteResult, QuizResult, QuizSubmit, WatchCheckpointIn, WatchProgressOut
 from app.services.course_service import (
     _assigned_to, add_module, assign_course, get_course_or_404, get_my_course, list_attempt_overrides, list_courses,
     list_enrolled, list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules,
@@ -67,12 +67,49 @@ async def complete_my_module(
     complete_module via assigned_courses). body.watched_pct only matters
     for a WATCH module — see complete_module's docstring."""
     await _module_belongs_to_course(module_id, course_id, db)
-    pct, completed, code, video_question_results, video_earned_points, video_total_points = await progress_svc.complete_module(
-        db, current_user, module_id, (body.watched_pct if body else None), (body.answers if body else None),
+    pct, completed, code, video_question_results, video_earned_points, video_total_points, attempts_used, attempts_remaining, retake_allowed = (
+        await progress_svc.complete_module(
+            db, current_user, module_id, (body.watched_pct if body else None), (body.answers if body else None),
+        )
     )
     return CompleteResult(progress=pct, course_completed=completed, certificate_code=code,
                            video_question_results=video_question_results,
-                           video_earned_points=video_earned_points, video_total_points=video_total_points)
+                           video_earned_points=video_earned_points, video_total_points=video_total_points,
+                           attempts_used=attempts_used, attempts_remaining=attempts_remaining, retake_allowed=retake_allowed)
+
+
+@router.patch("/mine/{course_id}/modules/{module_id}/watch-progress", response_model=WatchProgressOut)
+async def checkpoint_my_watch_progress(
+    course_id: uuid.UUID, module_id: uuid.UUID, body: WatchCheckpointIn,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Called continuously during WATCH playback — on an interval for
+    watched_pct, and immediately whenever an in-video question is
+    answered — so a reload / new tab / fresh login resumes exactly where
+    the learner left off. Never gated (see checkpoint_watch_progress's
+    docstring); unlike /complete, this never counts as an attempt."""
+    await _module_belongs_to_course(module_id, course_id, db)
+    wp = await progress_svc.checkpoint_watch_progress(db, current_user, module_id, body.watched_pct, body.answer)
+    return WatchProgressOut(
+        furthest_pct=wp.furthest_pct, attempt_number=wp.attempt_number,
+        answered_question_ids=[uuid.UUID(qid) for qid in wp.answers_json.keys()],
+    )
+
+
+@router.post("/mine/{course_id}/modules/{module_id}/watch-retake", response_model=WatchProgressOut)
+async def retake_my_watch_module(
+    course_id: uuid.UUID, module_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Explicit "retake" for a WATCH module's in-video questions — same
+    attempts gate as a quiz retake (module's retake_enabled/retake_limit
+    plus any per-learner ModuleAttemptOverride). 403s once attempts are
+    exhausted. Resets the learner's answered-question set so the next
+    playthrough asks every in-video question again; the video itself was
+    always freely replayable regardless."""
+    await _module_belongs_to_course(module_id, course_id, db)
+    wp = await progress_svc.retake_watch_module(db, current_user, module_id)
+    return WatchProgressOut(furthest_pct=wp.furthest_pct, attempt_number=wp.attempt_number, answered_question_ids=[])
 
 
 @router.post("/mine/{course_id}/modules/{module_id}/quiz", response_model=QuizResult)

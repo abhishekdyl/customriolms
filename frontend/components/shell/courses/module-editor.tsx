@@ -1047,10 +1047,17 @@ export function ModuleEditorRow({
             </div>
           )}
 
-          {m.type === "quiz" && (
+          {/* Retakes apply to a QUIZ module always, and to a WATCH module
+           * only once it actually has in-video questions to retake — a
+           * plain watched-% gate (no questions) has nothing a retake
+           * would mean anything for. Same Module.retake_enabled/
+           * retake_limit columns either way; see learn_service's
+           * _retake_gate, shared verbatim by submit_quiz and the WATCH
+           * module's complete_module/retake_watch_module. */}
+          {(m.type === "quiz" || (m.type === "watch" && m.questions.length > 0)) && (
             <div className="flex flex-col gap-2 rounded-lg border border-line-soft p-2.5">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-ink-soft">Allow retakes</span>
+                <span className="text-xs text-ink-soft">Allow retakes{m.type === "watch" && " (in-video questions)"}</span>
                 <Switch
                   checked={m.retake_enabled}
                   onCheckedChange={(v) => onChange({ retake_enabled: v, retake_limit: v ? m.retake_limit : null })}
@@ -1059,7 +1066,9 @@ export function ModuleEditorRow({
               {m.retake_enabled ? (
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] text-ink-faint">
-                    Learners can keep retaking — even after passing, for a higher score
+                    {m.type === "watch"
+                      ? "Learners can retake the in-video questions — even after passing, for a higher score. The video itself is always replayable."
+                      : "Learners can keep retaking — even after passing, for a higher score"}
                   </span>
                   <div className="flex items-center gap-1.5">
                     <input
@@ -1073,7 +1082,9 @@ export function ModuleEditorRow({
                   </div>
                 </div>
               ) : (
-                <span className="text-[11px] text-ink-faint">Off — a learner gets exactly one attempt, pass or fail.</span>
+                <span className="text-[11px] text-ink-faint">
+                  Off — a learner gets exactly one attempt, pass or fail{m.type === "watch" && " on the in-video questions"}.
+                </span>
               )}
             </div>
           )}
