@@ -38,6 +38,47 @@ async def get_current_user_via_header_or_query(
     return await _validate_token(resolved, db)
 
 
+async def get_optional_user_via_header_or_query(
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """Same as get_current_user_via_header_or_query, but returns None
+    instead of 401ing when NO token was supplied at all — for a route a
+    SCORM package's OWN relative asset requests hit (its
+    <script src=...>, <link href=...>, <img src=...>, an XHR/fetch its
+    JS makes for another file in the package), not just the one
+    top-level <iframe src=...> navigation.
+
+    Only the top-level navigation can carry the ?token= query param in
+    the first place: the browser resolves every *relative* URL the
+    served HTML/CSS/JS references against the current page's URL, and
+    per the URL spec a relative path reference does NOT inherit the
+    base URL's query string — so "assets/script.js" from a page loaded
+    at ".../index.html?token=XYZ" is requested as
+    ".../assets/script.js" with no token at all, however the package
+    links it. Treating a MISSING token as "no user" rather than a 401 is
+    what lets those sub-resource requests through (the caller still
+    checks module.type == SCORM and resolves the file strictly by
+    org_id/module_id/path — all UUIDs — which is the same trust level a
+    presigned R2 URL already gets for a WATCH/READ module's file_url,
+    see storage_service).
+
+    A token that WAS supplied but is invalid/expired still 401s, same as
+    get_current_user_via_header_or_query — only the top-level navigation
+    ever supplies one at all, so a present-but-bad token can only mean
+    someone's actual session expired (or was tampered with) on the one
+    request that's supposed to carry the full per-learner assignment/
+    lock check; silently downgrading THAT request to anonymous would let
+    a stale or guessed link skip that check entirely, see
+    get_scorm_content."""
+    bearer = authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None
+    resolved = bearer or token
+    if not resolved:
+        return None
+    return await _validate_token(resolved, db)
+
+
 async def _validate_token(token: str, db: AsyncSession) -> User:
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

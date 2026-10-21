@@ -6,7 +6,7 @@ from fastapi.responses import Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_current_user_via_header_or_query, require_role
+from app.api.deps import get_current_user, get_optional_user_via_header_or_query, require_role
 from app.core.database import get_db
 from app.models.category import Category
 from app.models.course import Course
@@ -404,21 +404,37 @@ async def upload_scorm(
 @router.get("/{course_id}/modules/{module_id}/scorm-content/{file_path:path}")
 async def get_scorm_content(
     course_id: uuid.UUID, module_id: uuid.UUID, file_path: str,
-    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user_via_header_or_query),
+    db: AsyncSession = Depends(get_db), current_user: User | None = Depends(get_optional_user_via_header_or_query),
 ):
     """Streams one file out of a module's unpacked SCORM package. Loaded as
-    a plain browser navigation (the player's <iframe src=...>, and every
-    relative asset request the package's own JS/HTML makes from inside
-    it), so auth comes via get_current_user_via_header_or_query rather
-    than the usual header-only dependency — see that function's note."""
-    course = await get_course_or_404(db, course_id, current_user.org_id)
+    a plain browser navigation for the ENTRY file — the player's
+    <iframe src=".../index.html?token=...">, which does carry a real
+    token and gets the full per-learner assignment/lock check below —
+    but every file the package's own HTML/CSS/JS then references
+    relatively (<script src="assets/app.js">, <link>, <img>, an XHR for
+    another asset) is requested by the browser with NO query string at
+    all, token included: a relative URL reference never inherits the
+    base page's query string (see get_optional_user_via_header_or_query's
+    docstring). Those requests arrive with current_user=None here, and
+    are served on UUID-obscurity alone (course_id/module_id, both
+    unguessable) — the same trust level a WATCH/READ module's file_url
+    already gets as a presigned R2 URL with no app auth at all."""
+    if current_user is not None:
+        course = await get_course_or_404(db, course_id, current_user.org_id)
+    else:
+        result = await db.execute(select(Course).where(Course.id == course_id))
+        course = result.scalar_one_or_none()
+        if course is None:
+            raise HTTPException(status_code=404, detail="Course not found")
     module = await _get_module_or_404(db, module_id, course_id)
     if module.type != ModuleType.SCORM or not module.file_key:
         raise HTTPException(status_code=404, detail="No SCORM package on this module")
 
     # Org Admin / Team Lead can always preview; a Learner only if this
     # course is actually assigned to them (same rule get_my_course uses).
-    if current_user.role == RoleName.LEARNER:
+    # Skipped entirely for a token-less sub-resource request (current_user
+    # is None) — see this endpoint's docstring for why that's safe.
+    if current_user is not None and current_user.role == RoleName.LEARNER:
         result = await db.execute(select(Course.id).where(Course.id == course_id, or_(*_assigned_to(current_user))))
         if result.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="Course not found")

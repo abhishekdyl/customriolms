@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { RotateCcw } from "lucide-react";
-import { API_URL, getAccessTokenForUrl } from "@/lib/api-client";
+import { getAccessTokenForUrl } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
 /**
@@ -146,7 +146,14 @@ export function ScormPlayer({
   }, [moduleId, initialCmi]);
 
   const token = getAccessTokenForUrl();
-  const src = `${API_URL}/api/v1/courses/${courseId}/modules/${moduleId}/scorm-content/${launchPath}?token=${encodeURIComponent(token ?? "")}`;
+  // Same origin as this page (see next.config.ts's rewrite) — required
+  // for the package's own window.parent.API access to work at all. The
+  // sub-resource requests the package's HTML/CSS/JS makes from inside
+  // this (another <script src>, a CSS url(), a fetch for another asset)
+  // resolve relatively against THIS URL and land on the same proxy path
+  // automatically, no token needed on those (see the backend's
+  // get_optional_user_via_header_or_query).
+  const src = `/scorm-proxy/${courseId}/${moduleId}/${launchPath}?token=${encodeURIComponent(token ?? "")}`;
   const effectiveScore = fired?.score ?? score;
   const effectivePassed = fired?.passed;
   const done = completed || !!fired;
