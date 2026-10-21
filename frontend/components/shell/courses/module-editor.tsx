@@ -28,10 +28,16 @@ function moduleSummary(m: Module) {
 // endpoint — the module's file_name/file_size_label/file_url come back
 // real once the upload succeeds, rather than being guessed client-side.
 function FileMetaField({
-  courseId, moduleId, fileName, fileSizeLabel, fileUrl, accept, label,
+  courseId, moduleId, fileName, fileSizeLabel, fileUrl, accept, label, disabledReason,
 }: {
   courseId: string; moduleId: string; fileName: string | null; fileSizeLabel: string | null;
   fileUrl: string | null; accept: string; label: string;
+  // Set while this module has unsaved local edits — the upload endpoint
+  // validates the file against the module's type AS SAVED ON THE
+  // SERVER, so uploading before saving a just-changed type (or anything
+  // else) would be validated against the wrong, stale type. Shown
+  // instead of the dropzone; an existing file can still be removed.
+  disabledReason?: string | null;
 }) {
   const upload = useUploadModuleFile(courseId);
   const remove = useRemoveModuleFile(courseId);
@@ -64,6 +70,9 @@ function FileMetaField({
       </div>
     );
   }
+  if (disabledReason) {
+    return <p className="rounded-lg border border-dashed border-line bg-surface px-3 py-2.5 text-xs text-ink-faint">{disabledReason}</p>;
+  }
   return (
     <div>
       <label className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-line py-3">
@@ -92,10 +101,15 @@ function FileMetaField({
 // response carries scorm_launch_path/scorm_version once the backend has
 // unpacked it and parsed imsmanifest.xml, not just a filename.
 function ScormUploadField({
-  courseId, moduleId, fileName, fileSizeLabel, scormVersion, onRemove,
+  courseId, moduleId, fileName, fileSizeLabel, scormVersion, onRemove, disabledReason,
 }: {
   courseId: string; moduleId: string; fileName: string | null; fileSizeLabel: string | null;
   scormVersion: string | null; onRemove: () => void;
+  // Set while this module has unsaved local edits — see FileMetaField's
+  // docstring on disabledReason for why uploading before saving is unsafe
+  // (the upload endpoint 400s with "This module isn't a SCORM module" if
+  // the type change itself hasn't been saved yet).
+  disabledReason?: string | null;
 }) {
   const upload = useUploadScormPackage(courseId);
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +136,9 @@ function ScormUploadField({
         <button onClick={onRemove} className="flex-shrink-0"><X className="h-3.5 w-3.5 text-ink-faint" /></button>
       </div>
     );
+  }
+  if (disabledReason) {
+    return <p className="rounded-lg border border-dashed border-line bg-surface px-3 py-2.5 text-xs text-ink-faint">{disabledReason}</p>;
   }
   return (
     <div>
@@ -901,6 +918,16 @@ export function ModuleEditorRow({
   const hasContent =
     m.type === "manual" ? !!m.instructions : m.type === "quiz" ? m.questions.length > 0 : !!m.file_name;
   const removeFile = useRemoveModuleFile(courseId);
+  // Every upload endpoint (video/doc/SCORM) validates the file against
+  // this module's type AS SAVED ON THE SERVER — switching the "Counts as
+  // complete when" dropdown to a new type only changes the local draft,
+  // so uploading before clicking Save would be checked against the OLD
+  // type (e.g. picking "SCORM package" then uploading immediately 400s
+  // with "This module isn't a SCORM module", since the server still has
+  // the module's previous type). Blocking uploads whenever anything on
+  // this module is unsaved — not just the type — keeps the rule simple
+  // and matches the save-before-it-counts behavior everywhere else.
+  const uploadBlockedReason = isDirty ? "Save your changes to this module first, then upload." : null;
 
   const toggleSkill = (id: string) =>
     onChange({ skill_ids: m.skill_ids.includes(id) ? m.skill_ids.filter((x) => x !== id) : [...m.skill_ids, id] });
@@ -996,6 +1023,7 @@ export function ModuleEditorRow({
                 <FileMetaField
                   courseId={courseId} moduleId={m.id} label="Upload video" accept="video/mp4,video/webm,video/quicktime,video/x-matroska"
                   fileName={m.file_name} fileSizeLabel={m.file_size_label} fileUrl={m.file_url}
+                  disabledReason={uploadBlockedReason}
                 />
                 {m.file_url && (
                   // Off-screen — only here to read the real duration once
@@ -1020,12 +1048,14 @@ export function ModuleEditorRow({
               <FileMetaField
                 courseId={courseId} moduleId={m.id} label="Upload document (PDF/DOC/PPT)" accept=".pdf,.doc,.docx,.ppt,.pptx"
                 fileName={m.file_name} fileSizeLabel={m.file_size_label} fileUrl={m.file_url}
+                disabledReason={uploadBlockedReason}
               />
             )}
             {m.type === "scorm" && (
               <ScormUploadField
                 courseId={courseId} moduleId={m.id} fileName={m.file_name} fileSizeLabel={m.file_size_label}
                 scormVersion={m.scorm_version} onRemove={() => removeFile.mutate(m.id)}
+                disabledReason={uploadBlockedReason}
               />
             )}
             {m.type === "quiz" && (
