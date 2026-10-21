@@ -17,7 +17,10 @@ from app.schemas.course import (
     CourseOut, CourseUpdate, EnrolledLearnerOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest,
     ModuleUpdate, MyCourseItem, QuizAttemptOut,
 )
-from app.schemas.learn import CompleteRequest, CompleteResult, QuizResult, QuizSubmit, WatchCheckpointIn, WatchProgressOut
+from app.schemas.learn import (
+    CompleteRequest, CompleteResult, QuizResult, QuizSubmit, ScormCheckpointIn, ScormProgressOut, WatchCheckpointIn,
+    WatchProgressOut,
+)
 from app.services.course_service import (
     _assigned_to, add_module, assign_course, get_course_or_404, get_my_course, list_attempt_overrides, list_courses,
     list_enrolled, list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules,
@@ -70,6 +73,7 @@ async def complete_my_module(
     pct, completed, code, video_question_results, video_earned_points, video_total_points, attempts_used, attempts_remaining, retake_allowed = (
         await progress_svc.complete_module(
             db, current_user, module_id, (body.watched_pct if body else None), (body.answers if body else None),
+            (body.scorm_score if body else None), (body.scorm_passed if body else None), (body.scorm_status if body else None),
         )
     )
     return CompleteResult(progress=pct, course_completed=completed, certificate_code=code,
@@ -110,6 +114,32 @@ async def retake_my_watch_module(
     await _module_belongs_to_course(module_id, course_id, db)
     wp = await progress_svc.retake_watch_module(db, current_user, module_id)
     return WatchProgressOut(furthest_pct=wp.furthest_pct, attempt_number=wp.attempt_number, answered_question_ids=[])
+
+
+@router.patch("/mine/{course_id}/modules/{module_id}/scorm-progress", response_model=ScormProgressOut)
+async def checkpoint_my_scorm_progress(
+    course_id: uuid.UUID, module_id: uuid.UUID, body: ScormCheckpointIn,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Called every time the SCORM package's own JS calls LMSCommit/Commit
+    — so a reload / new tab / fresh login resumes exactly where the
+    package itself left off. Never gated; not an attempt."""
+    await _module_belongs_to_course(module_id, course_id, db)
+    sp = await progress_svc.checkpoint_scorm_progress(db, current_user, module_id, body.cmi)
+    return ScormProgressOut(cmi=sp.cmi_data, attempt_number=sp.attempt_number)
+
+
+@router.post("/mine/{course_id}/modules/{module_id}/scorm-retake", response_model=ScormProgressOut)
+async def retake_my_scorm_module(
+    course_id: uuid.UUID, module_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Explicit "retake" for a SCORM module — same attempts gate as a quiz
+    retake. 403s once attempts are exhausted. Resets the learner's saved
+    CMI state so the package starts fresh next time."""
+    await _module_belongs_to_course(module_id, course_id, db)
+    sp = await progress_svc.retake_scorm_module(db, current_user, module_id)
+    return ScormProgressOut(cmi=sp.cmi_data, attempt_number=sp.attempt_number)
 
 
 @router.post("/mine/{course_id}/modules/{module_id}/quiz", response_model=QuizResult)

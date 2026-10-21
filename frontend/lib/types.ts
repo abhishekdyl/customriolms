@@ -393,6 +393,12 @@ export interface LearnerModule {
    * Both reset to 0/[] by an explicit retake. */
   watch_furthest_pct: number;
   watch_answered_question_ids: string[];
+  /** SCORM modules only — the package's own last-saved CMI data model
+   * (key -> string value), so the player can seed its API with it on
+   * mount and the package resumes itself from there. {} until the
+   * package has ever called LMSCommit/Commit. Reset to {} by an
+   * explicit retake. */
+  scorm_cmi: Record<string, string>;
 }
 
 /** One assigned course, learner-safe. From GET /api/v1/courses/mine/{id}. */
@@ -428,6 +434,14 @@ export interface CompleteResult {
 export interface WatchProgressState {
   furthest_pct: number;
   answered_question_ids: string[];
+  attempt_number: number;
+}
+
+/** Response from PATCH .../modules/{id}/scorm-progress and POST
+ * .../modules/{id}/scorm-retake — the learner's persisted SCORM-module
+ * resume state right after this call. */
+export interface ScormProgressState {
+  cmi: Record<string, string>;
   attempt_number: number;
 }
 

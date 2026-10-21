@@ -14,6 +14,7 @@ from app.models.course import Course
 from app.models.module import Module, ModuleType
 from app.models.module_progress import ModuleProgress
 from app.models.quiz_attempt import QuizAttempt
+from app.models.scorm_progress import ScormProgress
 from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User, UserStatus
@@ -79,6 +80,15 @@ async def watch_progress_map(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.
     player can resume on mount without a separate round trip."""
     rows = await db.execute(select(WatchProgress).where(WatchProgress.user_id == user_id))
     return {wp.module_id: wp for wp in rows.scalars().all()}
+
+
+async def scorm_progress_map(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, ScormProgress]:
+    """This learner's resumable CMI state for every SCORM module they've
+    ever started — exact mirror of watch_progress_map, used to seed
+    LearnerModuleOut.scorm_cmi so the player can hand the package its own
+    last-saved data back on mount without a separate round trip."""
+    rows = await db.execute(select(ScormProgress).where(ScormProgress.user_id == user_id))
+    return {sp.module_id: sp for sp in rows.scalars().all()}
 
 
 def _retake_gate(module: Module, extra_attempts: int = 0) -> int | None:
@@ -342,6 +352,66 @@ async def _get_or_create_watch_progress(db: AsyncSession, user: User, module: Mo
     return wp
 
 
+async def _get_or_create_scorm_progress(db: AsyncSession, user: User, module: Module) -> ScormProgress:
+    sp = (await db.execute(
+        select(ScormProgress).where(ScormProgress.user_id == user.id, ScormProgress.module_id == module.id)
+    )).scalar_one_or_none()
+    if sp is None:
+        sp = ScormProgress(org_id=user.org_id, user_id=user.id, module_id=module.id)
+        db.add(sp)
+        await db.flush()
+    return sp
+
+
+async def checkpoint_scorm_progress(db: AsyncSession, user: User, module_id: uuid.UUID, cmi: dict) -> ScormProgress:
+    """Called every time the SCORM package's own JS calls LMSCommit/Commit
+    — exact mirror of checkpoint_watch_progress. Never gated: a commit is
+    not an attempt, only submitting the module via complete_module is."""
+    module, _course = await _module_in_assigned_course(db, user, module_id)
+    if module.type != ModuleType.SCORM:
+        raise HTTPException(status_code=400, detail="This module isn't a SCORM module")
+    sp = await _get_or_create_scorm_progress(db, user, module)
+    merged = dict(sp.cmi_data or {})
+    merged.update(cmi or {})
+    sp.cmi_data = merged  # reassigned (not mutated in place) so SQLAlchemy sees the change
+    await db.commit()
+    return sp
+
+
+async def retake_scorm_module(db: AsyncSession, user: User, module_id: uuid.UUID) -> ScormProgress:
+    """Explicit "retake" for a SCORM module — same attempts gate as a quiz
+    retake (module's retake_enabled/retake_limit plus any per-learner
+    ModuleAttemptOverride), exact mirror of retake_watch_module. Resets
+    the persisted CMI blob (attempt_number bumped) so the package starts
+    fresh next time instead of resuming where the last attempt left off."""
+    module, course = await _module_in_assigned_course(db, user, module_id)
+    if module.type != ModuleType.SCORM:
+        raise HTTPException(status_code=400, detail="This module isn't a SCORM module")
+    assert_course_open(course)
+
+    attempts_so_far = (await db.execute(
+        select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
+    )).scalar_one()
+    override = (await db.execute(
+        select(ModuleAttemptOverride.extra_attempts)
+        .where(ModuleAttemptOverride.user_id == user.id, ModuleAttemptOverride.module_id == module.id)
+    )).scalar_one_or_none()
+    limit = _retake_gate(module, override or 0)
+    if limit is not None and attempts_so_far >= limit:
+        detail = (
+            "Retakes aren't allowed for this SCORM module — you've already submitted your one attempt."
+            if limit == 1 else
+            f"You've used all {limit} attempts allowed for this SCORM module."
+        )
+        raise HTTPException(status_code=403, detail=detail)
+
+    sp = await _get_or_create_scorm_progress(db, user, module)
+    sp.attempt_number += 1
+    sp.cmi_data = {}
+    await db.commit()
+    return sp
+
+
 class _CollectedAnswer:
     """Reconstructs a QuizAnswerIn-shaped object from a persisted
     WatchProgress.answers_json entry, so _score_questions (which expects
@@ -417,6 +487,7 @@ async def retake_watch_module(db: AsyncSession, user: User, module_id: uuid.UUID
 
 async def complete_module(
     db: AsyncSession, user: User, module_id: uuid.UUID, watched_pct: int | None = None, answers: list | None = None,
+    scorm_score: int | None = None, scorm_passed: bool | None = None, scorm_status: str | None = None,
 ) -> tuple[int, bool, str | None, list[dict], int | None, int | None, int, int | None, bool]:
     module, course = await _module_in_assigned_course(db, user, module_id)
     if module.type == ModuleType.QUIZ:
@@ -520,6 +591,70 @@ async def complete_module(
                     detail=f"Answer at least {min_correct} in-video question(s) correctly — you got {right}.",
                 )
         score = pct
+
+    elif module.type == ModuleType.SCORM:
+        # Same retake gate as the WATCH in-video-question branch above and
+        # submit_quiz — once this module's attempts are exhausted, no
+        # further submission is scored at all (an explicit
+        # retake_scorm_module call is what resets the ScormProgress row
+        # for a fresh round).
+        attempts_so_far = (await db.execute(
+            select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
+        )).scalar_one()
+        override = (await db.execute(
+            select(ModuleAttemptOverride.extra_attempts)
+            .where(ModuleAttemptOverride.user_id == user.id, ModuleAttemptOverride.module_id == module.id)
+        )).scalar_one_or_none()
+        limit = _retake_gate(module, override or 0)
+        if limit is not None and attempts_so_far >= limit:
+            detail = (
+                "Retakes aren't allowed for this SCORM module — you've already submitted your one attempt."
+                if limit == 1 else
+                f"You've used all {limit} attempts allowed for this SCORM module."
+            )
+            raise HTTPException(status_code=403, detail=detail)
+
+        # scorm_score/scorm_passed come straight from the package's own
+        # CMI data, read client-side by the frontend's SCORM API shim —
+        # see CompleteRequest's docstring. scorm_passed is None when the
+        # package reports a bare "completed" with no pass/fail opinion of
+        # its own (SCORM has no notion of "passed" for purely
+        # informational content) — treated as a pass, same as a WATCH
+        # module with no in-video questions always passing once watched_pct
+        # clears the threshold.
+        score = max(0, min(100, scorm_score)) if scorm_score is not None else 0
+        passed_gate = True if scorm_passed is None else scorm_passed
+
+        # Always persisted (pass or fail), same "every submission gets a
+        # row" rule as a QUIZ module's QuizAttempt and the WATCH in-video
+        # branch — so a SCORM completion shows up in the admin Grades tab
+        # just like every other module type, instead of being silently
+        # discarded as it was before this existed. No per-question
+        # breakdown exists for SCORM (unlike QUIZ/WATCH), so
+        # answers_json/earned_points/total_points are left empty/null —
+        # answers_json must stay an empty list, not a SCORM-shaped dict,
+        # since QuizAttemptOut.answers (the admin Grades listing) expects
+        # every element to be a full per-question answer record.
+        # scorm_status is deliberately not persisted structurally; the
+        # score + passed columns already carry everything a grade needs.
+        db.add(QuizAttempt(
+            org_id=user.org_id, user_id=user.id, module_id=module.id, score=score,
+            earned_points=None, total_points=None, passed=passed_gate,
+            answers_json=[],
+        ))
+        await db.commit()
+        attempts_used = attempts_so_far + 1
+        attempts_remaining = None if limit is None else max(0, limit - attempts_used)
+        retake_allowed = limit is None or attempts_used < limit
+
+        if not passed_gate:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"This SCORM package reported a failing result"
+                    f"{f' ({scorm_status})' if scorm_status else ''} — try again."
+                ),
+            )
 
     await _mark_done(db, user, course, module, score)
     await db.commit()

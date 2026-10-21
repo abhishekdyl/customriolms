@@ -88,16 +88,31 @@ class QuizQuestionResult(BaseModel):
 
 
 class CompleteRequest(BaseModel):
-    """Body for POST .../modules/{id}/complete. Only WATCH modules actually
-    use watched_pct/answers — watched_pct is how far through the video the
+    """Body for POST .../modules/{id}/complete. WATCH modules use
+    watched_pct/answers — watched_pct is how far through the video the
     player tracked the learner reaching (the running max, not just wherever
     playback currently sits, so scrubbing to the end doesn't let someone
     skip the real watch-through); answers is every in-video question the
     learner actually submitted (an untimed-out skip is simply missing from
-    this list — see QuizAnswerIn's docstring). Every other module type
-    ignores both; omit them entirely and the call still works for them."""
+    this list — see QuizAnswerIn's docstring).
+
+    SCORM modules use scorm_score/scorm_passed/scorm_status instead — read
+    straight off the package's own CMI data by the frontend's SCORM API
+    shim (cmi.core.score.raw/cmi.score.raw for scorm_score,
+    cmi.core.lesson_status=="passed"/"failed" or
+    cmi.success_status=="passed"/"failed" for scorm_passed, and whichever
+    raw status string triggered completion for scorm_status, kept only
+    for display/debugging). scorm_passed is null when the package reports
+    a bare "completed" with no pass/fail opinion of its own — treated as a
+    pass (see learn_service.complete_module).
+
+    Every module type ignores the fields that aren't its own; omit them
+    entirely and the call still works."""
     watched_pct: int | None = None
     answers: list[QuizAnswerIn] = []
+    scorm_score: int | None = None
+    scorm_passed: bool | None = None
+    scorm_status: str | None = None
 
 
 class CompleteResult(BaseModel):
@@ -144,6 +159,21 @@ class WatchCheckpointIn(BaseModel):
 class WatchProgressOut(BaseModel):
     furthest_pct: int
     answered_question_ids: list[uuid.UUID]
+    attempt_number: int
+
+
+class ScormCheckpointIn(BaseModel):
+    """Body for PATCH .../modules/{id}/scorm-progress — called every time
+    the SCORM package's own JS calls LMSCommit/Commit (not just once at
+    the end), so a reload/new-tab/relogin resumes exactly where the
+    package itself left off. cmi is merged into whatever was already
+    saved, not replaced wholesale, since one commit rarely restates every
+    key the package has ever set."""
+    cmi: dict[str, str] = {}
+
+
+class ScormProgressOut(BaseModel):
+    cmi: dict[str, str]
     attempt_number: int
 
 

@@ -8,7 +8,8 @@ import {
 } from "lucide-react";
 import { Video, VideoPlayer, VideoSkin } from "@videojs/react/video";
 import {
-  useCheckpointWatchProgress, useCompleteModule, useMyCourse, useRetakeWatchModule, useSubmitQuiz,
+  useCheckpointScormProgress, useCheckpointWatchProgress, useCompleteModule, useMyCourse, useRetakeScormModule,
+  useRetakeWatchModule, useSubmitQuiz,
 } from "@/lib/hooks/use-my-courses";
 import { MODULE_TYPE_LABEL } from "@/lib/learner-courses";
 import { cn } from "@/lib/utils";
@@ -425,6 +426,87 @@ function LockedRow({ module: m }: { module: LearnerModule }) {
  * player with watch-% tracking (WatchPlayer, above), and a SCORM module's
  * own package decides when it's done (via the JS API shim), so both show
  * the actual player inline instead of a bare button. */
+/** A SCORM module's row — mounts the ScormPlayer (the JS-API shim +
+ * sandboxed iframe) and wires its three callbacks onto the matching
+ * backend calls: onCommit checkpoints resume state on every
+ * LMSCommit/Commit (never gated, not an attempt), onComplete maps the
+ * package's own reported score/pass-fail onto the real module-complete
+ * call (which is what records a QuizAttempt row and, on pass, the
+ * module as done), and onRetake resets the server's saved CMI state so
+ * the package starts fresh — same attempts gate as a quiz retake. */
+function ScormModuleRow({
+  module: m, courseId, complete,
+}: { module: LearnerModule; courseId: string; complete: ReturnType<typeof useCompleteModule> }) {
+  const checkpoint = useCheckpointScormProgress(courseId);
+  const retake = useRetakeScormModule(courseId);
+  // retake.mutate clears scorm_cmi server-side and invalidates the course
+  // query, but the player should remount with a BLANK cmi the instant the
+  // learner clicks Retake, not only once the refetch lands — this local
+  // override is that bridge; `m.scorm_cmi` takes back over once the
+  // refetched module confirms it's actually {} now.
+  const [cmiOverride, setCmiOverride] = useState<Record<string, string> | null>(null);
+  // Drops the local override the moment the refetched course confirms
+  // the server-side CMI is actually blank now — avoids a flash of the
+  // just-cleared (stale-cached) state while the invalidated query is
+  // still in flight.
+  useEffect(() => {
+    if (cmiOverride !== null && Object.keys(m.scorm_cmi).length === 0) setCmiOverride(null);
+  }, [cmiOverride, m.scorm_cmi]);
+
+  const limit = m.retake_enabled ? m.retake_limit : 1;
+  const retakeAllowed = limit === null || m.attempts_used < limit;
+
+  return (
+    <div className="border-b border-line-soft py-3">
+      <div className="mb-2 flex items-center gap-3">
+        {m.completed ? (
+          <CheckCircle2 size={18} color="var(--color-success)" />
+        ) : (
+          <Circle size={18} color="var(--color-ink-faint)" />
+        )}
+        <div className="flex-1">
+          <div className="text-[13.5px] text-ink">{m.title}</div>
+          <div className="text-[11px] text-ink-faint">
+            {MODULE_TYPE_LABEL[m.type]}
+            {m.skill_count > 0 && ` · builds ${m.skill_count} skill${m.skill_count > 1 ? "s" : ""}`}
+            {m.attempts_used > 0 &&
+              ` · ${m.attempts_used} attempt${m.attempts_used === 1 ? "" : "s"} used${limit !== null ? ` of ${limit}` : ""}`}
+          </div>
+        </div>
+      </div>
+      {complete.isError && (
+        <div className="mb-2 text-[11px] text-danger">
+          {(complete.error as Error)?.message || "Couldn't record this attempt. Try again."}
+        </div>
+      )}
+      {m.scorm_launch_path ? (
+        <ScormPlayer
+          key={m.id}
+          courseId={courseId} moduleId={m.id} launchPath={m.scorm_launch_path} version={m.scorm_version}
+          completed={m.completed} score={m.score} retakeAllowed={retakeAllowed}
+          initialCmi={cmiOverride ?? m.scorm_cmi}
+          retaking={cmiOverride !== null}
+          onCommit={(cmi) => checkpoint.mutate({ moduleId: m.id, cmi })}
+          onComplete={(result) =>
+            complete.mutate({
+              moduleId: m.id,
+              scorm_score: result.score ?? undefined,
+              scorm_passed: result.passed,
+              scorm_status: result.status ?? undefined,
+            })
+          }
+          onRetake={() => {
+            setCmiOverride({});
+            retake.mutate(m.id);
+          }}
+        />
+      ) : (
+        <div className="text-[12.5px] text-ink-faint">This module's SCORM package isn't ready yet.</div>
+      )}
+    </div>
+  );
+}
+
 function ModuleRow({ module: m, courseId }: { module: LearnerModule; courseId: string }) {
   const complete = useCompleteModule(courseId);
 
@@ -437,32 +519,7 @@ function ModuleRow({ module: m, courseId }: { module: LearnerModule; courseId: s
   }
 
   if (m.type === "scorm") {
-    return (
-      <div className="border-b border-line-soft py-3">
-        <div className="mb-2 flex items-center gap-3">
-          {m.completed ? (
-            <CheckCircle2 size={18} color="var(--color-success)" />
-          ) : (
-            <Circle size={18} color="var(--color-ink-faint)" />
-          )}
-          <div className="flex-1">
-            <div className="text-[13.5px] text-ink">{m.title}</div>
-            <div className="text-[11px] text-ink-faint">
-              {MODULE_TYPE_LABEL[m.type]}
-              {m.skill_count > 0 && ` · builds ${m.skill_count} skill${m.skill_count > 1 ? "s" : ""}`}
-            </div>
-          </div>
-        </div>
-        {m.scorm_launch_path ? (
-          <ScormPlayer
-            courseId={courseId} moduleId={m.id} launchPath={m.scorm_launch_path} version={m.scorm_version}
-            completed={m.completed} onComplete={() => complete.mutate({ moduleId: m.id })}
-          />
-        ) : (
-          <div className="text-[12.5px] text-ink-faint">This module's SCORM package isn't ready yet.</div>
-        )}
-      </div>
-    );
+    return <ScormModuleRow module={m} courseId={courseId} complete={complete} />;
   }
 
   return (

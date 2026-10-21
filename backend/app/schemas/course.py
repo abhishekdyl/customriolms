@@ -445,6 +445,13 @@ class LearnerModuleOut(BaseModel):
     # retake. See learn_service.checkpoint_watch_progress/retake_watch_module.
     watch_furthest_pct: int = 0
     watch_answered_question_ids: list[uuid.UUID] = []
+    # SCORM modules only — the package's own last-saved CMI data model
+    # (key -> string value), so the player can seed its API with it on
+    # mount and the package's own internal resume logic takes it from
+    # there. {} until the package has ever called LMSCommit/Commit.
+    # Reset to {} by an explicit retake. See
+    # learn_service.checkpoint_scorm_progress/retake_scorm_module.
+    scorm_cmi: dict[str, str] = {}
     # True when sequential_unlock blocks this module OR any one of its
     # own restrictions isn't satisfied yet — see learn_service.module_locked.
     # file_url/questions are already stripped when this is true (see

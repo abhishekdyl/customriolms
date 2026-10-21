@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { CompleteResult, LearnerCourse, MyCourse, QuizAnswer, QuizResult, WatchProgressState } from "@/lib/types";
+import type { CompleteResult, LearnerCourse, MyCourse, QuizAnswer, QuizResult, ScormProgressState, WatchProgressState } from "@/lib/types";
 
 /** Courses assigned to the logged-in user (via team or directly), with progress. */
 export function useMyCourses() {
@@ -31,8 +31,19 @@ export function useMyCourse(id: string) {
 export function useCompleteModule(courseId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ moduleId, watched_pct, answers }: { moduleId: string; watched_pct?: number; answers?: QuizAnswer[] }) =>
-      api.post<CompleteResult>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/complete`, { watched_pct, answers }),
+    mutationFn: ({
+      moduleId, watched_pct, answers, scorm_score, scorm_passed, scorm_status,
+    }: {
+      moduleId: string; watched_pct?: number; answers?: QuizAnswer[];
+      // SCORM-only — read off the package's own CMI data by ScormPlayer's
+      // API shim (score 0-100, pass/fail if the package has an opinion,
+      // and the raw status string for display/debugging). See backend
+      // CompleteRequest's docstring.
+      scorm_score?: number; scorm_passed?: boolean | null; scorm_status?: string;
+    }) =>
+      api.post<CompleteResult>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/complete`, {
+        watched_pct, answers, scorm_score, scorm_passed, scorm_status,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["courses", "mine", courseId] });
       qc.invalidateQueries({ queryKey: ["courses", "mine"] });
@@ -66,6 +77,30 @@ export function useRetakeWatchModule(courseId: string) {
   return useMutation({
     mutationFn: (moduleId: string) =>
       api.post<WatchProgressState>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/watch-retake`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", "mine", courseId] }),
+  });
+}
+
+/** Checkpoints a SCORM module's in-progress CMI state — called every time
+ * the package's own JS calls LMSCommit/Commit (not just once at the
+ * end), so a reload / new tab / fresh login resumes exactly where the
+ * package itself left off. Exact mirror of useCheckpointWatchProgress:
+ * never gated, never invalidates the course query. */
+export function useCheckpointScormProgress(courseId: string) {
+  return useMutation({
+    mutationFn: ({ moduleId, cmi }: { moduleId: string; cmi: Record<string, string> }) =>
+      api.patch<ScormProgressState>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/scorm-progress`, { cmi }),
+  });
+}
+
+/** Explicit "retake" for a SCORM module — same attempts gate as a quiz
+ * retake. Resets the server's saved CMI state so the package starts
+ * fresh next time; 403s once attempts are exhausted. */
+export function useRetakeScormModule(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (moduleId: string) =>
+      api.post<ScormProgressState>(`/api/v1/courses/mine/${courseId}/modules/${moduleId}/scorm-retake`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", "mine", courseId] }),
   });
 }

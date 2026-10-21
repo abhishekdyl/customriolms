@@ -124,6 +124,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
     attempts = await progress_svc.attempts_used_map(db, user.id)
     overrides = await progress_svc.attempt_overrides_map(db, user.id)
     watch_progress = await progress_svc.watch_progress_map(db, user.id)
+    scorm_progress = await progress_svc.scorm_progress_map(db, user.id)
     pct, completed_count, _ = progress_svc.course_progress(course, done)
     modules = []
     for m in course.modules:
@@ -163,6 +164,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
             watch_answered_question_ids=(
                 [uuid.UUID(qid) for qid in watch_progress[m.id].answers_json.keys()] if m.id in watch_progress else []
             ),
+            scorm_cmi=scorm_progress[m.id].cmi_data if m.id in scorm_progress else {},
         ))
     return LearnerCourseOut(
         id=course.id, title=course.title, description=course.description,
