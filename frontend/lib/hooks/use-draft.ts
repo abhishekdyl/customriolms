@@ -24,9 +24,19 @@ export function useDraft<T>(
   const dirtyRef = useRef(false);
 
   // Only auto-sync from the server while there's nothing unsaved to lose.
+  // Callers commonly rebuild serverValue as a brand-new plain object every
+  // render (e.g. `course ? { title: course.title, ... } : undefined`), so
+  // this effect's dependency changes identity on every render even when
+  // the actual values haven't changed. Setting state unconditionally here
+  // would re-trigger a render, which rebuilds serverValue again, which
+  // reruns this effect — an infinite "Maximum update depth exceeded"
+  // loop. The functional updater below bails out (returns the exact same
+  // `prev` reference) whenever the content is already equal, so React's
+  // own Object.is bail-out stops the chain instead of looping forever.
   useEffect(() => {
     if (serverValue === undefined) return;
-    if (!dirtyRef.current) setDraftRaw(serverValue);
+    if (dirtyRef.current) return;
+    setDraftRaw((prev) => (prev !== undefined && isEqual(prev, serverValue) ? prev : serverValue));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverValue]);
 
