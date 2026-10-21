@@ -593,68 +593,104 @@ async def complete_module(
         score = pct
 
     elif module.type == ModuleType.SCORM:
-        # Same retake gate as the WATCH in-video-question branch above and
-        # submit_quiz — once this module's attempts are exhausted, no
-        # further submission is scored at all (an explicit
-        # retake_scorm_module call is what resets the ScormProgress row
-        # for a fresh round).
-        attempts_so_far = (await db.execute(
-            select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
-        )).scalar_one()
-        override = (await db.execute(
-            select(ModuleAttemptOverride.extra_attempts)
-            .where(ModuleAttemptOverride.user_id == user.id, ModuleAttemptOverride.module_id == module.id)
-        )).scalar_one_or_none()
-        limit = _retake_gate(module, override or 0)
-        if limit is not None and attempts_so_far >= limit:
-            detail = (
-                "Retakes aren't allowed for this SCORM module — you've already submitted your one attempt."
-                if limit == 1 else
-                f"You've used all {limit} attempts allowed for this SCORM module."
-            )
-            raise HTTPException(status_code=403, detail=detail)
+        if module.scorm_completion_view:
+            # Moodle's bare "View the activity" — completes the instant
+            # the learner opens the module, no CMI signal needed at all
+            # (the player calls this once on mount, before the package
+            # has reported anything — see ModuleRow). Not a graded
+            # attempt, so no retake gate and no QuizAttempt row: there's
+            # nothing to retake or grade, only "opened or not". Idempotent
+            # — re-opening an already-viewed module just no-ops below in
+            # _mark_done.
+            score = None
+        else:
+            # Same retake gate as the WATCH in-video-question branch above
+            # and submit_quiz — once this module's attempts are exhausted,
+            # no further submission is scored at all (an explicit
+            # retake_scorm_module call is what resets the ScormProgress row
+            # for a fresh round).
+            attempts_so_far = (await db.execute(
+                select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
+            )).scalar_one()
+            override = (await db.execute(
+                select(ModuleAttemptOverride.extra_attempts)
+                .where(ModuleAttemptOverride.user_id == user.id, ModuleAttemptOverride.module_id == module.id)
+            )).scalar_one_or_none()
+            limit = _retake_gate(module, override or 0)
+            if limit is not None and attempts_so_far >= limit:
+                detail = (
+                    "Retakes aren't allowed for this SCORM module — you've already submitted your one attempt."
+                    if limit == 1 else
+                    f"You've used all {limit} attempts allowed for this SCORM module."
+                )
+                raise HTTPException(status_code=403, detail=detail)
 
-        # scorm_score/scorm_passed come straight from the package's own
-        # CMI data, read client-side by the frontend's SCORM API shim —
-        # see CompleteRequest's docstring. scorm_passed is None when the
-        # package reports a bare "completed" with no pass/fail opinion of
-        # its own (SCORM has no notion of "passed" for purely
-        # informational content) — treated as a pass, same as a WATCH
-        # module with no in-video questions always passing once watched_pct
-        # clears the threshold.
-        score = max(0, min(100, scorm_score)) if scorm_score is not None else 0
-        passed_gate = True if scorm_passed is None else scorm_passed
+            # scorm_score/scorm_passed/scorm_status come straight from the
+            # package's own CMI data, read client-side by the frontend's
+            # SCORM API shim — see CompleteRequest's docstring.
+            #
+            # Which of these this attempt actually needs to satisfy is
+            # the module's own Moodle-style "Add requirements" picker
+            # (Module.scorm_completion_*, set by the admin in the
+            # editor) — not a fixed rule. Each ticked requirement is
+            # checked independently and ALL of them must hold (AND):
+            #   - completed: the package reported SOME terminal status
+            #     at all (this is the historical default — every module
+            #     created before this setting existed keeps exactly this
+            #     gate).
+            #   - passed: the package's own lesson_status/success_status
+            #     was specifically "passed", not just "completed".
+            #   - graded: the package reported a numeric score.
+            # A requirement that ISN'T ticked is simply not checked.
+            # A module with every box unticked would otherwise never be
+            # completable at all — fall back to "completed" alone (the
+            # historical default) rather than trivially passing every
+            # attempt with no signal whatsoever.
+            require_completed = module.scorm_completion_completed
+            require_passed = module.scorm_completion_passed
+            require_graded = module.scorm_completion_graded
+            if not (require_completed or require_passed or require_graded):
+                require_completed = True
 
-        # Always persisted (pass or fail), same "every submission gets a
-        # row" rule as a QUIZ module's QuizAttempt and the WATCH in-video
-        # branch — so a SCORM completion shows up in the admin Grades tab
-        # just like every other module type, instead of being silently
-        # discarded as it was before this existed. No per-question
-        # breakdown exists for SCORM (unlike QUIZ/WATCH), so
-        # answers_json/earned_points/total_points are left empty/null —
-        # answers_json must stay an empty list, not a SCORM-shaped dict,
-        # since QuizAttemptOut.answers (the admin Grades listing) expects
-        # every element to be a full per-question answer record.
-        # scorm_status is deliberately not persisted structurally; the
-        # score + passed columns already carry everything a grade needs.
-        db.add(QuizAttempt(
-            org_id=user.org_id, user_id=user.id, module_id=module.id, score=score,
-            earned_points=None, total_points=None, passed=passed_gate,
-            answers_json=[],
-        ))
-        await db.commit()
-        attempts_used = attempts_so_far + 1
-        attempts_remaining = None if limit is None else max(0, limit - attempts_used)
-        retake_allowed = limit is None or attempts_used < limit
+            missing: list[str] = []
+            if require_completed and scorm_status is None:
+                missing.append("report that it's finished")
+            if require_passed and scorm_passed is not True:
+                missing.append("report a passing result")
+            if require_graded and scorm_score is None:
+                missing.append("report a score")
+            satisfied = not missing
 
-        if not passed_gate:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"This SCORM package reported a failing result"
-                    f"{f' ({scorm_status})' if scorm_status else ''} — try again."
-                ),
-            )
+            score = max(0, min(100, scorm_score)) if scorm_score is not None else 0
+
+            # Always persisted (met or not), same "every submission gets a
+            # row" rule as a QUIZ module's QuizAttempt and the WATCH
+            # in-video branch — so a SCORM completion shows up in the
+            # admin Grades tab just like every other module type, instead
+            # of being silently discarded as it was before this existed.
+            # No per-question breakdown exists for SCORM (unlike
+            # QUIZ/WATCH), so answers_json/earned_points/total_points are
+            # left empty/null — answers_json must stay an empty list, not
+            # a SCORM-shaped dict, since QuizAttemptOut.answers (the admin
+            # Grades listing) expects every element to be a full
+            # per-question answer record. scorm_status is deliberately
+            # not persisted structurally; score + passed already carry
+            # everything a grade needs.
+            db.add(QuizAttempt(
+                org_id=user.org_id, user_id=user.id, module_id=module.id, score=score,
+                earned_points=None, total_points=None, passed=satisfied,
+                answers_json=[],
+            ))
+            await db.commit()
+            attempts_used = attempts_so_far + 1
+            attempts_remaining = None if limit is None else max(0, limit - attempts_used)
+            retake_allowed = limit is None or attempts_used < limit
+
+            if not satisfied:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"This SCORM package needs to {', '.join(missing)} before this counts as complete — try again.",
+                )
 
     await _mark_done(db, user, course, module, score)
     await db.commit()

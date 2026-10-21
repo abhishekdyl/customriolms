@@ -147,6 +147,8 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
             ),
             file_name=m.file_name, file_size_label=m.file_size_label,
             scorm_launch_path=None if locked else m.scorm_launch_path, scorm_version=m.scorm_version,
+            scorm_completion_view=m.scorm_completion_view, scorm_completion_passed=m.scorm_completion_passed,
+            scorm_completion_completed=m.scorm_completion_completed, scorm_completion_graded=m.scorm_completion_graded,
             instructions=m.instructions, skill_count=len(m.skill_ids or []),
             questions=[] if locked else [QuestionLearnerOut.model_validate(q) for q in (m.questions or [])],
             completed=m.id in done,

@@ -867,6 +867,58 @@ function RestrictionsEditor({
   );
 }
 
+/** Moodle-style "Activity completion ▸ Add requirements" for a SCORM
+ * module. Each box is independently checkable (AND semantics on the
+ * backend — see learn_service.complete_module's SCORM branch). Checking
+ * "View the activity" makes the module complete the instant the learner
+ * opens it, with no CMI signal required at all — the backend ignores
+ * Passed/Completed/Graded entirely in that case, so this UI disables them
+ * while View is on to avoid implying they still matter. Leaving every box
+ * unchecked falls back to "Completed" alone (same as the historical,
+ * pre-this-feature behavior), which is why Completed starts checked by
+ * default for a new module. */
+function ScormCompletionCriteria({ module: m, onChange }: { module: Module; onChange: (patch: Partial<Module>) => void }) {
+  const viewOnly = m.scorm_completion_view;
+  return (
+    <div className="mt-3 rounded-lg border border-line-soft p-2.5">
+      <p className="mb-1.5 text-[11px] font-medium text-ink-soft">Mark this module complete when the learner…</p>
+      <div className="flex flex-col gap-1.5">
+        <label className="flex items-center gap-2 text-xs text-ink">
+          <input
+            type="checkbox" checked={m.scorm_completion_view}
+            onChange={(e) => onChange({ scorm_completion_view: e.target.checked })}
+          />
+          Views the activity (opens it — completes instantly, no need to finish it)
+        </label>
+        <label className={`flex items-center gap-2 text-xs ${viewOnly ? "text-ink-faint opacity-50" : "text-ink"}`}>
+          <input
+            type="checkbox" checked={m.scorm_completion_completed} disabled={viewOnly}
+            onChange={(e) => onChange({ scorm_completion_completed: e.target.checked })}
+          />
+          Completes the SCORM package
+        </label>
+        <label className={`flex items-center gap-2 text-xs ${viewOnly ? "text-ink-faint opacity-50" : "text-ink"}`}>
+          <input
+            type="checkbox" checked={m.scorm_completion_passed} disabled={viewOnly}
+            onChange={(e) => onChange({ scorm_completion_passed: e.target.checked })}
+          />
+          Passes the SCORM package
+        </label>
+        <label className={`flex items-center gap-2 text-xs ${viewOnly ? "text-ink-faint opacity-50" : "text-ink"}`}>
+          <input
+            type="checkbox" checked={m.scorm_completion_graded} disabled={viewOnly}
+            onChange={(e) => onChange({ scorm_completion_graded: e.target.checked })}
+          />
+          Receives a grade (score) from the package
+        </label>
+      </div>
+      {!viewOnly && !m.scorm_completion_completed && !m.scorm_completion_passed && !m.scorm_completion_graded && (
+        <p className="mt-1.5 text-[10.5px] text-amber">Nothing checked — falls back to "Completes the SCORM package" alone.</p>
+      )}
+    </div>
+  );
+}
+
 export function ModuleEditorRow({
   courseId,
   module: m,
@@ -1052,11 +1104,14 @@ export function ModuleEditorRow({
               />
             )}
             {m.type === "scorm" && (
-              <ScormUploadField
-                courseId={courseId} moduleId={m.id} fileName={m.file_name} fileSizeLabel={m.file_size_label}
-                scormVersion={m.scorm_version} onRemove={() => removeFile.mutate(m.id)}
-                disabledReason={uploadBlockedReason}
-              />
+              <>
+                <ScormUploadField
+                  courseId={courseId} moduleId={m.id} fileName={m.file_name} fileSizeLabel={m.file_size_label}
+                  scormVersion={m.scorm_version} onRemove={() => removeFile.mutate(m.id)}
+                  disabledReason={uploadBlockedReason}
+                />
+                <ScormCompletionCriteria module={m} onChange={onChange} />
+              </>
             )}
             {m.type === "quiz" && (
               <QuizBuilder courseId={courseId} moduleId={m.id} questions={m.questions} onChange={(qs) => onChange({ questions: qs })} />

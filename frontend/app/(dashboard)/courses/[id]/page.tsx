@@ -75,6 +75,11 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
   const [tab, setTab] = useState<TabId>("course");
   const [newModuleTitle, setNewModuleTitle] = useState("");
+  // Picking the type at creation time (rather than defaulting every new
+  // module to "watch" and making the admin switch it after) means a SCORM
+  // module's upload box is live immediately — no create → change type →
+  // Save → then-finally-upload detour.
+  const [newModuleType, setNewModuleType] = useState<keyof typeof MODULE_TYPE_LABEL>("watch");
   const [assigning, setAssigning] = useState(false);
 
   // Local module state is the editor's working draft — every field edit
@@ -360,10 +365,24 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
             </div>
 
             <form
-              onSubmit={(e) => { e.preventDefault(); if (!newModuleTitle.trim()) return; addModule.mutate({ title: newModuleTitle.trim() }, { onSuccess: () => setNewModuleTitle("") }); }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newModuleTitle.trim()) return;
+                addModule.mutate(
+                  { title: newModuleTitle.trim(), type: newModuleType },
+                  { onSuccess: () => { setNewModuleTitle(""); setNewModuleType("watch"); } }
+                );
+              }}
               className="flex gap-2"
             >
               <Input placeholder="New module title" value={newModuleTitle} onChange={(e) => setNewModuleTitle(e.target.value)} />
+              <select
+                value={newModuleType}
+                onChange={(e) => setNewModuleType(e.target.value as keyof typeof MODULE_TYPE_LABEL)}
+                className="rounded-md border border-line px-2 py-1.5 text-sm"
+              >
+                {Object.entries(MODULE_TYPE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
               <Button type="submit" disabled={addModule.isPending}><Plus className="h-4 w-4" /> Add module</Button>
             </form>
           </div>

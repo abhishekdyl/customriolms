@@ -456,6 +456,20 @@ function ScormModuleRow({
   const limit = m.retake_enabled ? m.retake_limit : 1;
   const retakeAllowed = limit === null || m.attempts_used < limit;
 
+  // Moodle's bare "View the activity" completion mode: the admin wants
+  // this module done the instant the learner opens the package, with no
+  // CMI signal needed at all. Fire it once, as soon as the player (and
+  // therefore the package) is on screen — not on every render, and never
+  // more than once per mount, since complete.mutate is itself idempotent
+  // server-side but there's no reason to keep calling it.
+  const viewFired = useRef(false);
+  useEffect(() => {
+    if (m.scorm_completion_view && !m.completed && m.scorm_launch_path && !viewFired.current) {
+      viewFired.current = true;
+      complete.mutate({ moduleId: m.id });
+    }
+  }, [m.scorm_completion_view, m.completed, m.scorm_launch_path, m.id, complete]);
+
   return (
     <div className="border-b border-line-soft py-3">
       <div className="mb-2 flex items-center gap-3">

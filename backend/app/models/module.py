@@ -100,6 +100,32 @@ class Module(Base):
     scorm_launch_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     scorm_version: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "1.2" | "2004"
 
+    # SCORM completion criteria — Moodle's "Activity completion ▸ Add
+    # requirements" picker, mapped onto this package's own CMI signal
+    # (see learn_service.complete_module's SCORM branch for how each is
+    # evaluated and ScormPlayer for where the signal comes from):
+    #   - scorm_completion_view: completes the INSTANT the learner opens
+    #     the module — no CMI signal needed at all, same as Moodle's bare
+    #     "View the activity". When this is the only one on, the other
+    #     three are never even checked (see complete_module).
+    #   - scorm_completion_passed: the package must report
+    #     cmi.core.lesson_status/cmi.success_status == "passed".
+    #   - scorm_completion_completed: the package must report SOME
+    #     terminal status at all (completed/passed/failed) — this is the
+    #     historical default behavior (every module created before this
+    #     setting existed keeps exactly this gate, via the migration's
+    #     server_default).
+    #   - scorm_completion_graded: the package must report a numeric
+    #     score (cmi.core.score.raw/cmi.score.raw).
+    # Combined with AND when more than one (non-view) flag is on. All
+    # four False is treated the same as scorm_completion_completed alone
+    # (complete_module falls back to it at evaluation time) so a module
+    # can never end up with no way to ever complete.
+    scorm_completion_view: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    scorm_completion_passed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    scorm_completion_completed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    scorm_completion_graded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # Cross-feature soft references
     skill_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)
     badge_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)

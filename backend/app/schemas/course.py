@@ -111,6 +111,12 @@ class ModuleUpdate(BaseModel):
     # module; sending it explicitly is how the admin manually
     # publishes/un-publishes on demand.
     published: bool | None = None
+    # SCORM completion criteria (Moodle-style "Add requirements") — see
+    # Module's docstring on these four for how they combine.
+    scorm_completion_view: bool | None = None
+    scorm_completion_passed: bool | None = None
+    scorm_completion_completed: bool | None = None
+    scorm_completion_graded: bool | None = None
 
     @field_validator("retake_limit")
     @classmethod
@@ -142,6 +148,10 @@ class ModuleOut(BaseModel):
     file_key: str | None = Field(default=None, exclude=True)
     scorm_launch_path: str | None = None
     scorm_version: str | None = None
+    scorm_completion_view: bool = False
+    scorm_completion_passed: bool = False
+    scorm_completion_completed: bool = True
+    scorm_completion_graded: bool = False
     instructions: str | None
     skill_ids: list[uuid.UUID]
     badge_ids: list[uuid.UUID]
@@ -422,6 +432,15 @@ class LearnerModuleOut(BaseModel):
     file_size_label: str | None = None
     scorm_launch_path: str | None = None
     scorm_version: str | None = None
+    # SCORM completion criteria (Moodle-style) — see Module's docstring.
+    # The learner-facing player reads scorm_completion_view to know
+    # whether to auto-complete on open rather than wait for a CMI signal;
+    # the other three are informational (the backend enforces them
+    # regardless) but included so the UI can hint what's required.
+    scorm_completion_view: bool = False
+    scorm_completion_passed: bool = False
+    scorm_completion_completed: bool = True
+    scorm_completion_graded: bool = False
     instructions: str | None = None
     skill_count: int = 0
     questions: list[QuestionLearnerOut] = []

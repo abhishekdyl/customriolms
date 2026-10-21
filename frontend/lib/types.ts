@@ -176,6 +176,13 @@ export interface Module {
   file_size_label: string | null;
   scorm_launch_path: string | null;
   scorm_version: string | null;
+  // Moodle-style "Activity completion ▸ Add requirements" for SCORM
+  // modules. Independently checkable, combined with AND semantics.
+  // If all four are false, the backend falls back to completed-only.
+  scorm_completion_view: boolean;
+  scorm_completion_passed: boolean;
+  scorm_completion_completed: boolean;
+  scorm_completion_graded: boolean;
   instructions: string | null;
   skill_ids: string[];
   badge_ids: string[];
@@ -353,6 +360,12 @@ export interface LearnerModule {
   file_size_label: string | null;
   scorm_launch_path: string | null;
   scorm_version: string | null;
+  // See the same fields on Module — read by the learner-facing SCORM
+  // player to know whether to auto-complete on open (scorm_completion_view).
+  scorm_completion_view: boolean;
+  scorm_completion_passed: boolean;
+  scorm_completion_completed: boolean;
+  scorm_completion_graded: boolean;
   instructions: string | null;
   skill_count: number;
   /** No answer key — mirrors QuestionLearnerOut. trigger_time_sec/
