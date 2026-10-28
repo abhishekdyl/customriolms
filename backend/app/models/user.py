@@ -1,7 +1,8 @@
 import enum
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Enum, ForeignKey, String
+from sqlalchemy import DateTime, Enum, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -63,6 +64,22 @@ class User(Base):
     # they start on the shared default password, so the very first login
     # must swap it for something only they know before anything else works.
     must_change_password: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    # Forgot-password flow (see auth.forgot_password/reset_password). Only
+    # the SHA-256 hash of the reset token is ever stored — same reasoning
+    # as a password: a leaked DB row must not hand out a usable token.
+    # Both null outside of an active, unexpired reset request; a login
+    # doesn't clear them (they just expire), but a successful reset does.
+    reset_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    reset_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Google Sign-In (see auth.google_login). The Google account's stable
+    # numeric "sub" claim — never the email, which a Google account can
+    # change. Unique and null for every account that has never linked
+    # Google. hashed_password stays nullable (already true for invited
+    # users) so a Google-only account needs no password at all until the
+    # person sets one explicitly.
+    google_sub: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
 
     # Self-service profile — editable by the user themselves (email is the
     # login identity, not editable here; username's editability is gated

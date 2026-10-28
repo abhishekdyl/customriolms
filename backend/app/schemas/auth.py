@@ -35,6 +35,30 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8)
+
+
+class GoogleLoginRequest(BaseModel):
+    # The ID token (a signed JWT) from Google Identity Services' One Tap /
+    # Sign-In button on the frontend — never a raw access token or an
+    # email/password the frontend read out of the Google account itself.
+    # Verified server-side against Google's own public keys in
+    # auth.google_login before anything in it is trusted.
+    credential: str
+
+
+class GoogleRegisterRequest(GoogleLoginRequest):
+    # Google has no concept of "organization name" — still has to come
+    # from the person, same as the plain /auth/register form.
+    org_name: str
+
+
 class UserOut(BaseModel):
     id: uuid.UUID
     firstname: str

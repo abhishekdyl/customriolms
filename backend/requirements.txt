@@ -24,3 +24,4 @@ faster-whisper==1.0.3
 python-dotenv==1.0.1
 sentry-sdk[fastapi]==2.14.0
 pillow==13.0.0
+google-auth==2.62.0

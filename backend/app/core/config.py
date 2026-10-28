@@ -26,6 +26,21 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     MAX_CONCURRENT_SESSIONS: int = 3  # oldest session is evicted past this
 
+    # Google Sign-In (see auth.google_login) — the OAuth web-client ID
+    # from Google Cloud Console, shared with the frontend as
+    # NEXT_PUBLIC_GOOGLE_CLIENT_ID. Empty disables the feature entirely:
+    # the endpoint 503s and the frontend hides the button.
+    GOOGLE_CLIENT_ID: str = ""
+
+    # Base URL of the Next.js frontend — used to build the link inside a
+    # password-reset email (".../reset-password?token=..."). Not the same
+    # as PUBLIC_API_BASE_URL, which points at this backend instead.
+    FRONTEND_URL: str = "http://localhost:3000"
+
+    # How long a forgot-password link stays valid before the learner has
+    # to request a new one.
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+
     # AI
     ANTHROPIC_API_KEY: str = ""
 

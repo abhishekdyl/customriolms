@@ -97,12 +97,12 @@ async def save_smtp(db: AsyncSession, org_id: uuid.UUID, body: SmtpIn) -> OrgSmt
     return row
 
 
-def _send_blocking(row: OrgSmtpSettings, to_addr: str) -> None:
+def _send_blocking(row: OrgSmtpSettings, to_addr: str, subject: str, body: str) -> None:
     msg = EmailMessage()
-    msg["Subject"] = "Riosmart LMS — SMTP test"
+    msg["Subject"] = subject
     msg["From"] = f"{row.from_name} <{row.from_email}>" if row.from_name else row.from_email
     msg["To"] = to_addr
-    msg.set_content("This is a test email confirming your organization's SMTP settings work.")
+    msg.set_content(body)
     ctx = ssl.create_default_context()
     if row.encryption == "SSL":
         server = smtplib.SMTP_SSL(row.host, row.port, timeout=10, context=ctx)
@@ -120,7 +120,29 @@ async def send_test_email(row: OrgSmtpSettings, to_addr: str) -> tuple[bool, str
     if not row.host or not row.from_email:
         return False, "Couldn't connect — check host and credentials."
     try:
-        await asyncio.to_thread(_send_blocking, row, to_addr)
+        await asyncio.to_thread(
+            _send_blocking, row, to_addr,
+            "Riosmart LMS — SMTP test", "This is a test email confirming your organization's SMTP settings work.",
+        )
         return True, f"Test email sent successfully to {to_addr}."
     except Exception as exc:  # surface any connect/auth failure as a clean message
         return False, f"Couldn't connect — check host and credentials. ({type(exc).__name__})"
+
+
+async def send_email_if_configured(row: OrgSmtpSettings, to_addr: str, subject: str, body: str) -> bool:
+    """Best-effort send for transactional mail (password resets, etc.) that
+    isn't itself the thing the caller is testing — unlike send_test_email,
+    this never raises or reports a reason back to the caller, since the
+    caller (e.g. forgot_password) must behave identically whether or not
+    the email actually went out (no email-enumeration signal). Returns
+    whether a send was even attempted, purely so the caller can log a
+    dev-mode fallback when it wasn't. Silently does nothing when the org
+    hasn't turned on its own SMTP (use_custom) or left host/from_email
+    blank — there's no platform-wide mail server to fall back to."""
+    if not row.use_custom or not row.host or not row.from_email:
+        return False
+    try:
+        await asyncio.to_thread(_send_blocking, row, to_addr, subject, body)
+    except Exception:
+        pass  # best-effort — see docstring
+    return True

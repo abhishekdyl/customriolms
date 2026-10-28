@@ -1,13 +1,29 @@
 "use client";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Mail, Lock, Eye, EyeOff, AlertCircle, Building2, Check } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, AlertCircle, Building2, Check, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLogin } from "@/lib/hooks/use-auth";
 import { ApiError } from "@/lib/api-client";
+import { GoogleSignInButton } from "@/components/shell/auth/google-sign-in-button";
+
+/** Shown after a password reset — isolated in its own component because
+ * useSearchParams needs a Suspense boundary, and there's no reason to
+ * make the whole form wait on that. */
+function ResetSuccessBanner() {
+  const params = useSearchParams();
+  if (params.get("reset") !== "1") return null;
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-success-soft px-3.5 py-3 mb-4">
+      <CheckCircle2 className="h-4 w-4 text-success flex-shrink-0" />
+      <span className="text-sm text-ink">Your password has been reset — log in with your new one.</span>
+    </div>
+  );
+}
 
 /**
  * Ported from LoginScreen in the lms_screens.jsx mockup — same split-panel
@@ -69,6 +85,10 @@ export default function LoginPage() {
           <h2 className="font-head text-2xl text-ink mb-1.5">Log in</h2>
           <p className="text-sm text-ink-faint mb-6">Welcome back — enter your work email to continue.</p>
 
+          <Suspense fallback={null}>
+            <ResetSuccessBanner />
+          </Suspense>
+
           {login.isError && (
             <div className="flex items-center gap-2 rounded-lg bg-danger-soft px-3.5 py-3 mb-4">
               <AlertCircle className="h-4 w-4 text-danger flex-shrink-0" />
@@ -112,7 +132,7 @@ export default function LoginPage() {
           <div className="flex items-center gap-3 my-5">
             <div className="h-px flex-1 bg-line-soft" /><span className="text-xs text-ink-faint">or</span><div className="h-px flex-1 bg-line-soft" />
           </div>
-          <Button type="button" variant="secondary" className="w-full h-12">Continue with company SSO</Button>
+          <GoogleSignInButton mode="login" />
 
           <div className="flex items-center justify-center gap-1.5 pt-6">
             <span className="text-xs text-ink-faint">New org?</span>

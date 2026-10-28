@@ -45,6 +45,58 @@ export function useRegister() {
   });
 }
 
+/** Google Sign-In for an EXISTING account — the Google counterpart of
+ * useLogin. `credential` is the signed ID-token JWT Google Identity
+ * Services hands the frontend via GoogleSignInButton; the backend
+ * (/auth/google) verifies it against Google's own keys before trusting
+ * anything in it. Fails with a clear 404 if no account matches that
+ * Google email yet — the button's caller should point them at
+ * useGoogleRegister in that case (see GoogleSignInButton). */
+export function useGoogleLogin() {
+  const router = useRouter();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (credential: string) => api.post<TokenResponse>("/api/v1/auth/google", { credential }),
+    onSuccess: (data) => {
+      localStorage.setItem("access_token", data.access_token);
+      localStorage.setItem("refresh_token", data.refresh_token);
+      qc.clear();
+      if (data.must_change_password) router.push("/change-password");
+      else router.push(data.role ? ROLE_HOME[data.role] : "/dashboard");
+    },
+  });
+}
+
+/** Google Sign-In for a BRAND NEW org — the Google counterpart of
+ * useRegister. Google has no concept of "organization name", so the
+ * caller (RegisterPage) still collects that one field and passes it
+ * alongside the credential. */
+export function useGoogleRegister() {
+  const router = useRouter();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { credential: string; org_name: string }) =>
+      api.post<TokenResponse>("/api/v1/auth/google/register", body),
+    onSuccess: (data) => {
+      localStorage.setItem("access_token", data.access_token);
+      localStorage.setItem("refresh_token", data.refresh_token);
+      qc.clear();
+      router.push("/teams");
+    },
+  });
+}
+
+/** Step 1 of forgot-password — always "succeeds" from the caller's point
+ * of view (the backend intentionally responds the same way whether or
+ * not the email exists, so there's nothing to branch on besides a real
+ * network/server error). The caller just shows a fixed confirmation
+ * message on success. */
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (email: string) => api.post<{ detail: string }>("/api/v1/auth/forgot-password", { email }),
+  });
+}
+
 export function useCurrentUser() {
   return useQuery({
     queryKey: ["me"],

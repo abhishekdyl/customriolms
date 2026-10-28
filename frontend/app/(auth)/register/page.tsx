@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useRegister } from "@/lib/hooks/use-auth";
 import { ApiError } from "@/lib/api-client";
+import { GoogleSignInButton } from "@/components/shell/auth/google-sign-in-button";
 
 export default function RegisterPage() {
   const [orgName, setOrgName] = useState("");
@@ -68,6 +69,21 @@ export default function RegisterPage() {
         <Button type="submit" className="w-full h-12" disabled={register.isPending}>
           {register.isPending ? "Creating…" : "Create organization"}
         </Button>
+
+        <div className="flex items-center gap-3 my-5">
+          <div className="h-px flex-1 bg-line-soft" /><span className="text-xs text-ink-faint">or</span><div className="h-px flex-1 bg-line-soft" />
+        </div>
+        {/* Google still needs an org name — there's no Google field it
+         * could come from — so the button is disabled-looking (greyed via
+         * pointer-events) until one's typed above; the component itself
+         * also re-checks this and shows an inline error if clicked early. */}
+        <div className={!orgName.trim() ? "pointer-events-none opacity-50" : ""}>
+          <GoogleSignInButton mode="register" orgName={orgName} />
+        </div>
+        {!orgName.trim() && (
+          <p className="mt-1.5 text-center text-[11px] text-ink-faint">Enter your organization name above to continue with Google.</p>
+        )}
+
         <div className="flex items-center justify-center gap-1.5 pt-6">
           <span className="text-xs text-ink-faint">Already have an account?</span>
           <Link href="/login" className="text-xs font-semibold text-primary">Log in</Link>
