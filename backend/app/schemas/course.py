@@ -398,6 +398,12 @@ class CourseListItem(BaseModel):
     assigned_team_count: int = 0
     opens_at: datetime | None = None
     closes_at: datetime | None = None
+    # Same presigned-on-read pattern as CourseOut.cover_image_url — the
+    # service builds this directly from the course's cover_image_key, so
+    # it's a plain field here rather than a model_validator (the service
+    # already has storage_service's presigned URL in hand when it
+    # constructs each list row; no need to recompute it per-field here).
+    cover_image_url: str | None = None
 
     class Config:
         from_attributes = True

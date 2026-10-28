@@ -53,6 +53,7 @@ async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListIt
             duration_label=course.duration_label, module_count=module_count,
             assigned_team_count=len(course.assigned_team_ids or []),
             opens_at=course.opens_at, closes_at=course.closes_at,
+            cover_image_url=storage_service.presigned_get_url(course.cover_image_key) if course.cover_image_key else None,
         ))
     return items
 
@@ -104,6 +105,7 @@ async def list_my_courses(db: AsyncSession, user: User) -> list[MyCourseItem]:
             duration_label=course.duration_label, module_count=module_count,
             assigned_team_count=len(course.assigned_team_ids or []),
             opens_at=course.opens_at, closes_at=course.closes_at,
+            cover_image_url=storage_service.presigned_get_url(course.cover_image_key) if course.cover_image_key else None,
             progress_pct=pct,
         ))
     return out

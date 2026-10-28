@@ -10,7 +10,6 @@ import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { CategoryManager } from "@/components/shell/courses/category-manager";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
 import { CourseCard } from "@/components/shell/courses/course-card";
-import { CoursePreviewModal } from "@/components/shell/courses/course-preview-modal";
 import { ApiError } from "@/lib/api-client";
 import { localToIso, nowLocal } from "@/lib/utils";
 
@@ -119,7 +118,6 @@ export default function CoursesPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [assigningCourseId, setAssigningCourseId] = useState<string | null>(null);
   const [bulkAssignIds, setBulkAssignIds] = useState<string[] | null>(null);
-  const [previewingId, setPreviewingId] = useState<string | null>(null);
 
   const catNames = ["All", ...(categories?.map((c) => c.name) ?? [])];
   const shown = filter === "All" ? courses : courses?.filter((c) => c.category_name === filter);
@@ -200,7 +198,6 @@ export default function CoursesPage() {
             selected={selected.includes(c.id)}
             onToggleSelect={selectMode ? toggleSelect : null}
             onAssign={setAssigningCourseId}
-            onPreview={setPreviewingId}
           />
         ))}
         {shown?.length === 0 && <p className="text-sm text-ink-faint">No courses in this category yet.</p>}
@@ -209,7 +206,6 @@ export default function CoursesPage() {
       <CreateCourseDialog open={createOpen} onOpenChange={setCreateOpen} />
       {assigningCourseId && <AssignModal courseId={assigningCourseId} onClose={() => setAssigningCourseId(null)} />}
       {bulkAssignIds && <AssignModal courseIds={bulkAssignIds} onClose={() => { setBulkAssignIds(null); clearSelection(); }} />}
-      {previewingId && <CoursePreviewModal courseId={previewingId} onClose={() => setPreviewingId(null)} />}
     </div>
   );
 }

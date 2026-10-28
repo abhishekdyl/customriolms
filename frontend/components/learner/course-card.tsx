@@ -33,7 +33,12 @@ export function CourseCard({
         href={href}
         className="flex items-center gap-3 rounded-[10px] border border-line bg-surface p-3 active:opacity-80 md:hidden"
       >
-        <div className={cn("h-11 w-11 shrink-0 rounded-[10px]", cover)} />
+        <div className={cn("relative h-11 w-11 shrink-0 overflow-hidden rounded-[10px]", !course.cover_image_url && cover)}>
+          {course.cover_image_url && (
+            // eslint-disable-next-line @next/next/no-img-element -- presigned URL
+            <img src={course.cover_image_url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+          )}
+        </div>
         <div className="min-w-0 flex-1">
           <div className="text-[11px] text-ink-faint">{course.category_name}</div>
           <div className="text-[13.5px] font-medium text-ink">{course.title}</div>
@@ -47,7 +52,12 @@ export function CourseCard({
         href={href}
         className="hidden flex-col overflow-hidden rounded-[14px] border border-line bg-surface text-left active:opacity-90 md:flex"
       >
-        <div className={cn("h-[72px]", cover)} />
+        <div className={cn("relative h-[72px]", !course.cover_image_url && cover)}>
+          {course.cover_image_url && (
+            // eslint-disable-next-line @next/next/no-img-element -- presigned URL
+            <img src={course.cover_image_url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+          )}
+        </div>
         <div className="p-4">
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">

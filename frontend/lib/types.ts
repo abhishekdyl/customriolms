@@ -203,6 +203,7 @@ export interface CourseListItem {
   assigned_team_count: number;
   opens_at: string | null;
   closes_at: string | null;
+  cover_image_url: string | null;
 }
 
 /** One learner enrolled in a course — via their team or assigned directly —

@@ -12,7 +12,6 @@ export function CourseCard({
   selected,
   onToggleSelect,
   onAssign,
-  onPreview,
 }: {
   course: CourseListItem;
   categories: Category[];
@@ -20,7 +19,6 @@ export function CourseCard({
   selected: boolean;
   onToggleSelect: ((id: string) => void) | null;
   onAssign: (id: string) => void;
-  onPreview: (id: string) => void;
 }) {
   const router = useRouter();
   const updateCourse = useUpdateCourse(c.id);
@@ -93,12 +91,26 @@ export function CourseCard({
     );
   }
 
+  // The whole card (cover image, title, "Manage") opens the same course
+  // management page — only the select checkbox, edit/delete icons, the
+  // copy-link button, and "Assign" are separate actions, so each of
+  // those stops the click from bubbling up to this handler.
+  const goToManage = () => router.push(`/courses/${c.id}`);
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+
   return (
-    <div className={`rounded-[10px] border-[1.5px] bg-surface ${selected ? "border-primary" : "border-line"}`}>
-      <div className="relative h-[84px] rounded-t-[10px]" style={{ background: color }}>
+    <div
+      onClick={goToManage}
+      className={`cursor-pointer rounded-[10px] border-[1.5px] bg-surface ${selected ? "border-primary" : "border-line"}`}
+    >
+      <div className="relative h-[84px] overflow-hidden rounded-t-[10px]" style={c.cover_image_url ? undefined : { background: color }}>
+        {c.cover_image_url && (
+          // eslint-disable-next-line @next/next/no-img-element -- presigned URL, not a static asset Next can optimize
+          <img src={c.cover_image_url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        )}
         {onToggleSelect && (
           <button
-            onClick={() => onToggleSelect(c.id)}
+            onClick={(e) => { stop(e); onToggleSelect(c.id); }}
             className="absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded"
             style={{ border: `1.5px solid ${selected ? "#fff" : "rgba(255,255,255,0.6)"}`, background: selected ? "#fff" : "rgba(0,0,0,0.15)" }}
           >
@@ -111,15 +123,15 @@ export function CourseCard({
           <span className="text-[11.5px] text-ink-faint">{c.category_name ?? "Uncategorized"}</span>
           <div className="flex items-center gap-0.5">
             <span className="mr-1 text-[11.5px] text-ink-faint">{c.duration_label}</span>
-            <button onClick={copyShareLink} title="Copy shareable course link" className="rounded p-1 hover:bg-paper">
+            <button onClick={(e) => { stop(e); copyShareLink(); }} title="Copy shareable course link" className="rounded p-1 hover:bg-paper">
               {linkCopied ? <Check className="h-3.5 w-3.5 text-success" /> : <Link2 className="h-3.5 w-3.5 text-ink-faint" />}
             </button>
             {canAuthor && (
               <>
-                <button onClick={() => setEditing(true)} title="Edit course" className="rounded p-1 hover:bg-paper">
+                <button onClick={(e) => { stop(e); setEditing(true); }} title="Edit course" className="rounded p-1 hover:bg-paper">
                   <Pencil className="h-3.5 w-3.5 text-ink-faint" />
                 </button>
-                <button onClick={() => setConfirmDel(true)} title="Delete course" className="rounded p-1 hover:bg-paper">
+                <button onClick={(e) => { stop(e); setConfirmDel(true); }} title="Delete course" className="rounded p-1 hover:bg-paper">
                   <Trash2 className="h-3.5 w-3.5 text-danger" />
                 </button>
               </>
@@ -130,12 +142,11 @@ export function CourseCard({
         <div className="mb-2.5 text-[11.5px] text-ink-faint">
           {c.module_count} module{c.module_count !== 1 ? "s" : ""} · Assigned to {c.assigned_team_count} team{c.assigned_team_count !== 1 ? "s" : ""}
         </div>
-        <div className="flex items-center justify-between">
-          <div className="flex gap-3">
-            <button onClick={() => router.push(`/courses/${c.id}`)} className="text-[12.5px] font-medium text-ink-soft">Manage</button>
-            {canAuthor && <button onClick={() => onAssign(c.id)} className="text-[12.5px] font-medium text-ink-soft">Assign</button>}
-          </div>
-          <button onClick={() => onPreview(c.id)} className="text-[12.5px] font-medium text-primary">Preview →</button>
+        <div className="flex items-center gap-3">
+          <span className="text-[12.5px] font-medium text-ink-soft">Manage</span>
+          {canAuthor && (
+            <button onClick={(e) => { stop(e); onAssign(c.id); }} className="text-[12.5px] font-medium text-ink-soft">Assign</button>
+          )}
         </div>
       </div>
     </div>
