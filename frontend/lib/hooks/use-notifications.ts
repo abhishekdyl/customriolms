@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { NotifTemplate, ReminderRule, SmtpSettings } from "@/lib/notifications";
+import type { EmailLogEntry, NotifTemplate, ReminderRule, SmtpSettings } from "@/lib/notifications";
 
 const base = "/api/v1/notifications";
 
@@ -86,4 +86,7 @@ export function useRequestPlatformFallback() {
     mutationFn: () => api.post<SmtpSettings>(`${base}/smtp/request-platform-fallback`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["notif-smtp"] }),
   });
+}
+export function useEmailLog() {
+  return useQuery({ queryKey: ["notif-email-log"], queryFn: () => api.get<EmailLogEntry[]>(`${base}/smtp/log`) });
 }

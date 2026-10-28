@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.models.notification import NotificationTemplate, ReminderRule
 from app.models.user import RoleName, User
 from app.schemas.notification import (
-    RuleIn, RuleOut, SmtpIn, SmtpOut, SmtpTestResult, TemplateIn, TemplateOut,
+    EmailLogOut, RuleIn, RuleOut, SmtpIn, SmtpOut, SmtpTestResult, TemplateIn, TemplateOut,
 )
 from app.services import notification_service as svc
 
@@ -98,7 +98,15 @@ async def save_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), user: User
 @router.post("/smtp/test", response_model=SmtpTestResult)
 async def test_smtp(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     ok, detail = await svc.send_test_email(await svc.get_smtp(db, user.org_id), user.email)
+    await svc.log_email(db, user.org_id, user.email, "Riosmart LMS — SMTP test", "org", "sent" if ok else "failed", detail)
     return SmtpTestResult(ok=ok, detail=detail)
+
+
+@router.get("/smtp/log", response_model=list[EmailLogOut])
+async def get_email_log(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Who got mailed what, and when — this org's own send history
+    (password resets, reminders, invites, SMTP test sends), newest first."""
+    return await svc.list_email_log(db, user.org_id)
 
 
 @router.post("/smtp/request-platform-fallback", response_model=SmtpOut)

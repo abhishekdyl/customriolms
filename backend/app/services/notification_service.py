@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.notification import NotificationTemplate, OrgSmtpSettings, PlatformSmtpSettings, ReminderRule
+from app.models.notification import EmailLog, NotificationTemplate, OrgSmtpSettings, PlatformSmtpSettings, ReminderRule
 from app.models.org import Org
 from app.models.platform_settings import SINGLETON_ID
 from app.schemas.notification import OrgFallbackRequestOut, PlatformSmtpIn, PlatformSmtpOut, SmtpIn, SmtpOut
@@ -163,6 +163,35 @@ async def resolve_send_source(db: AsyncSession, org_id: uuid.UUID):
     return None, "none"
 
 
+async def log_email(
+    db: AsyncSession, org_id: uuid.UUID, to_addr: str, subject: str, source: str, status: str, detail: str = "",
+) -> None:
+    """Records one row in the "who got mailed what, when" audit trail
+    (Notifications ▸ Sent mail log for an org; Platform Settings' cross-
+    org view for a Super Admin). Commits on its own so a logging failure
+    (or the caller's own transaction state) never affects the send path
+    itself — this always runs after the send attempt is already decided."""
+    db.add(EmailLog(org_id=org_id, to_addr=to_addr, subject=subject, source=source, status=status, detail=detail[:300]))
+    await db.commit()
+
+
+async def list_email_log(db: AsyncSession, org_id: uuid.UUID, limit: int = 50) -> list[EmailLog]:
+    rows = (await db.execute(
+        select(EmailLog).where(EmailLog.org_id == org_id).order_by(EmailLog.created_at.desc()).limit(limit)
+    )).scalars().all()
+    return list(rows)
+
+
+async def list_platform_email_log(db: AsyncSession, limit: int = 200) -> list[tuple[EmailLog, str]]:
+    rows = (await db.execute(
+        select(EmailLog, Org.name)
+        .join(Org, Org.id == EmailLog.org_id)
+        .order_by(EmailLog.created_at.desc())
+        .limit(limit)
+    )).all()
+    return [(log, org_name) for log, org_name in rows]
+
+
 async def send_email_if_configured(db: AsyncSession, org_id: uuid.UUID, to_addr: str, subject: str, body: str) -> bool:
     """Best-effort send for transactional mail (password resets, etc.) that
     isn't itself the thing the caller is testing — unlike send_test_email,
@@ -172,14 +201,19 @@ async def send_email_if_configured(db: AsyncSession, org_id: uuid.UUID, to_addr:
     whether a send was even attempted, purely so the caller can log a
     dev-mode fallback when it wasn't. Resolves through the org's own SMTP
     first, then the platform's shared SMTP if that org has been approved
-    to use it (see resolve_send_source); does nothing if neither applies."""
-    row, _source = await resolve_send_source(db, org_id)
+    to use it (see resolve_send_source); does nothing if neither applies.
+    Every attempt — sent, failed, or skipped — is recorded (see
+    list_email_log / list_platform_email_log) regardless of outcome."""
+    row, source = await resolve_send_source(db, org_id)
     if row is None:
+        await log_email(db, org_id, to_addr, subject, "none", "skipped", "No SMTP configured or approved for this org")
         return False
     try:
         await asyncio.to_thread(_send_blocking, row, to_addr, subject, body)
-    except Exception:
-        pass  # best-effort — see docstring
+    except Exception as exc:
+        await log_email(db, org_id, to_addr, subject, source, "failed", f"{type(exc).__name__}: {exc}")
+        return True  # best-effort — see docstring: caller still treats this as "attempted"
+    await log_email(db, org_id, to_addr, subject, source, "sent")
     return True
 
 

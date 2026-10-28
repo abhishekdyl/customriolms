@@ -60,6 +60,28 @@ class OrgSmtpSettings(Base):
     fallback_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class EmailLog(Base):
+    """One row per outbound-mail attempt (password resets, reminders,
+    invites, SMTP test sends — anything that goes through notification_
+    service's send paths) — the audit trail for "kis ko kab kaunsa mail
+    gaya": who it was addressed to, what it was, which SMTP it went
+    through (or why it didn't go at all), and when."""
+    __tablename__ = "email_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orgs.id"), nullable=False, index=True)
+    to_addr: Mapped[str] = mapped_column(String(255), nullable=False)
+    subject: Mapped[str] = mapped_column(String(300), nullable=False)
+    # org | platform | none — which SMTP it was sent through (or attempted
+    # through); "none" means there was nowhere to send it at all.
+    source: Mapped[str] = mapped_column(String(10), nullable=False)
+    # sent | failed | skipped — skipped means no SMTP was configured/
+    # approved, so sending was never even attempted.
+    status: Mapped[str] = mapped_column(String(10), nullable=False)
+    detail: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+
+
 class PlatformSmtpSettings(Base):
     """Exactly one row (id is the fixed platform_settings.SINGLETON_ID) —
     the Super Admin's shared mail server. Orgs that have no SMTP of their

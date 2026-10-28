@@ -7,7 +7,7 @@ from app.api.deps import get_current_user, require_role
 from app.core.database import get_db
 from app.models.user import RoleName, User
 from app.schemas.notification import (
-    OrgFallbackRequestOut, PlatformSmtpIn, PlatformSmtpOut, SmtpTestResult,
+    OrgFallbackRequestOut, PlatformEmailLogOut, PlatformSmtpIn, PlatformSmtpOut, SmtpTestResult,
 )
 from app.services import notification_service as svc
 
@@ -33,6 +33,20 @@ async def test_platform_smtp(db: AsyncSession = Depends(get_db), user: User = De
     to send a platform-level test to."""
     ok, detail = await svc.send_test_email(await svc.get_platform_smtp(db), user.email)
     return SmtpTestResult(ok=ok, detail=detail)
+
+
+@router.get("/email-log", response_model=list[PlatformEmailLogOut])
+async def get_platform_email_log(db: AsyncSession = Depends(get_db)):
+    """Who got mailed what, from which org, through which SMTP, and when
+    — across every org on the platform. Newest first."""
+    rows = await svc.list_platform_email_log(db)
+    return [
+        PlatformEmailLogOut(
+            id=log.id, to_addr=log.to_addr, subject=log.subject, source=log.source, status=log.status,
+            detail=log.detail, created_at=log.created_at, org_id=log.org_id, org_name=org_name,
+        )
+        for log, org_name in rows
+    ]
 
 
 @router.get("/requests", response_model=list[OrgFallbackRequestOut])

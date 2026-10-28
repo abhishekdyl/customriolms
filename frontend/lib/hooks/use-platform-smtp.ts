@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { OrgFallbackRequest, PlatformSmtpSettings } from "@/lib/notifications";
+import type { OrgFallbackRequest, PlatformEmailLogEntry, PlatformSmtpSettings } from "@/lib/notifications";
 
 const base = "/api/v1/platform/smtp";
 
@@ -22,6 +22,9 @@ export function useTestPlatformSmtp() {
 // ----- org ▸ platform-fallback requests (Super Admin's approval queue)
 export function usePlatformSmtpRequests() {
   return useQuery({ queryKey: ["platform-smtp-requests"], queryFn: () => api.get<OrgFallbackRequest[]>(`${base}/requests`) });
+}
+export function usePlatformEmailLog() {
+  return useQuery({ queryKey: ["platform-email-log"], queryFn: () => api.get<PlatformEmailLogEntry[]>(`${base}/email-log`) });
 }
 export function useDecideSmtpRequest() {
   const qc = useQueryClient();

@@ -26,6 +26,18 @@ export interface OrgFallbackRequest {
   requested_at: string | null; decided_at: string | null;
 }
 
+/** One row of the "kis ko kab kaunsa mail gaya" audit trail — see
+ * notification_service.log_email on the backend. */
+export interface EmailLogEntry {
+  id: string; to_addr: string; subject: string;
+  source: "org" | "platform" | "none";
+  status: "sent" | "failed" | "skipped";
+  detail: string; created_at: string;
+}
+export interface PlatformEmailLogEntry extends EmailLogEntry {
+  org_id: string; org_name: string;
+}
+
 export const triggerLabel: Record<Trigger, string> = {
   before_due: "Before due date",
   on_due: "On due date",

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { usePlatformSettings, useUpdatePlatformSettings, useSuperAdmins } from "@/lib/hooks/use-orgs";
 import {
-  useDecideSmtpRequest, usePlatformSmtp, usePlatformSmtpRequests, useSavePlatformSmtp, useTestPlatformSmtp,
+  useDecideSmtpRequest, usePlatformEmailLog, usePlatformSmtp, usePlatformSmtpRequests, useSavePlatformSmtp, useTestPlatformSmtp,
 } from "@/lib/hooks/use-platform-smtp";
 import { useDraft } from "@/lib/hooks/use-draft";
 import { SaveBar } from "@/components/ui/save-bar";
@@ -153,7 +153,55 @@ function EmailNotificationsTab() {
       </section>
 
       <PlatformFallbackRequestsQueue />
+      <PlatformEmailLogSection />
     </div>
+  );
+}
+
+/** "Kis ko kab kaunsa mail gaya" across every org on the platform —
+ * which org, recipient, subject, which SMTP it went through, and whether
+ * it actually sent. Newest first. */
+function PlatformEmailLogSection() {
+  const { data: rows, isLoading } = usePlatformEmailLog();
+
+  const statusBadge = (status: string) => {
+    if (status === "sent") return <span className="rounded-full bg-success-soft px-2.5 py-0.5 text-[10.5px] font-semibold text-success">Sent</span>;
+    if (status === "failed") return <span className="rounded-full bg-danger-soft px-2.5 py-0.5 text-[10.5px] font-semibold text-danger">Failed</span>;
+    return <span className="rounded-full bg-paper px-2.5 py-0.5 text-[10.5px] font-semibold text-ink-faint">Not sent</span>;
+  };
+
+  return (
+    <section className="mt-6 overflow-hidden rounded-xl border border-line bg-surface">
+      <div className="border-b border-line-soft px-4 py-3.5">
+        <span className="font-head text-[14.5px] text-ink">Sent mail log (all orgs)</span>
+      </div>
+      <table className="w-full text-left text-[12.5px]">
+        <thead>
+          <tr className="bg-line-soft text-[11px] text-ink-faint">
+            <th className="px-4 py-2 font-medium">Org</th>
+            <th className="px-4 py-2 font-medium">To</th>
+            <th className="px-4 py-2 font-medium">Subject</th>
+            <th className="px-4 py-2 font-medium">Via</th>
+            <th className="px-4 py-2 font-medium">Status</th>
+            <th className="px-4 py-2 font-medium">When</th>
+          </tr>
+        </thead>
+        <tbody>
+          {isLoading && <tr><td colSpan={6} className="px-4 py-4 text-center text-ink-faint">Loading…</td></tr>}
+          {!isLoading && !rows?.length && <tr><td colSpan={6} className="px-4 py-4 text-center text-ink-faint">No emails sent yet.</td></tr>}
+          {rows?.map((r) => (
+            <tr key={r.id} className="border-t border-line-soft">
+              <td className="px-4 py-2.5 text-ink">{r.org_name}</td>
+              <td className="px-4 py-2.5 text-ink-soft">{r.to_addr}</td>
+              <td className="max-w-[200px] truncate px-4 py-2.5 text-ink-soft" title={r.subject}>{r.subject}</td>
+              <td className="px-4 py-2.5 text-ink-faint">{r.source === "platform" ? "Platform SMTP" : r.source === "org" ? "Org's own SMTP" : "—"}</td>
+              <td className="px-4 py-2.5">{statusBadge(r.status)}</td>
+              <td className="whitespace-nowrap px-4 py-2.5 text-ink-faint">{new Date(r.created_at).toLocaleString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }
 

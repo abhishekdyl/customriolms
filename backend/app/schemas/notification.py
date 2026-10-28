@@ -96,3 +96,21 @@ class OrgFallbackRequestOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class EmailLogOut(BaseModel):
+    id: uuid.UUID
+    to_addr: str
+    subject: str
+    source: Literal["org", "platform", "none"]
+    status: Literal["sent", "failed", "skipped"]
+    detail: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PlatformEmailLogOut(EmailLogOut):
+    org_id: uuid.UUID
+    org_name: str
