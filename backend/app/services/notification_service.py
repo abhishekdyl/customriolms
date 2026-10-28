@@ -148,19 +148,26 @@ async def send_test_email(row: OrgSmtpSettings, to_addr: str) -> tuple[bool, str
         return False, f"Couldn't connect — check host and credentials. ({type(exc).__name__})"
 
 
-async def resolve_send_source(db: AsyncSession, org_id: uuid.UUID):
+async def resolve_send_source(db: AsyncSession, org_id: uuid.UUID) -> tuple[object | None, str, str]:
     """3-tier resolution: an org's own SMTP wins if it's turned on and
     filled in; otherwise, only once a Super Admin has explicitly approved
     that org's request, fall back to the platform's shared SMTP; otherwise
-    there's nowhere to send. Returns (row, "org"|"platform") or (None, "none")."""
+    there's nowhere to send. Returns (row, "org"|"platform"|"none", why) —
+    `why` is only meaningful when row is None, and says exactly which of
+    the three tiers was missing/incomplete so a skipped send is self-
+    diagnosable without reading the database directly."""
     org_row = await get_smtp(db, org_id)
-    if org_row.use_custom and org_row.host and org_row.from_email:
-        return org_row, "org"
-    if org_row.fallback_status == "approved":
-        plat_row = await get_platform_smtp(db)
-        if plat_row.host and plat_row.from_email:
-            return plat_row, "platform"
-    return None, "none"
+    if org_row.use_custom:
+        if org_row.host and org_row.from_email:
+            return org_row, "org", ""
+        return None, "none", "\"Use our own SMTP server\" is on but host or From-email is blank — finish and save that form"
+    if org_row.fallback_status != "approved":
+        label = {"none": "hasn't requested platform-SMTP access", "requested": "platform-SMTP request is still pending approval", "denied": "platform-SMTP request was denied"}
+        return None, "none", f"This org {label.get(org_row.fallback_status, 'has no SMTP configured')}"
+    plat_row = await get_platform_smtp(db)
+    if plat_row.host and plat_row.from_email:
+        return plat_row, "platform", ""
+    return None, "none", "Platform-SMTP fallback is approved, but the Super Admin hasn't filled in the platform's own SMTP host/From-email yet (Platform Settings ▸ Email & Notifications)"
 
 
 async def log_email(
@@ -204,9 +211,9 @@ async def send_email_if_configured(db: AsyncSession, org_id: uuid.UUID, to_addr:
     to use it (see resolve_send_source); does nothing if neither applies.
     Every attempt — sent, failed, or skipped — is recorded (see
     list_email_log / list_platform_email_log) regardless of outcome."""
-    row, source = await resolve_send_source(db, org_id)
+    row, source, why = await resolve_send_source(db, org_id)
     if row is None:
-        await log_email(db, org_id, to_addr, subject, "none", "skipped", "No SMTP configured or approved for this org")
+        await log_email(db, org_id, to_addr, subject, "none", "skipped", why)
         return False
     try:
         await asyncio.to_thread(_send_blocking, row, to_addr, subject, body)
