@@ -1,9 +1,17 @@
 "use client";
 import { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, Send, Server } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Loader2, Send, Server, ShieldCheck, ShieldOff } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
-import { useSaveSmtp, useSmtp, useTestSmtp } from "@/lib/hooks/use-notifications";
+import { useRequestPlatformFallback, useSaveSmtp, useSmtp, useTestSmtp } from "@/lib/hooks/use-notifications";
+
+// Common providers' ports almost always imply one protocol — far more
+// reliably than whatever the Encryption dropdown happens to be left at.
+// 465 without SSL (or vice versa for 587) is exactly what produces
+// "SMTPServerDisconnected": the server slams the connection shut on the
+// wrong handshake. Nudge the dropdown to match whenever the port changes
+// to one of these, so most orgs never hit that error in the first place.
+const PORT_ENCRYPTION_HINTS: Record<string, "TLS" | "SSL"> = { "465": "SSL", "587": "TLS", "25": "TLS", "2525": "TLS" };
 
 const input = "w-full text-[13px] border border-line rounded-md px-2.5 py-2 outline-none focus:border-primary bg-surface";
 const label = "text-[11.5px] text-ink-soft mb-1";
@@ -13,6 +21,7 @@ export function SmtpTab() {
   const { data: org } = useMyOrg(true);
   const save = useSaveSmtp();
   const test = useTestSmtp();
+  const requestFallback = useRequestPlatformFallback();
 
   const [f, setF] = useState({
     use_custom: false, host: "", port: "587", encryption: "TLS" as "TLS" | "SSL" | "None",
@@ -47,6 +56,11 @@ export function SmtpTab() {
     doSave(() => test.mutate(undefined, { onSuccess: (r) => setResult(r) }));
   };
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF({ ...f, [k]: e.target.value });
+  const setPort = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const port = e.target.value;
+    const hint = PORT_ENCRYPTION_HINTS[port.trim()];
+    setF((p) => ({ ...p, port, encryption: hint ?? p.encryption }));
+  };
 
   return (
     <div className="max-w-[560px]">
@@ -80,7 +94,7 @@ export function SmtpTab() {
             </div>
             <div>
               <div className={label}>Port</div>
-              <input className={input} value={f.port} onChange={set("port")} inputMode="numeric" />
+              <input className={input} value={f.port} onChange={setPort} inputMode="numeric" />
             </div>
             <div>
               <div className={label}>Encryption</div>
@@ -129,6 +143,55 @@ export function SmtpTab() {
             {save.isError && <span className="text-[12px] text-danger">Couldn&apos;t save.</span>}
           </div>
         </div>
+      )}
+
+      {!f.use_custom && <PlatformFallbackCard status={smtp?.fallback_status ?? "none"} requestFallback={requestFallback} />}
+    </div>
+  );
+}
+
+/** Tier 3 of the SMTP setup: an org with no mail server of its own can ask
+ * to borrow the platform's shared one instead of configuring its own —
+ * but nothing sends through it until a Super Admin explicitly approves. */
+function PlatformFallbackCard({
+  status, requestFallback,
+}: {
+  status: "none" | "requested" | "approved" | "denied";
+  requestFallback: ReturnType<typeof useRequestPlatformFallback>;
+}) {
+  return (
+    <div className="mt-4 flex items-center justify-between gap-3 rounded-[10px] border border-line bg-surface p-4">
+      <div className="flex items-start gap-3">
+        {status === "approved" ? (
+          <ShieldCheck size={16} className="mt-0.5 shrink-0 text-success" />
+        ) : (
+          <ShieldOff size={16} className="mt-0.5 shrink-0 text-ink-faint" />
+        )}
+        <div>
+          <div className="text-[13.5px] font-medium text-ink">Use Riosmart&apos;s shared mail server</div>
+          <div className="text-[11.5px] text-ink-faint">
+            {status === "approved" && "Approved — your reminder and invite emails now send through Riosmart's platform SMTP."}
+            {status === "requested" && "Requested — waiting for a Super Admin to approve this."}
+            {status === "denied" && "Your request was declined. You can ask again, or set up your own SMTP above."}
+            {status === "none" && "Don't have your own mail server? Ask to send through Riosmart's instead — a Super Admin has to approve it first."}
+          </div>
+        </div>
+      </div>
+      {status === "requested" ? (
+        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-paper px-2.5 py-1 text-[11px] font-medium text-ink-soft">
+          <Clock size={12} /> Pending
+        </span>
+      ) : status === "approved" ? (
+        <span className="shrink-0 rounded-full bg-success-soft px-2.5 py-1 text-[11px] font-semibold text-success">Active</span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => requestFallback.mutate()}
+          disabled={requestFallback.isPending}
+          className="shrink-0 rounded-md border border-line px-3.5 py-1.5 text-[12.5px] font-medium text-ink-soft disabled:opacity-60"
+        >
+          {requestFallback.isPending ? "Requesting…" : status === "denied" ? "Request again" : "Request access"}
+        </button>
       )}
     </div>
   );

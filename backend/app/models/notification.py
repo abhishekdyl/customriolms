@@ -50,3 +50,29 @@ class OrgSmtpSettings(Base):
     password: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     from_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
     from_email: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # Fallback-to-platform-SMTP request/approval state (3-tier SMTP: org's
+    # own SMTP > approved platform fallback > nowhere to send). An org with
+    # no SMTP credentials of its own can ask to borrow the platform's;
+    # nothing is sent through it until a Super Admin approves.
+    # none | requested | approved | denied
+    fallback_status: Mapped[str] = mapped_column(String(10), default="none", nullable=False)
+    fallback_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fallback_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PlatformSmtpSettings(Base):
+    """Exactly one row (id is the fixed platform_settings.SINGLETON_ID) —
+    the Super Admin's shared mail server. Orgs that have no SMTP of their
+    own, and have been explicitly approved (see OrgSmtpSettings.fallback_
+    status), send their transactional mail through this instead."""
+    __tablename__ = "platform_smtp_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    host: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    port: Mapped[int] = mapped_column(Integer, default=587, nullable=False)
+    encryption: Mapped[str] = mapped_column(String(10), default="TLS", nullable=False)  # TLS | SSL | None
+    username: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # NOTE: stored as plain text for now — encrypt at rest (e.g. Fernet with a server key) before production.
+    password: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    from_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    from_email: Mapped[str] = mapped_column(String(255), default="", nullable=False)

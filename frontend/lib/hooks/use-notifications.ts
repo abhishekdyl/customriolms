@@ -73,10 +73,17 @@ export function useSmtp() {
 export function useSaveSmtp() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (b: Omit<SmtpSettings, "has_password"> & { password?: string }) => api.patch<SmtpSettings>(`${base}/smtp`, b),
+    mutationFn: (b: Omit<SmtpSettings, "has_password" | "fallback_status"> & { password?: string }) => api.patch<SmtpSettings>(`${base}/smtp`, b),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["notif-smtp"] }),
   });
 }
 export function useTestSmtp() {
   return useMutation({ mutationFn: () => api.post<{ ok: boolean; detail: string }>(`${base}/smtp/test`, {}) });
+}
+export function useRequestPlatformFallback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<SmtpSettings>(`${base}/smtp/request-platform-fallback`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["notif-smtp"] }),
+  });
 }

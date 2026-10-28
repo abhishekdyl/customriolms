@@ -99,3 +99,12 @@ async def save_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), user: User
 async def test_smtp(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     ok, detail = await svc.send_test_email(await svc.get_smtp(db, user.org_id), user.email)
     return SmtpTestResult(ok=ok, detail=detail)
+
+
+@router.post("/smtp/request-platform-fallback", response_model=SmtpOut)
+async def request_platform_fallback(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Org has no working SMTP of its own — ask the Super Admin for
+    permission to send through the platform's shared SMTP instead. Nothing
+    sends through it until that request is approved (see
+    /api/v1/platform/smtp/requests on the Super Admin side)."""
+    return svc.smtp_out(await svc.request_platform_fallback(db, user.org_id))

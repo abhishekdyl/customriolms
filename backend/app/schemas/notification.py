@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -46,6 +47,9 @@ class SmtpIn(BaseModel):
     from_email: str = ""
 
 
+FallbackStatus = Literal["none", "requested", "approved", "denied"]
+
+
 class SmtpOut(BaseModel):
     use_custom: bool
     host: str
@@ -55,8 +59,40 @@ class SmtpOut(BaseModel):
     has_password: bool
     from_name: str
     from_email: str
+    fallback_status: FallbackStatus
 
 
 class SmtpTestResult(BaseModel):
     ok: bool
     detail: str
+
+
+class PlatformSmtpIn(BaseModel):
+    host: str = ""
+    port: int = Field(default=587, ge=1, le=65535)
+    encryption: Literal["TLS", "SSL", "None"] = "TLS"
+    username: str = ""
+    password: str | None = None  # None = keep the stored password
+    from_name: str = ""
+    from_email: str = ""
+
+
+class PlatformSmtpOut(BaseModel):
+    host: str
+    port: int
+    encryption: str
+    username: str
+    has_password: bool
+    from_name: str
+    from_email: str
+
+
+class OrgFallbackRequestOut(BaseModel):
+    org_id: uuid.UUID
+    org_name: str
+    status: FallbackStatus
+    requested_at: datetime | None = None
+    decided_at: datetime | None = None
+
+    class Config:
+        from_attributes = True

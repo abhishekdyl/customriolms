@@ -1,13 +1,18 @@
 "use client";
-import { useState } from "react";
-import { Server, ShieldQuestion, Wand2, UserCog, Send, Loader2, CheckCircle2, AlertCircle, Building2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Server, ShieldQuestion, Wand2, UserCog, Send, Loader2, CheckCircle2, AlertCircle, Building2, Clock, Check, X } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { usePlatformSettings, useUpdatePlatformSettings, useSuperAdmins, useOrgs } from "@/lib/hooks/use-orgs";
+import { usePlatformSettings, useUpdatePlatformSettings, useSuperAdmins } from "@/lib/hooks/use-orgs";
+import {
+  useDecideSmtpRequest, usePlatformSmtp, usePlatformSmtpRequests, useSavePlatformSmtp, useTestPlatformSmtp,
+} from "@/lib/hooks/use-platform-smtp";
 import { useDraft } from "@/lib/hooks/use-draft";
 import { SaveBar } from "@/components/ui/save-bar";
+
+const PORT_ENCRYPTION_HINTS: Record<string, "TLS" | "SSL"> = { "465": "SSL", "587": "TLS", "25": "TLS", "2525": "TLS" };
 
 type TabId = "email" | "registration" | "ai" | "superadmins";
 
@@ -19,39 +24,48 @@ const tabs: { id: TabId; label: string; icon: typeof Server }[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Email & Notifications — LAYOUT ONLY. There's no PlatformSmtpSettings model
-// or endpoint on the backend yet, so this tab is local component state: it
-// looks and behaves like the real thing (typing, Save, Send test email all
-// respond) but nothing here is persisted or actually sends mail. Wiring this
-// up for real needs a settings table + an endpoint + an actual mail-send
-// service, which is a separate piece of work from the layout itself.
+// Email & Notifications — the platform's own shared SMTP (Tier 1) plus the
+// queue of orgs asking to borrow it (Tier 3). An org's own SMTP (Tier 2) is
+// configured on that org's side, under Settings ▸ Notifications ▸ SMTP.
 // ---------------------------------------------------------------------------
 function EmailNotificationsTab() {
-  const { data: orgs } = useOrgs();
-  const [smtp, setSmtp] = useState({
-    host: "smtp.riosmartlms.com",
-    port: "587",
-    encryption: "TLS",
-    username: "platform-mailer",
-    password: "",
-    fromName: "Riosmart LMS",
-    fromEmail: "no-reply@riosmartlms.com",
-  });
-  const [saved, setSaved] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<"success" | null>(null);
+  const { data: smtp, isLoading } = usePlatformSmtp();
+  const save = useSavePlatformSmtp();
+  const test = useTestPlatformSmtp();
 
-  const save = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+  const [f, setF] = useState({
+    host: "", port: "587", encryption: "TLS" as "TLS" | "SSL" | "None",
+    username: "", password: "", from_name: "Riosmart LMS", from_email: "no-reply@riosmartlms.com",
+  });
+  const [loaded, setLoaded] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  useEffect(() => {
+    if (!smtp || loaded) return;
+    setF({
+      host: smtp.host, port: String(smtp.port), encryption: smtp.encryption, username: smtp.username,
+      password: "", from_name: smtp.from_name || "Riosmart LMS", from_email: smtp.from_email || "no-reply@riosmartlms.com",
+    });
+    setLoaded(true);
+  }, [smtp, loaded]);
+
+  const body = () => ({
+    host: f.host, port: Number(f.port) || 587, encryption: f.encryption,
+    username: f.username, password: f.password || undefined, from_name: f.from_name, from_email: f.from_email,
+  });
+  const doSave = () =>
+    save.mutate(body(), {
+      onSuccess: () => { setF((p) => ({ ...p, password: "" })); setSaved(true); setTimeout(() => setSaved(false), 2000); },
+    });
   const sendTest = () => {
-    setTesting(true);
-    setTestResult(null);
-    setTimeout(() => {
-      setTesting(false);
-      setTestResult("success");
-    }, 900);
+    setResult(null);
+    save.mutate(body(), { onSuccess: () => test.mutate(undefined, { onSuccess: (r) => setResult(r) }) });
+  };
+  const setPort = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const port = e.target.value;
+    const hint = PORT_ENCRYPTION_HINTS[port.trim()];
+    setF((p) => ({ ...p, port, encryption: hint ?? p.encryption }));
   };
 
   return (
@@ -59,87 +73,143 @@ function EmailNotificationsTab() {
       <div className="mb-5 flex items-start gap-3 rounded-lg border-l-[3px] border-primary bg-primary-soft px-4 py-3.5">
         <Server className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
         <p className="text-[13px] text-ink">
-          This is the shared mail server every org sends from by default. An Org Admin can override it with their own SMTP
-          under their org&apos;s Notifications settings — this platform default is only the fallback for orgs that haven&apos;t.
+          Org Admins set up their own SMTP from their org&apos;s Notifications settings. An org with no mail server of its
+          own can ask to borrow this one instead — nothing sends through it for that org until you approve the request below.
         </p>
       </div>
 
       <section className="mb-6 rounded-xl border border-line bg-surface p-5">
         <h2 className="mb-3.5 font-head text-sm text-ink">Riosmart shared SMTP</h2>
-        <div className="mb-4 grid grid-cols-2 gap-4">
-          <div className="col-span-2">
-            <Label className="mb-1.5 block">SMTP host</Label>
-            <Input value={smtp.host} onChange={(e) => setSmtp({ ...smtp, host: e.target.value })} />
-          </div>
-          <div>
-            <Label className="mb-1.5 block">Port</Label>
-            <Input value={smtp.port} onChange={(e) => setSmtp({ ...smtp, port: e.target.value })} />
-          </div>
-          <div>
-            <Label className="mb-1.5 block">Encryption</Label>
-            <select
-              value={smtp.encryption}
-              onChange={(e) => setSmtp({ ...smtp, encryption: e.target.value })}
-              className="h-10 w-full rounded-lg border border-line bg-surface px-3 text-sm outline-none focus-visible:border-primary"
-            >
-              {["TLS", "SSL", "None"].map((o) => (
-                <option key={o}>{o}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Label className="mb-1.5 block">Username</Label>
-            <Input value={smtp.username} onChange={(e) => setSmtp({ ...smtp, username: e.target.value })} />
-          </div>
-          <div>
-            <Label className="mb-1.5 block">Password</Label>
-            <Input type="password" value={smtp.password} onChange={(e) => setSmtp({ ...smtp, password: e.target.value })} placeholder="••••••••••" />
-          </div>
-          <div>
-            <Label className="mb-1.5 block">Default &quot;From&quot; name</Label>
-            <Input value={smtp.fromName} onChange={(e) => setSmtp({ ...smtp, fromName: e.target.value })} />
-          </div>
-          <div>
-            <Label className="mb-1.5 block">Default &quot;From&quot; email</Label>
-            <Input value={smtp.fromEmail} onChange={(e) => setSmtp({ ...smtp, fromEmail: e.target.value })} />
-          </div>
-        </div>
-
-        {testResult === "success" && (
-          <div className="mb-3 flex items-center gap-2 rounded-lg bg-success-soft px-3 py-2.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-            <span className="text-[12.5px] text-ink">Test email sent successfully.</span>
-          </div>
-        )}
-
-        <div className="flex items-center gap-3">
-          <Button onClick={save}>Save settings</Button>
-          <Button variant="secondary" onClick={sendTest} disabled={testing}>
-            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-            {testing ? "Sending…" : "Send test email"}
-          </Button>
-          {saved && <span className="text-xs text-success">Saved</span>}
-        </div>
-      </section>
-
-      <section className="rounded-xl border border-line bg-surface">
-        <div className="border-b border-line-soft px-4 py-3.5">
-          <span className="font-head text-[14.5px] text-ink">Which orgs use their own SMTP</span>
-        </div>
-        <div className="flex flex-col gap-1 p-3">
-          {orgs?.map((org) => (
-            <div key={org.id} className="flex items-center gap-3 px-2 py-2">
-              <Building2 className="h-3.5 w-3.5 text-ink-faint" />
-              <span className="flex-1 text-sm text-ink">{org.name}</span>
-              {/* No org-level custom-SMTP flag exists on the backend yet — every
-                  org shows as Platform default until that field is added. */}
-              <span className="rounded-full bg-paper px-2.5 py-0.5 text-[10.5px] font-semibold text-ink-faint">Platform default</span>
+        {isLoading ? (
+          <p className="text-sm text-ink-faint">Loading…</p>
+        ) : (
+          <>
+            <div className="mb-4 grid grid-cols-2 gap-4">
+              <div className="col-span-2">
+                <Label className="mb-1.5 block">SMTP host</Label>
+                <Input value={f.host} onChange={(e) => setF({ ...f, host: e.target.value })} placeholder="smtp.riosmartlms.com" />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Port</Label>
+                <Input value={f.port} onChange={setPort} inputMode="numeric" />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Encryption</Label>
+                <select
+                  value={f.encryption}
+                  onChange={(e) => setF({ ...f, encryption: e.target.value as "TLS" | "SSL" | "None" })}
+                  className="h-10 w-full rounded-lg border border-line bg-surface px-3 text-sm outline-none focus-visible:border-primary"
+                >
+                  {["TLS", "SSL", "None"].map((o) => (
+                    <option key={o}>{o}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Username</Label>
+                <Input value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Password</Label>
+                <Input
+                  type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })}
+                  placeholder={smtp?.has_password ? "•••••••• (saved)" : "••••••••••"}
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Default &quot;From&quot; name</Label>
+                <Input value={f.from_name} onChange={(e) => setF({ ...f, from_name: e.target.value })} />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Default &quot;From&quot; email</Label>
+                <Input value={f.from_email} onChange={(e) => setF({ ...f, from_email: e.target.value })} />
+              </div>
             </div>
-          ))}
-          {!orgs?.length && <p className="px-2 py-2 text-sm text-ink-faint">No organizations yet.</p>}
-        </div>
+
+            {result?.ok && (
+              <div className="mb-3 flex items-center gap-2 rounded-lg bg-success-soft px-3 py-2.5">
+                <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                <span className="text-[12.5px] text-ink">{result.detail}</span>
+              </div>
+            )}
+            {result && !result.ok && (
+              <div className="mb-3 flex items-center gap-2 rounded-lg bg-danger-soft px-3 py-2.5">
+                <AlertCircle className="h-3.5 w-3.5 text-danger" />
+                <span className="text-[12.5px] text-ink">{result.detail}</span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3">
+              <Button onClick={doSave} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save settings"}</Button>
+              <Button variant="secondary" onClick={sendTest} disabled={test.isPending || save.isPending}>
+                {test.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                {test.isPending ? "Sending…" : "Send test email"}
+              </Button>
+              {saved && <span className="text-xs text-success">Saved</span>}
+              {save.isError && <span className="text-xs text-danger">Couldn&apos;t save.</span>}
+            </div>
+          </>
+        )}
       </section>
+
+      <PlatformFallbackRequestsQueue />
     </div>
+  );
+}
+
+/** Super Admin's approval queue — every org that has ever asked to borrow
+ * the platform SMTP, newest first, with Approve/Deny for anything pending. */
+function PlatformFallbackRequestsQueue() {
+  const { data: requests, isLoading } = usePlatformSmtpRequests();
+  const decide = useDecideSmtpRequest();
+
+  const statusBadge = (status: string) => {
+    if (status === "approved") return <span className="rounded-full bg-success-soft px-2.5 py-0.5 text-[10.5px] font-semibold text-success">Approved</span>;
+    if (status === "denied") return <span className="rounded-full bg-danger-soft px-2.5 py-0.5 text-[10.5px] font-semibold text-danger">Denied</span>;
+    return (
+      <span className="flex items-center gap-1 rounded-full bg-paper px-2.5 py-0.5 text-[10.5px] font-semibold text-ink-faint">
+        <Clock size={10} /> Pending
+      </span>
+    );
+  };
+
+  return (
+    <section className="rounded-xl border border-line bg-surface">
+      <div className="border-b border-line-soft px-4 py-3.5">
+        <span className="font-head text-[14.5px] text-ink">Requests to use the platform SMTP</span>
+      </div>
+      <div className="flex flex-col gap-1 p-3">
+        {isLoading && <p className="px-2 py-2 text-sm text-ink-faint">Loading…</p>}
+        {requests?.map((r) => (
+          <div key={r.org_id} className="flex items-center gap-3 px-2 py-2">
+            <Building2 className="h-3.5 w-3.5 shrink-0 text-ink-faint" />
+            <span className="flex-1 text-sm text-ink">{r.org_name}</span>
+            {statusBadge(r.status)}
+            {r.status === "requested" && (
+              <div className="ml-2 flex items-center gap-1.5">
+                <button
+                  onClick={() => decide.mutate({ orgId: r.org_id, approve: true })}
+                  disabled={decide.isPending}
+                  title="Approve"
+                  className="rounded-md bg-success-soft p-1.5 text-success disabled:opacity-60"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => decide.mutate({ orgId: r.org_id, approve: false })}
+                  disabled={decide.isPending}
+                  title="Deny"
+                  className="rounded-md bg-danger-soft p-1.5 text-danger disabled:opacity-60"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+        {!isLoading && !requests?.length && <p className="px-2 py-2 text-sm text-ink-faint">No requests yet.</p>}
+      </div>
+    </section>
   );
 }
 

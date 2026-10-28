@@ -261,9 +261,8 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depend
         await db.commit()
 
         reset_link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
-        smtp_row = await notification_svc.get_smtp(db, user.org_id)
         sent = await notification_svc.send_email_if_configured(
-            smtp_row, user.email, "Reset your Riosmart LMS password",
+            db, user.org_id, user.email, "Reset your Riosmart LMS password",
             f"Hi {user.firstname},\n\n"
             "Someone requested a password reset for your Riosmart LMS account. "
             f"If that was you, set a new password here (this link expires in "

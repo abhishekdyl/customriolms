@@ -2,14 +2,17 @@ import asyncio
 import smtplib
 import ssl
 import uuid
+from datetime import datetime, timezone
 from email.message import EmailMessage
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.notification import NotificationTemplate, OrgSmtpSettings, ReminderRule
-from app.schemas.notification import SmtpIn, SmtpOut
+from app.models.notification import NotificationTemplate, OrgSmtpSettings, PlatformSmtpSettings, ReminderRule
+from app.models.org import Org
+from app.models.platform_settings import SINGLETON_ID
+from app.schemas.notification import OrgFallbackRequestOut, PlatformSmtpIn, PlatformSmtpOut, SmtpIn, SmtpOut
 
 SIGN = "— {{org_name}} Learning"
 DEFAULT_TEMPLATES = [
@@ -78,6 +81,7 @@ def smtp_out(row: OrgSmtpSettings) -> SmtpOut:
     return SmtpOut(
         use_custom=row.use_custom, host=row.host, port=row.port, encryption=row.encryption,
         username=row.username, has_password=bool(row.password), from_name=row.from_name, from_email=row.from_email,
+        fallback_status=row.fallback_status,
     )
 
 
@@ -97,23 +101,38 @@ async def save_smtp(db: AsyncSession, org_id: uuid.UUID, body: SmtpIn) -> OrgSmt
     return row
 
 
-def _send_blocking(row: OrgSmtpSettings, to_addr: str, subject: str, body: str) -> None:
+def _send_once(row, msg: EmailMessage, encryption: str) -> None:
+    ctx = ssl.create_default_context()
+    if encryption == "SSL":
+        server = smtplib.SMTP_SSL(row.host, row.port, timeout=10, context=ctx)
+    else:
+        server = smtplib.SMTP(row.host, row.port, timeout=10)
+    with server:
+        if encryption == "TLS":
+            server.starttls(context=ctx)
+        if row.username:
+            server.login(row.username, row.password)
+        server.send_message(msg)
+
+
+def _send_blocking(row, to_addr: str, subject: str, body: str) -> None:
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = f"{row.from_name} <{row.from_email}>" if row.from_name else row.from_email
     msg["To"] = to_addr
     msg.set_content(body)
-    ctx = ssl.create_default_context()
-    if row.encryption == "SSL":
-        server = smtplib.SMTP_SSL(row.host, row.port, timeout=10, context=ctx)
-    else:
-        server = smtplib.SMTP(row.host, row.port, timeout=10)
-    with server:
-        if row.encryption == "TLS":
-            server.starttls(context=ctx)
-        if row.username:
-            server.login(row.username, row.password)
-        server.send_message(msg)
+    try:
+        _send_once(row, msg, row.encryption)
+    except smtplib.SMTPServerDisconnected:
+        # Very common misconfiguration: a provider's port only speaks
+        # implicit SSL (e.g. 465) while the saved setting is TLS/STARTTLS
+        # (or vice versa — some providers' "587" is implicit-SSL-only).
+        # The server slams the connection shut immediately on the wrong
+        # handshake, which is exactly this exception. The port number is a
+        # much more reliable signal than the saved dropdown, so retry once
+        # with the other protocol before giving up.
+        fallback = "SSL" if row.encryption != "SSL" else "TLS"
+        _send_once(row, msg, fallback)
 
 
 async def send_test_email(row: OrgSmtpSettings, to_addr: str) -> tuple[bool, str]:
@@ -129,20 +148,109 @@ async def send_test_email(row: OrgSmtpSettings, to_addr: str) -> tuple[bool, str
         return False, f"Couldn't connect — check host and credentials. ({type(exc).__name__})"
 
 
-async def send_email_if_configured(row: OrgSmtpSettings, to_addr: str, subject: str, body: str) -> bool:
+async def resolve_send_source(db: AsyncSession, org_id: uuid.UUID):
+    """3-tier resolution: an org's own SMTP wins if it's turned on and
+    filled in; otherwise, only once a Super Admin has explicitly approved
+    that org's request, fall back to the platform's shared SMTP; otherwise
+    there's nowhere to send. Returns (row, "org"|"platform") or (None, "none")."""
+    org_row = await get_smtp(db, org_id)
+    if org_row.use_custom and org_row.host and org_row.from_email:
+        return org_row, "org"
+    if org_row.fallback_status == "approved":
+        plat_row = await get_platform_smtp(db)
+        if plat_row.host and plat_row.from_email:
+            return plat_row, "platform"
+    return None, "none"
+
+
+async def send_email_if_configured(db: AsyncSession, org_id: uuid.UUID, to_addr: str, subject: str, body: str) -> bool:
     """Best-effort send for transactional mail (password resets, etc.) that
     isn't itself the thing the caller is testing — unlike send_test_email,
     this never raises or reports a reason back to the caller, since the
     caller (e.g. forgot_password) must behave identically whether or not
     the email actually went out (no email-enumeration signal). Returns
     whether a send was even attempted, purely so the caller can log a
-    dev-mode fallback when it wasn't. Silently does nothing when the org
-    hasn't turned on its own SMTP (use_custom) or left host/from_email
-    blank — there's no platform-wide mail server to fall back to."""
-    if not row.use_custom or not row.host or not row.from_email:
+    dev-mode fallback when it wasn't. Resolves through the org's own SMTP
+    first, then the platform's shared SMTP if that org has been approved
+    to use it (see resolve_send_source); does nothing if neither applies."""
+    row, _source = await resolve_send_source(db, org_id)
+    if row is None:
         return False
     try:
         await asyncio.to_thread(_send_blocking, row, to_addr, subject, body)
     except Exception:
         pass  # best-effort — see docstring
     return True
+
+
+# ---------- Platform SMTP (Super Admin's shared/fallback mail server) ----------
+async def get_platform_smtp(db: AsyncSession) -> PlatformSmtpSettings:
+    row = await db.get(PlatformSmtpSettings, SINGLETON_ID)
+    if row is None:
+        row = PlatformSmtpSettings(id=SINGLETON_ID)
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+    return row
+
+
+def platform_smtp_out(row: PlatformSmtpSettings) -> PlatformSmtpOut:
+    return PlatformSmtpOut(
+        host=row.host, port=row.port, encryption=row.encryption, username=row.username,
+        has_password=bool(row.password), from_name=row.from_name, from_email=row.from_email,
+    )
+
+
+async def save_platform_smtp(db: AsyncSession, body: PlatformSmtpIn) -> PlatformSmtpSettings:
+    row = await get_platform_smtp(db)
+    row.host = body.host.strip()
+    row.port = body.port
+    row.encryption = body.encryption
+    row.username = body.username.strip()
+    if body.password:  # blank = keep existing
+        row.password = body.password
+    row.from_name = body.from_name.strip()
+    row.from_email = body.from_email.strip()
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+# ---------- Org ▸ platform-SMTP fallback request/approval ----------
+async def request_platform_fallback(db: AsyncSession, org_id: uuid.UUID) -> OrgSmtpSettings:
+    row = await get_smtp(db, org_id)
+    if row.fallback_status == "approved":
+        return row  # already granted — nothing to (re-)request
+    row.fallback_status = "requested"
+    row.fallback_requested_at = datetime.now(timezone.utc)
+    row.fallback_decided_at = None
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def list_fallback_requests(db: AsyncSession) -> list[OrgFallbackRequestOut]:
+    rows = (await db.execute(
+        select(OrgSmtpSettings, Org.name)
+        .join(Org, Org.id == OrgSmtpSettings.org_id)
+        .where(OrgSmtpSettings.fallback_status != "none")
+        .order_by(OrgSmtpSettings.fallback_requested_at.desc())
+    )).all()
+    return [
+        OrgFallbackRequestOut(
+            org_id=smtp.org_id, org_name=org_name, status=smtp.fallback_status,
+            requested_at=smtp.fallback_requested_at, decided_at=smtp.fallback_decided_at,
+        )
+        for smtp, org_name in rows
+    ]
+
+
+async def decide_fallback_request(db: AsyncSession, org_id: uuid.UUID, approve: bool) -> OrgSmtpSettings:
+    row = await get_smtp(db, org_id)
+    if row.fallback_status not in ("requested", "approved", "denied"):
+        raise HTTPException(status_code=400, detail="This org hasn't requested platform-SMTP access")
+    row.fallback_status = "approved" if approve else "denied"
+    row.fallback_decided_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(row)
+    return row
