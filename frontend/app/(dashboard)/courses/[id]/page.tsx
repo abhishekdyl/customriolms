@@ -1,5 +1,5 @@
 "use client";
-import { use, useEffect, useRef, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -149,6 +149,27 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
+  // The cover image used to upload/remove immediately on click — its own
+  // action, separate from the Save/Cancel form below. That's exactly
+  // what made it feel like "there's no Save button, it just saves
+  // directly": a stray click on Replace/Remove changed the live course
+  // with no chance to back out. Now it's just another field in the same
+  // draft-until-Save form: picking a file stages it locally (previewed
+  // via a throwaway object URL) and "Remove" stages a removal; neither
+  // reaches the server until Save, and Cancel discards either the same
+  // way it discards a half-typed title.
+  const [pendingCoverFile, setPendingCoverFile] = useState<File | null>(null);
+  const [pendingCoverRemoved, setPendingCoverRemoved] = useState(false);
+  const pendingCoverPreviewUrl = useMemo(
+    () => (pendingCoverFile ? URL.createObjectURL(pendingCoverFile) : null),
+    [pendingCoverFile],
+  );
+  useEffect(() => {
+    return () => {
+      if (pendingCoverPreviewUrl) URL.revokeObjectURL(pendingCoverPreviewUrl);
+    };
+  }, [pendingCoverPreviewUrl]);
+
   const rulesServerValue = course
     ? {
         completion_module_ids: course.completion_module_ids,
@@ -166,10 +187,17 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   const settingsDraft = settingsDraftRaw!;
   const rulesDraft = rulesDraftRaw!;
 
-  const cancelSettings = () => { cancelSettingsRaw(); setSettingsError(null); };
+  const cancelSettings = () => {
+    cancelSettingsRaw();
+    setSettingsError(null);
+    setPendingCoverFile(null);
+    setPendingCoverRemoved(false);
+  };
   const cancelRules = () => cancelRulesRaw();
 
-  const saveSettings = () => {
+  const coverDirty = pendingCoverFile !== null || pendingCoverRemoved;
+
+  const saveSettings = async () => {
     if (!settingsDraft.title.trim()) { setSettingsError("Course name can't be empty."); return; }
     if (!settingsDraft.opens_at) { setSettingsError("Pick an open/create date."); return; }
     if (settingsDraft.closes_at && settingsDraft.closes_at <= settingsDraft.opens_at) {
@@ -177,19 +205,32 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
       return;
     }
     setSettingsError(null);
-    updateCourse.mutate(
-      {
-        title: settingsDraft.title.trim(),
-        description: settingsDraft.description,
-        category_id: settingsDraft.category_id || null,
-        opens_at: localToIso(settingsDraft.opens_at),
-        closes_at: settingsDraft.closes_at ? localToIso(settingsDraft.closes_at) : null,
-      },
-      {
-        onSuccess: () => { setSettingsSaved(true); setTimeout(() => setSettingsSaved(false), 2000); },
-        onError: (err) => setSettingsError(err instanceof ApiError ? err.message : "Couldn't save — try again."),
-      },
-    );
+    try {
+      // The cover-image change (if any) and the text-field changes are
+      // two separate API calls either way (upload is multipart, the rest
+      // is a plain PATCH) — just make sure both land, in order, before
+      // declaring Save done, so a page refresh mid-save can never leave
+      // one applied and the other silently dropped.
+      if (pendingCoverFile) await uploadCover.mutateAsync(pendingCoverFile);
+      else if (pendingCoverRemoved) await removeCover.mutateAsync();
+
+      if (settingsDirty) {
+        await updateCourse.mutateAsync({
+          title: settingsDraft.title.trim(),
+          description: settingsDraft.description,
+          category_id: settingsDraft.category_id || null,
+          opens_at: localToIso(settingsDraft.opens_at),
+          closes_at: settingsDraft.closes_at ? localToIso(settingsDraft.closes_at) : null,
+        });
+      }
+
+      setPendingCoverFile(null);
+      setPendingCoverRemoved(false);
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2000);
+    } catch (err) {
+      setSettingsError(err instanceof ApiError ? err.message : "Couldn't save — try again.");
+    }
   };
 
   const saveRules = () => {
@@ -485,31 +526,38 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
           <div className="rounded-xl border border-line bg-surface p-4">
             <p className="mb-3 text-xs font-medium text-ink-faint">Cover image</p>
             <p className="mb-3 text-[11px] text-ink-faint">
-              Uploading or removing the cover takes effect immediately — it&apos;s its own action, not part of the form below.
+              Choose or remove an image, then click Save below — nothing is uploaded or deleted until you do.
             </p>
-            {course.cover_image_url ? (
-              <div className="mb-3 flex items-center gap-3">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={course.cover_image_url} alt="" className="h-20 w-32 rounded-lg border border-line object-cover" />
-                <Button
-                  variant="secondary" size="sm"
-                  onClick={() => removeCover.mutate()}
-                  disabled={removeCover.isPending}
-                >
-                  <X className="h-3.5 w-3.5" /> Remove
-                </Button>
-              </div>
-            ) : (
-              <p className="mb-3 text-[11px] text-ink-faint">No cover image yet — shown on the course card and preview.</p>
-            )}
+            {(() => {
+              const displayUrl = pendingCoverRemoved ? null : (pendingCoverPreviewUrl ?? course.cover_image_url);
+              return displayUrl ? (
+                <div className="mb-3 flex items-center gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={displayUrl} alt="" className="h-20 w-32 rounded-lg border border-line object-cover" />
+                  <Button
+                    variant="secondary" size="sm"
+                    onClick={() => { setPendingCoverRemoved(true); setPendingCoverFile(null); }}
+                  >
+                    <X className="h-3.5 w-3.5" /> Remove
+                  </Button>
+                </div>
+              ) : (
+                <p className="mb-3 text-[11px] text-ink-faint">No cover image yet — shown on the course card and preview.</p>
+              );
+            })()}
             <input
               ref={coverInputRef} type="file" accept="image/*" className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadCover.mutate(f); e.target.value = ""; }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) { setPendingCoverFile(f); setPendingCoverRemoved(false); }
+                e.target.value = "";
+              }}
             />
-            <Button variant="secondary" size="sm" onClick={() => coverInputRef.current?.click()} disabled={uploadCover.isPending}>
-              {uploadCover.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
-              {course.cover_image_url ? "Replace image" : "Upload image"}
+            <Button variant="secondary" size="sm" onClick={() => coverInputRef.current?.click()}>
+              <ImagePlus className="h-3.5 w-3.5" />
+              {pendingCoverRemoved || !course.cover_image_url ? "Upload image" : "Replace image"}
             </Button>
+            {coverDirty && <p className="mt-2 text-[11px] text-amber">Not saved yet — click Save below to apply.</p>}
           </div>
 
           <div className="rounded-xl border border-line bg-surface p-4">
@@ -542,8 +590,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
           </div>
 
           <SaveBar
-            dirty={settingsDirty}
-            saving={updateCourse.isPending}
+            dirty={settingsDirty || coverDirty}
+            saving={updateCourse.isPending || uploadCover.isPending || removeCover.isPending}
             error={settingsError}
             savedFlash={settingsSaved}
             onCancel={cancelSettings}
