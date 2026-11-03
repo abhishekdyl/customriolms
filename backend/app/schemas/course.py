@@ -677,3 +677,35 @@ class LearnerCourseOut(MyCourseItem):
     description: str | None = None
     modules: list[LearnerModuleOut] = []
     completed_module_count: int = 0
+
+
+# ---------- Course import/export ----------
+class CourseDuplicateRequest(BaseModel):
+    """Optional overrides for course_transfer_service.duplicate_course —
+    both omitted (the normal case) gives "<original title> (Copy)" in
+    the original's own category. Everything else about the course —
+    modules, quiz questions, restrictions, groups, completion rules,
+    even the real file content — is copied exactly; only assignment,
+    group membership and learner progress are left out (see that
+    function's docstring)."""
+    title: str | None = None
+    category_id: uuid.UUID | None = None
+
+
+class CourseImportRequest(BaseModel):
+    """Body for POST /courses/import — `file` is the JSON an earlier
+    GET /courses/{id}/export produced. category_id overrides whatever
+    category the export recorded by name (useful when the matching
+    category doesn't exist in this org, or the admin just wants a
+    different one)."""
+    file: dict
+    category_id: uuid.UUID | None = None
+
+
+class CourseImportResult(BaseModel):
+    course: CourseOut
+    # Anything the import couldn't carry over as-is — real file content
+    # (always, see export_course_snapshot's docstring), a question image,
+    # a category/restriction that didn't resolve in this org. Empty means
+    # a fully clean import.
+    warnings: list[str] = []

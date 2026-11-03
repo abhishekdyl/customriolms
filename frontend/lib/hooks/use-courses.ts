@@ -2,8 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type {
-  AttemptOverride, CalendarItem, Course, CourseGroup, CourseListItem, CourseModuleProgress, EnrolledLearner,
-  Gradebook, Module, QuestionInput, QuizAttempt,
+  AttemptOverride, CalendarItem, Course, CourseExportFile, CourseGroup, CourseImportResult, CourseListItem,
+  CourseModuleProgress, EnrolledLearner, Gradebook, Module, QuestionInput, QuizAttempt,
 } from "@/lib/types";
 
 export function useCourses() {
@@ -26,6 +26,42 @@ export function useCreateCourse() {
     // stays optional; when given, it must also not be in the past.
     mutationFn: (body: { title: string; category_id?: string | null; opens_at: string; closes_at?: string | null }) =>
       api.post<Course>("/api/v1/courses", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
+  });
+}
+
+/** Deep-copies a course into a new one in the same org — same modules,
+ * quiz questions, restrictions, groups, completion rules and real file
+ * content, so it runs exactly like the original. Not copied:
+ * assignment, group membership, due dates, learner progress. The new
+ * course starts a draft. */
+export function useDuplicateCourse() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ courseId, title, categoryId }: { courseId: string; title?: string; categoryId?: string | null }) =>
+      api.post<Course>(`/api/v1/courses/${courseId}/duplicate`, { title: title || null, category_id: categoryId ?? null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
+  });
+}
+
+/** Downloads a course's full configuration as a portable JSON file — for
+ * moving it to a different org/environment. Real file content (videos,
+ * docs, SCORM packages, the cover image) isn't included; see
+ * CourseExportFile. */
+export function useExportCourse() {
+  return useMutation({
+    mutationFn: (courseId: string) => api.get<CourseExportFile>(`/api/v1/courses/${courseId}/export`),
+  });
+}
+
+/** Recreates a course from a file an earlier export produced — in this
+ * org, as a new draft course. `warnings` in the result lists anything
+ * that needs attention afterward (always: files to re-upload). */
+export function useImportCourse() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ file, categoryId }: { file: CourseExportFile; categoryId?: string | null }) =>
+      api.post<CourseImportResult>("/api/v1/courses/import", { file, category_id: categoryId ?? null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
   });
 }

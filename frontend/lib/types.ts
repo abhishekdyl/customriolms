@@ -251,6 +251,23 @@ export interface CourseGroup {
   due_at: string | null;
 }
 
+/** A portable course export file — from GET /courses/{id}/export, fed
+ * back in via POST /courses/import's `file` field. Opaque on the
+ * frontend — it's never read or rendered, just downloaded/uploaded as a
+ * .json file — so this stays a loose shape rather than mirroring every
+ * backend field. */
+export type CourseExportFile = Record<string, unknown>;
+
+/** Response from POST /courses/import. */
+export interface CourseImportResult {
+  course: Course;
+  /** Anything the import couldn't carry over as-is — always lists file
+   * content (a module's video/doc/SCORM package, the cover image) since
+   * export never includes real bytes; may also list a category or
+   * restriction reference that didn't resolve in this org. */
+  warnings: string[];
+}
+
 /** One course on the learner's own Calendar page — their effective due
  * date plus just enough progress/status for "what's due this week". */
 export interface CalendarItem {

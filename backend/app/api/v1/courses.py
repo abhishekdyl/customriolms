@@ -13,10 +13,11 @@ from app.models.course import Course
 from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CourseAssignRequest, CourseCreate, CourseGroupIn,
-    CourseGroupOut, CourseGroupUpdate, CourseListItem, CourseModuleProgressOut, CourseOut, CourseUpdate,
-    DueOverrideOut, DueOverrideSet, EnrolledLearnerOut, GradebookOut, LearnerCourseOut, ModuleCreate, ModuleOut,
-    ModuleReorderRequest, ModuleUpdate, MyCourseItem, QuizAttemptOut,
+    AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CourseAssignRequest, CourseCreate, CourseDuplicateRequest,
+    CourseGroupIn, CourseGroupOut, CourseGroupUpdate, CourseImportRequest, CourseImportResult, CourseListItem,
+    CourseModuleProgressOut, CourseOut, CourseUpdate, DueOverrideOut, DueOverrideSet, EnrolledLearnerOut,
+    GradebookOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem,
+    QuizAttemptOut,
 )
 from app.schemas.learn import (
     CompleteRequest, CompleteResult, QuizResult, QuizSubmit, ScormCheckpointIn, ScormProgressOut, WatchCheckpointIn,
@@ -29,6 +30,7 @@ from app.services.course_service import (
     list_quiz_attempts, remove_module_content, reorder_modules, set_attempt_override, set_due_override,
     update_course_group, update_module, upload_module_content, upload_scorm_package,
 )
+from app.services.course_transfer_service import duplicate_course, export_course_snapshot, import_course_snapshot
 from app.services import audit_log_service
 from app.services import learn_service as progress_svc
 from app.services import storage_service
@@ -183,12 +185,60 @@ async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db), 
     return await get_course_or_404(db, course.id, current_user.org_id)
 
 
+@router.post("/import", response_model=CourseImportResult, status_code=201, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def import_course(body: CourseImportRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Recreates a course from a file an earlier GET /{course_id}/export
+    produced — in this org, as a new draft course. See
+    course_transfer_service's module docstring for exactly what is and
+    isn't carried over; `warnings` in the response lists anything that
+    needs the admin's attention afterward (always: files to re-upload)."""
+    course, warnings = await import_course_snapshot(db, body.file, org_id=current_user.org_id, category_id=body.category_id, user=current_user)
+    await audit_log_service.record(
+        db, org_id=current_user.org_id, actor=current_user, action="course.imported",
+        entity_type="course", entity_id=course.id, entity_label=course.title,
+        detail=f"Imported course \"{course.title}\" from a file ({len(warnings)} warning(s))",
+    )
+    return CourseImportResult(course=course, warnings=warnings)
+
+
 @router.get("/{course_id}", response_model=CourseOut)
 async def get_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     # The full authoring shape includes quiz answers — learners use /courses/mine/{id} instead.
     if current_user.role == RoleName.LEARNER:
         raise HTTPException(status_code=403, detail="Not allowed")
     return await get_course_or_404(db, course_id, current_user.org_id)
+
+
+@router.post("/{course_id}/duplicate", response_model=CourseOut, status_code=201, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def duplicate_course_endpoint(
+    course_id: uuid.UUID, body: CourseDuplicateRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Deep-copies this course into a new one in the same org — same
+    modules, quiz questions, restrictions, groups, completion rules, and
+    real file content, so it runs exactly like the original (see
+    course_transfer_service.duplicate_course). Not copied: assignment,
+    group membership, due-date overrides, learner progress. The new
+    course starts as a draft."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    new_course = await duplicate_course(db, course, title=body.title, category_id=body.category_id, user=current_user)
+    await audit_log_service.record(
+        db, org_id=current_user.org_id, actor=current_user, action="course.duplicated",
+        entity_type="course", entity_id=new_course.id, entity_label=new_course.title,
+        detail=f"Duplicated \"{course.title}\" as \"{new_course.title}\"",
+    )
+    return new_course
+
+
+@router.get("/{course_id}/export", dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def export_course_endpoint(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """A downloadable JSON snapshot of this course's full configuration —
+    for moving it to a different org/environment (e.g. staging) via
+    POST /courses/import there. See course_transfer_service's module
+    docstring for exactly what is (and isn't — file content) carried.
+    Plain dict response (not CourseOut) — this is the export file
+    itself, not the usual course shape."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    return export_course_snapshot(course)
 
 
 @router.patch("/{course_id}", response_model=CourseOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])

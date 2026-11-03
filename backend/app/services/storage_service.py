@@ -480,3 +480,37 @@ async def delete_file_ref(db: AsyncSession, *, component: str, filearea: str, it
     await db.flush()
     for h in hashes:
         await _gc_if_orphaned(db, h)
+
+
+async def copy_file_refs(
+    db: AsyncSession, *, component: str, filearea: str, from_itemid: uuid.UUID | None, to_itemid: uuid.UUID | None,
+    org_id: uuid.UUID, user=None,
+) -> list[FileRecord]:
+    """Duplicates every `files` row at (component, filearea, from_itemid)
+    onto a new itemid, pointing at the SAME already-stored content (same
+    contenthash) — a pure DB operation, no re-upload or physical copy
+    needed since storage is content-addressed (see this module's
+    docstring). This is what makes course duplication/import able to
+    carry over a module's real video/doc/SCORM content and a course's
+    cover image without touching the actual bytes.
+
+    Registering a real new ref here (not just copying the key string
+    onto the new owner) matters: without it, deleting/replacing the
+    ORIGINAL module's content later would call delete_file_ref on the
+    original itemid, see no other `files` row still referencing that
+    contenthash, and garbage-collect the blob out from under the
+    duplicate — which would still have the now-dangling key in its own
+    file_key column. One extra row per copied file avoids that."""
+    rows = (await db.execute(
+        select(FileRecord).where(FileRecord.component == component, FileRecord.filearea == filearea, FileRecord.itemid == from_itemid)
+    )).scalars().all()
+    out = []
+    for row in rows:
+        new_row = await _upsert_file_row(
+            db, org_id=org_id, component=component, filearea=filearea, itemid=to_itemid,
+            filepath=row.filepath, filename=row.filename, contenthash=row.contenthash,
+            size=row.filesize, mimetype=row.mimetype,
+            user_id=getattr(user, "id", None), user_name=getattr(user, "full_name", None),
+        )
+        out.append(new_row)
+    return out

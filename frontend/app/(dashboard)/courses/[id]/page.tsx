@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   useCourse, useCourses, useAddModule, useUpdateModule, useDeleteModule, useDeleteCourse, useReorderModules, useUpdateCourse,
   useEnrolledLearners, useUploadCourseCoverImage, useRemoveCourseCoverImage, useSetDueOverride, useCourseGroups,
+  useDuplicateCourse, useExportCourse,
 } from "@/lib/hooks/use-courses";
 import { useCategories } from "@/lib/hooks/use-categories";
 import { useBadges } from "@/lib/hooks/use-badges";
@@ -63,6 +64,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   const { data: course, isLoading } = useCourse(id);
   const updateCourse = useUpdateCourse(id);
   const deleteCourse = useDeleteCourse();
+  const duplicateCourse = useDuplicateCourse();
+  const exportCourse = useExportCourse();
   const addModule = useAddModule(id);
   const updateModuleMutation = useUpdateModule(id);
   const deleteModule = useDeleteModule(id);
@@ -860,6 +863,40 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
               onSave={saveRules}
               className="-mb-4 mt-4"
             />
+          </div>
+
+          <div className="rounded-xl border border-line bg-surface p-4">
+            <p className="mb-1 text-xs font-medium text-ink-faint">Copy / move this course</p>
+            <p className="mb-3 text-[11.5px] text-ink-faint">
+              Duplicate makes an exact copy here (same modules, restrictions, grading, real files) as a new draft —
+              good for a new category or cohort. Export downloads its configuration as a file for another
+              org/environment; real files aren&apos;t included there, so re-upload them after importing.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="secondary" disabled={duplicateCourse.isPending}
+                onClick={() => duplicateCourse.mutate({ courseId: id }, { onSuccess: (nc) => router.push(`/courses/${nc.id}`) })}
+              >
+                {duplicateCourse.isPending ? "Duplicating…" : "Duplicate"}
+              </Button>
+              <Button
+                variant="secondary" disabled={exportCourse.isPending}
+                onClick={() => exportCourse.mutate(id, {
+                  onSuccess: (file) => {
+                    const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `${course.title.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "course"}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  },
+                })}
+              >
+                {exportCourse.isPending ? "Exporting…" : "Export"}
+              </Button>
+            </div>
+            {exportCourse.isError && <p className="mt-2 text-[11px] text-danger">Couldn&apos;t export this course.</p>}
           </div>
 
           <div className="rounded-xl border border-danger/30 bg-surface p-4">
