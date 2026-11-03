@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   useCourse, useAddModule, useUpdateModule, useDeleteModule, useDeleteCourse, useReorderModules, useUpdateCourse,
-  useEnrolledLearners, useUploadCourseCoverImage, useRemoveCourseCoverImage,
+  useEnrolledLearners, useUploadCourseCoverImage, useRemoveCourseCoverImage, useSetDueOverride,
 } from "@/lib/hooks/use-courses";
 import { useCategories } from "@/lib/hooks/use-categories";
 import { useBadges } from "@/lib/hooks/use-badges";
@@ -72,6 +72,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   const { data: badges } = useBadges();
   const { data: certTemplates } = useCertTemplates();
   const { data: enrolled, isLoading: enrolledLoading } = useEnrolledLearners(id);
+  const setDueOverride = useSetDueOverride(id);
+  const [editingDueFor, setEditingDueFor] = useState<string | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   const [tab, setTab] = useState<TabId>("course");
@@ -619,9 +621,12 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
       {tab === "participants" && (
         <div className="rounded-xl border border-line bg-surface p-4">
           <div className="mb-3 flex items-center justify-between">
-            <p className="text-xs font-medium text-ink-faint">
-              Enrolled learners {enrolled ? `(${enrolled.length})` : ""}
-            </p>
+            <div>
+              <p className="text-xs font-medium text-ink-faint">
+                Enrolled learners {enrolled ? `(${enrolled.length})` : ""}
+              </p>
+              <p className="text-[10.5px] text-ink-faint">Click a due date to set a personal one for that learner · * = personal override</p>
+            </div>
             <Button size="sm" variant="secondary" onClick={() => setAssigning(true)}>
               <Users className="h-3.5 w-3.5" /> Assign ({course.assigned_team_count} teams)
             </Button>
@@ -641,6 +646,49 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                     </p>
                   </div>
                   <div className="flex flex-shrink-0 items-center gap-2">
+                    {editingDueFor === e.user_id ? (
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="datetime-local"
+                          defaultValue={isoToLocal(e.due_at)}
+                          autoFocus
+                          className="h-7 w-[170px] text-[11px]"
+                          onKeyDown={(ev) => {
+                            if (ev.key === "Escape") setEditingDueFor(null);
+                            if (ev.key === "Enter") {
+                              const v = (ev.target as HTMLInputElement).value;
+                              setDueOverride.mutate({ userId: e.user_id, dueAt: v ? localToIso(v) : null });
+                              setEditingDueFor(null);
+                            }
+                          }}
+                          onBlur={(ev) => {
+                            const v = ev.target.value;
+                            setDueOverride.mutate({ userId: e.user_id, dueAt: v ? localToIso(v) : null });
+                            setEditingDueFor(null);
+                          }}
+                        />
+                        {e.due_overridden && (
+                          <button
+                            type="button"
+                            title="Reset to course default"
+                            className="text-[10.5px] text-ink-faint underline"
+                            onClick={() => { setDueOverride.mutate({ userId: e.user_id, dueAt: null }); setEditingDueFor(null); }}
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setEditingDueFor(e.user_id)}
+                        className="text-[11px] text-ink-faint underline-offset-2 hover:text-ink-soft hover:underline"
+                        title={e.due_overridden ? "Personal due date (overridden) — click to change" : "Course default due date — click to set a personal one"}
+                      >
+                        {e.due_at ? new Date(e.due_at).toLocaleDateString() : "No due date"}
+                        {e.due_overridden && " *"}
+                      </button>
+                    )}
                     <span className="text-xs text-ink-soft">{e.progress_pct}%</span>
                     {e.completed && (
                       <span className="rounded-full bg-success-soft px-2 py-0.5 text-[10.5px] text-success">Done</span>

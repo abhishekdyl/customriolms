@@ -225,6 +225,23 @@ export interface EnrolledLearner {
   via: "team" | "direct";
   progress_pct: number;
   completed: boolean;
+  /** Effective due date — their own override if one is set, else the
+   * course's own closes_at, else null (no due date at all). */
+  due_at: string | null;
+  /** True when due_at came from a personal override, not the course default. */
+  due_overridden: boolean;
+}
+
+/** One course on the learner's own Calendar page — their effective due
+ * date plus just enough progress/status for "what's due this week". */
+export interface CalendarItem {
+  course_id: string;
+  title: string;
+  opens_at: string | null;
+  due_at: string | null;
+  progress_pct: number;
+  completed: boolean;
+  overdue: boolean;
 }
 
 /** One column of the module-progress matrix — just enough to label it. */

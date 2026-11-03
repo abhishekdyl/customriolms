@@ -2,8 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type {
-  AttemptOverride, Course, CourseListItem, CourseModuleProgress, EnrolledLearner, Gradebook, Module, QuestionInput,
-  QuizAttempt,
+  AttemptOverride, CalendarItem, Course, CourseListItem, CourseModuleProgress, EnrolledLearner, Gradebook, Module,
+  QuestionInput, QuizAttempt,
 } from "@/lib/types";
 
 export function useCourses() {
@@ -236,5 +236,28 @@ export function useGradebook(courseId: string) {
     queryKey: ["courses", courseId, "gradebook"],
     queryFn: () => api.get<Gradebook>(`/api/v1/courses/${courseId}/gradebook`),
     enabled: !!courseId,
+  });
+}
+
+/** Sets (Org Admin only) one learner's personal due-date exception on
+ * this course — on top of, and independent of, the course's own
+ * closes_at for everyone else. due_at: null clears it, reverting that
+ * learner back to the course default. */
+export function useSetDueOverride(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, dueAt }: { userId: string; dueAt: string | null }) =>
+      api.put(`/api/v1/courses/${courseId}/due-override/${userId}`, { due_at: dueAt }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId, "enrolled"] }),
+  });
+}
+
+/** Every course assigned to the current learner, with their own
+ * effective due date — backs the Calendar page's "what's due this
+ * week" view. From GET /courses/calendar/mine. Learner-only. */
+export function useMyCalendar() {
+  return useQuery({
+    queryKey: ["courses", "calendar", "mine"],
+    queryFn: () => api.get<CalendarItem[]>("/api/v1/courses/calendar/mine"),
   });
 }

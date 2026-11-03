@@ -290,6 +290,10 @@ class EnrolledLearnerOut(BaseModel):
     via: str  # "team" | "direct" — how they ended up enrolled
     progress_pct: int
     completed: bool
+    # Effective due date — their own CourseDueOverride if one is set,
+    # else the course's own closes_at, else None (no due date at all).
+    due_at: datetime | None = None
+    due_overridden: bool = False  # true when due_at came from a personal override, not the course default
 
 
 class ModuleSummaryOut(BaseModel):
@@ -416,6 +420,35 @@ class AttemptOverrideOut(BaseModel):
     module_id: uuid.UUID
     user_id: uuid.UUID
     extra_attempts: int
+
+
+class DueOverrideSet(BaseModel):
+    """Body for PUT .../due-override/{user_id} — sets (replacing) this one
+    learner's personal due date on this course, on top of whatever the
+    course's own closes_at already is for everyone else. due_at=None
+    clears the override, reverting that learner back to the course's
+    own closes_at (or no due date, if the course has none)."""
+    due_at: datetime | None = None
+
+
+class DueOverrideOut(BaseModel):
+    course_id: uuid.UUID
+    user_id: uuid.UUID
+    due_at: datetime
+
+
+class CalendarItemOut(BaseModel):
+    """One assigned course on the learner's own Calendar page — their
+    effective due date (their own override if one was set, else the
+    course's closes_at) plus just enough progress/status to show
+    "what's due this week" without a second round-trip."""
+    course_id: uuid.UUID
+    title: str
+    opens_at: datetime | None
+    due_at: datetime | None  # None = this course has no due date at all
+    progress_pct: int
+    completed: bool
+    overdue: bool  # due_at is in the past and the course isn't completed
 
 
 class CourseOut(BaseModel):

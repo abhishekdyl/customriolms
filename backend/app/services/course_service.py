@@ -9,15 +9,16 @@ from app.models.attempt_override import ModuleAttemptOverride
 from app.models.badge import Badge
 from app.models.category import Category
 from app.models.course import Course
+from app.models.course_due_override import CourseDueOverride
 from app.models.module import Module, ModuleQuizQuestion, ModuleType
 from app.models.quiz_attempt import QuizAttempt
 from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    AttemptOverrideOut, CourseListItem, CourseModuleProgressOut, EnrolledLearnerOut, GradableModuleOut, GradebookOut,
-    GradebookRowOut, LearnerCourseOut, LearnerModuleOut, LearnerModuleProgressOut, ModuleCreate, ModuleProgressCellOut,
-    ModuleSummaryOut, ModuleUpdate, MyCourseItem, QuizAttemptOut,
+    AttemptOverrideOut, CalendarItemOut, CourseListItem, CourseModuleProgressOut, DueOverrideOut, EnrolledLearnerOut,
+    GradableModuleOut, GradebookOut, GradebookRowOut, LearnerCourseOut, LearnerModuleOut, LearnerModuleProgressOut,
+    ModuleCreate, ModuleProgressCellOut, ModuleSummaryOut, ModuleUpdate, MyCourseItem, QuizAttemptOut,
 )
 from app.schemas.question import QuestionLearnerOut
 # Real per-learner progress (ModuleProgress-backed) lives in
@@ -447,6 +448,23 @@ async def strip_badge_references(db: AsyncSession, badge_id: uuid.UUID, org_id: 
     await db.commit()
 
 
+async def _due_overrides_map(db: AsyncSession, course_id: uuid.UUID) -> dict[uuid.UUID, datetime]:
+    rows = await db.execute(
+        select(CourseDueOverride.user_id, CourseDueOverride.due_at).where(CourseDueOverride.course_id == course_id)
+    )
+    return {user_id: due_at for user_id, due_at in rows.all()}
+
+
+def _effective_due(course: Course, overrides: dict[uuid.UUID, datetime], user_id: uuid.UUID) -> tuple[datetime | None, bool]:
+    """(due_at, overridden) for one learner on one course — their own
+    CourseDueOverride if one is set, else the course's own closes_at
+    (which already doubles as the default due date — see Course's
+    docstring), else None when the course has no end date at all."""
+    if user_id in overrides:
+        return overrides[user_id], True
+    return course.closes_at, False
+
+
 async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[EnrolledLearnerOut]:
     """Resolves a course's team + individual assignment into the actual
     list of enrolled learners, each with their own progress — the "who's
@@ -456,6 +474,7 @@ async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[
         select(User, Team.name).outerjoin(Team, Team.id == User.team_id)
         .where(User.org_id == course.org_id, User.role == RoleName.LEARNER)
     )
+    overrides = await _due_overrides_map(db, course.id)
     out: list[EnrolledLearnerOut] = []
     for user, team_name in rows.all():
         if viewer.role == RoleName.TEAM_LEAD and user.team_id != viewer.team_id:
@@ -466,11 +485,69 @@ async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[
             continue
         done = await progress_svc.completed_map(db, user.id)
         pct, _, _ = progress_svc.course_progress(course, done)
+        due_at, overridden = _effective_due(course, overrides, user.id)
         out.append(EnrolledLearnerOut(
             user_id=user.id, name=user.full_name, email=user.email, team_name=team_name,
             via="direct" if via_direct else "team", progress_pct=pct, completed=pct >= 100,
+            due_at=due_at, due_overridden=overridden,
         ))
     out.sort(key=lambda r: r.name.lower())
+    return out
+
+
+async def set_due_override(db: AsyncSession, course: Course, user_id: uuid.UUID, due_at: datetime | None) -> DueOverrideOut | None:
+    """Sets (not adds to) this one learner's personal due date on this
+    course — see CourseDueOverride's docstring. due_at=None deletes the
+    row, reverting that learner back to the course's own closes_at (or
+    no due date, if the course has none) — same "a cleared exception
+    just goes away" convention as set_attempt_override."""
+    existing = (await db.execute(
+        select(CourseDueOverride).where(CourseDueOverride.course_id == course.id, CourseDueOverride.user_id == user_id)
+    )).scalar_one_or_none()
+    if due_at is None:
+        if existing:
+            await db.delete(existing)
+            await db.commit()
+        return None
+    if existing:
+        existing.due_at = due_at
+    else:
+        existing = CourseDueOverride(org_id=course.org_id, course_id=course.id, user_id=user_id, due_at=due_at)
+        db.add(existing)
+    await db.commit()
+    return DueOverrideOut(course_id=course.id, user_id=user_id, due_at=due_at)
+
+
+async def list_calendar(db: AsyncSession, learner: User) -> list[CalendarItemOut]:
+    """Every course assigned to this learner — team or direct — with
+    their own effective due date, for the Calendar page's "what's due
+    this week" view. Courses with no due date at all (no closes_at and
+    no personal override) still appear, just without a date to sort
+    into the week view by."""
+    courses = (await db.execute(
+        select(Course).where(Course.org_id == learner.org_id, Course.published == True)  # noqa: E712
+    )).scalars().all()
+    assigned = [
+        c for c in courses
+        if learner.id in (c.assigned_user_ids or [])
+        or (learner.team_id is not None and learner.team_id in (c.assigned_team_ids or []))
+    ]
+    if not assigned:
+        return []
+    done = await progress_svc.completed_map(db, learner.id)
+    now = datetime.now(timezone.utc)
+    out: list[CalendarItemOut] = []
+    for course in assigned:
+        overrides = await _due_overrides_map(db, course.id)
+        due_at, _ = _effective_due(course, overrides, learner.id)
+        pct, _, _ = progress_svc.course_progress(course, done)
+        completed = pct >= 100
+        out.append(CalendarItemOut(
+            course_id=course.id, title=course.title, opens_at=course.opens_at, due_at=due_at,
+            progress_pct=pct, completed=completed,
+            overdue=bool(due_at and due_at < now and not completed),
+        ))
+    out.sort(key=lambda r: (r.due_at is None, r.due_at or now))
     return out
 
 
