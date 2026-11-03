@@ -101,18 +101,18 @@ async def save_smtp(db: AsyncSession, org_id: uuid.UUID, body: SmtpIn) -> OrgSmt
     return row
 
 
-def _send_once(row, msg: EmailMessage, encryption: str) -> None:
+def _connect(row, encryption: str) -> smtplib.SMTP:
+    """Just the connection/handshake — no login, no send. Kept separate
+    from _send_blocking so the SSL<->STARTTLS protocol-mismatch retry only
+    ever re-does the handshake, never a login that's already in flight
+    (see _send_blocking's comment on why that distinction matters)."""
     ctx = ssl.create_default_context()
     if encryption == "SSL":
-        server = smtplib.SMTP_SSL(row.host, row.port, timeout=10, context=ctx)
-    else:
-        server = smtplib.SMTP(row.host, row.port, timeout=10)
-    with server:
-        if encryption == "TLS":
-            server.starttls(context=ctx)
-        if row.username:
-            server.login(row.username, row.password)
-        server.send_message(msg)
+        return smtplib.SMTP_SSL(row.host, row.port, timeout=10, context=ctx)
+    server = smtplib.SMTP(row.host, row.port, timeout=10)
+    if encryption == "TLS":
+        server.starttls(context=ctx)
+    return server
 
 
 def _send_blocking(row, to_addr: str, subject: str, body: str) -> None:
@@ -121,8 +121,9 @@ def _send_blocking(row, to_addr: str, subject: str, body: str) -> None:
     msg["From"] = f"{row.from_name} <{row.from_email}>" if row.from_name else row.from_email
     msg["To"] = to_addr
     msg.set_content(body)
+
     try:
-        _send_once(row, msg, row.encryption)
+        server = _connect(row, row.encryption)
     except smtplib.SMTPServerDisconnected:
         # Very common misconfiguration: a provider's port only speaks
         # implicit SSL (e.g. 465) while the saved setting is TLS/STARTTLS
@@ -132,7 +133,29 @@ def _send_blocking(row, to_addr: str, subject: str, body: str) -> None:
         # much more reliable signal than the saved dropdown, so retry once
         # with the other protocol before giving up.
         fallback = "SSL" if row.encryption != "SSL" else "TLS"
-        _send_once(row, msg, fallback)
+        server = _connect(row, fallback)
+
+    with server:
+        if row.username:
+            try:
+                server.login(row.username, row.password)
+            except smtplib.SMTPServerDisconnected as exc:
+                # Not a protocol mismatch — the connection was already
+                # live. Some providers (Gmail in particular) silently
+                # drop the connection the moment they reject one AUTH
+                # attempt, rather than replying with a clean error;
+                # smtplib's own PLAIN→LOGIN fallback then tries the next
+                # mechanism on that now-dead socket and raises this
+                # generic disconnection, burying the real "bad
+                # credentials" reason. Surface it as what it almost
+                # always actually is, instead of retrying the protocol
+                # (which would just reproduce the same confusing error).
+                raise RuntimeError(
+                    "Login rejected and the connection was closed - double-check the username/password "
+                    "(Gmail and several other providers need an App Password with 2-Step Verification on, "
+                    "not the account's normal login password)"
+                ) from exc
+        server.send_message(msg)
 
 
 async def send_test_email(row: OrgSmtpSettings, to_addr: str) -> tuple[bool, str]:
@@ -145,7 +168,7 @@ async def send_test_email(row: OrgSmtpSettings, to_addr: str) -> tuple[bool, str
         )
         return True, f"Test email sent successfully to {to_addr}."
     except Exception as exc:  # surface any connect/auth failure as a clean message
-        return False, f"Couldn't connect — check host and credentials. ({type(exc).__name__})"
+        return False, f"Couldn't connect — check host and credentials. ({type(exc).__name__}: {exc})"
 
 
 async def resolve_send_source(db: AsyncSession, org_id: uuid.UUID) -> tuple[object | None, str, str]:
