@@ -329,6 +329,45 @@ export interface AuditLogEntry {
   created_at: string;
 }
 
+/** Org-wide (or, for a Team Lead, team-scoped) headline numbers for the
+ * Reports page. From GET /reports (Org Admin / Team Lead). */
+export interface ReportOverview {
+  total_learners: number;
+  total_courses: number;
+  avg_completion_pct: number;
+  not_started_pct: number;
+  certificates_issued: number;
+  quiz_attempts_total: number;
+  quiz_pass_rate: number | null;
+}
+
+/** One course's row in the Reports performance table. */
+export interface CoursePerformance {
+  course_id: string;
+  title: string;
+  published: boolean;
+  enrolled_count: number;
+  completed_count: number;
+  completion_pct: number | null;
+  avg_grade: number | null;
+  pass_rate: number | null;
+  certificates_issued: number;
+}
+
+/** One day's activity in the Reports trend chart. */
+export interface ActivityPoint {
+  date: string;
+  modules_completed: number;
+  quiz_attempts: number;
+  certificates_issued: number;
+}
+
+export interface Reports {
+  overview: ReportOverview;
+  courses: CoursePerformance[];
+  trend: ActivityPoint[];
+}
+
 export type OrgPlan = "starter" | "growth" | "enterprise";
 export type OrgStatus = "active" | "trial" | "suspended";
 

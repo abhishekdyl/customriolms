@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History } from "lucide-react";
+import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3 } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,7 @@ const navByRole: Record<RoleName, { href: string; label: string; icon: typeof Us
     { href: "/question-banks", label: "Question Banks", icon: Library },
     { href: "/users", label: "Users & Access", icon: ShieldCheck },
     { href: "/recognition", label: "Recognition", icon: Sparkles },
+    { href: "/reports", label: "Reports", icon: BarChart3 },
     { href: "/notifications", label: "Notifications", icon: Bell },
     { href: "/audit-log", label: "Audit Log", icon: History },
     { href: "/settings", label: "Org Settings", icon: Building2 },
@@ -31,6 +32,7 @@ const navByRole: Record<RoleName, { href: string; label: string; icon: typeof Us
   team_lead: [
     { href: "/dashboard", label: "My Team", icon: Users },
     { href: "/courses", label: "Courses", icon: BookOpen },
+    { href: "/reports", label: "Reports", icon: BarChart3 },
   ],
   learner: [
     { href: "/dashboard", label: "Home", icon: LayoutDashboard },
