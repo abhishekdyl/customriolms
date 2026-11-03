@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3, CalendarDays } from "lucide-react";
+import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3 } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { cn } from "@/lib/utils";
@@ -34,12 +34,13 @@ const navByRole: Record<RoleName, { href: string; label: string; icon: typeof Us
     { href: "/courses", label: "Courses", icon: BookOpen },
     { href: "/reports", label: "Reports", icon: BarChart3 },
   ],
-  learner: [
-    { href: "/dashboard", label: "Home", icon: LayoutDashboard },
-    { href: "/courses", label: "My Courses", icon: BookOpen },
-    { href: "/calendar", label: "Calendar", icon: CalendarDays },
-    { href: "/recognition", label: "Progress", icon: Sparkles },
-  ],
+  // Dead weight, kept only so the Record<RoleName, ...> type stays
+  // total: a learner never reaches this (dashboard) layout at all — its
+  // own AuthGuard only allows super_admin/org_admin/team_lead, and
+  // bounces a learner to ROLE_HOME ("/learn") before this nav ever
+  // renders. The learner's REAL nav (Home/My Courses/Calendar/Progress/
+  // Profile) lives in components/learner/learner-nav.tsx.
+  learner: [],
 };
 
 export function Sidebar() {

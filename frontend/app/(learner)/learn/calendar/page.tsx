@@ -24,7 +24,7 @@ function CourseRow({ item }: { item: CalendarItem }) {
   return (
     <button
       type="button"
-      onClick={() => router.push(`/courses/${item.course_id}`)}
+      onClick={() => router.push(`/learn/courses/${item.course_id}`)}
       className="flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-surface px-3 py-2.5 text-left hover:bg-paper"
     >
       <div className="min-w-0">
@@ -64,7 +64,10 @@ function Section({ title, icon: Icon, items, emptyLabel, tone }: {
  * course — their effective due date (a personal override if an admin
  * set one, else the course's own closes_at). Buckets by urgency rather
  * than a full month grid, since a learner's real question is "what do
- * I need to do soon", not "what's the date today". */
+ * I need to do soon", not "what's the date today". Lives under
+ * (learner)/learn/* like every other learner page — a learner never
+ * reaches the (dashboard) route group (AuthGuard bounces them to
+ * ROLE_HOME), so this must NOT be placed under app/(dashboard). */
 export default function CalendarPage() {
   const { data, isLoading } = useMyCalendar();
   const now = new Date();
@@ -77,9 +80,9 @@ export default function CalendarPage() {
   const done = (data ?? []).filter((i) => i.completed);
 
   return (
-    <div className="flex h-screen min-w-0 flex-1 flex-col">
+    <>
       <Topbar title="Calendar" />
-      <div className="flex-1 overflow-auto p-5 md:p-8">
+      <div className="mx-auto w-full max-w-[1080px] flex-1 px-4 pb-6 pt-3 md:px-8 md:pt-6">
         <p className="mb-5 max-w-[640px] text-[11.5px] text-ink-faint">
           Every course assigned to you, by when it&apos;s due — your own due date if your admin set one, otherwise
           the course&apos;s own close date.
@@ -103,6 +106,6 @@ export default function CalendarPage() {
           </>
         )}
       </div>
-    </div>
+    </>
   );
 }

@@ -1,15 +1,20 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Award, BookOpen, Home, LogOut, Search, Bell, User as UserIcon } from "lucide-react";
+import { Award, BookOpen, CalendarDays, Home, LogOut, Search, Bell, User as UserIcon } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { useLearnSummary } from "@/lib/hooks/use-learn";
 import { cn } from "@/lib/utils";
 
+// Kept in sync with components/learner/learner-nav.tsx's NAV — that one
+// is what layout.tsx actually renders; this file's own LearnerSidebar/
+// MobileTabBar below are unused leftovers, but the list stays identical
+// so neither drifts further if either gets wired back in later.
 const nav = [
   { href: "/learn", label: "Home", icon: Home, exact: true },
   { href: "/learn/courses", label: "My Courses", icon: BookOpen },
+  { href: "/learn/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/learn/progress", label: "Progress", icon: Award },
   { href: "/learn/profile", label: "Profile", icon: UserIcon },
 ];

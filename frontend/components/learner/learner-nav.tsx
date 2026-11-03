@@ -1,15 +1,17 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Award, BookOpen, Home, LogOut, User as UserIcon } from "lucide-react";
+import { Award, BookOpen, CalendarDays, Home, LogOut, User as UserIcon } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { cn } from "@/lib/utils";
 
-// Same four destinations as navByRole.learner in the prototype.
+// Same destinations as navByRole.learner in the prototype, plus Calendar
+// (Phase 2 roadmap: "what's due this week" across every assigned course).
 const NAV = [
   { href: "/learn", label: "Home", icon: Home },
   { href: "/learn/courses", label: "My Courses", icon: BookOpen },
+  { href: "/learn/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/learn/progress", label: "Progress", icon: Award },
   { href: "/learn/profile", label: "Profile", icon: UserIcon },
 ];
