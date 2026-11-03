@@ -34,24 +34,88 @@ function buildMonthGrid(year: number, month: number): { date: Date; inMonth: boo
   });
 }
 
-function CourseRow({ item }: { item: CalendarItem }) {
+const DAY_MS_ = 24 * 60 * 60 * 1000;
+
+/** How urgent this item is right now, in both a short human label and a
+ * color tone — this is the whole point of a due-date view, so it gets
+ * computed precisely rather than just showing the raw date.
+ *
+ * Uses calendar-day difference (not exact 24h blocks) for the headline,
+ * so a due date 26 hours out reads as "Due tomorrow" rather than the
+ * more technically-correct but confusing "Due in 2 days". */
+function dueStatus(item: CalendarItem, now: Date): { label: string; tone: "danger" | "warning" | "success" | "muted" } {
+  if (item.completed) return { label: "Completed", tone: "success" };
+  if (!item.due_at) return { label: "No due date", tone: "muted" };
+  const due = new Date(item.due_at);
+  const diffMs = due.getTime() - now.getTime();
+  const calendarDiffDays = Math.round((startOfDay(due).getTime() - startOfDay(now).getTime()) / DAY_MS_);
+
+  if (diffMs < 0) {
+    if (calendarDiffDays === 0) return { label: `Overdue by ${Math.max(1, Math.round(-diffMs / (60 * 60 * 1000)))}h`, tone: "danger" };
+    const overdueDays = Math.abs(calendarDiffDays);
+    return { label: `Overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"}`, tone: "danger" };
+  }
+  if (calendarDiffDays === 0) return { label: `Due today, ${Math.max(1, Math.round(diffMs / (60 * 60 * 1000)))}h left`, tone: "warning" };
+  if (calendarDiffDays === 1) return { label: "Due tomorrow", tone: "warning" };
+  return { label: `Due in ${calendarDiffDays} days`, tone: "warning" };
+}
+
+const TONE_CLASSES: Record<string, string> = {
+  danger: "bg-danger-soft text-danger",
+  warning: "bg-amber-soft text-amber",
+  success: "bg-success-soft text-success",
+  muted: "bg-line-soft text-ink-faint",
+};
+
+/** A full detail card for one assigned course due on the selected date
+ * — not just a link to the course, but everything relevant to the due
+ * date itself: how overdue/how much time is left, the exact due and
+ * open dates, and current progress. */
+function EventCard({ item, now }: { item: CalendarItem; now: Date }) {
   const router = useRouter();
+  const status = dueStatus(item, now);
   return (
     <button
       type="button"
       onClick={() => router.push(`/learn/courses/${item.course_id}`)}
-      className="flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-surface px-3 py-2.5 text-left hover:bg-paper"
+      className="flex w-full flex-col gap-2 rounded-lg border border-line bg-surface px-3 py-3 text-left hover:bg-paper"
     >
-      <div className="min-w-0">
-        <p className="truncate text-sm text-ink">{item.title}</p>
-        <p className="text-[11px] text-ink-faint">
-          {item.due_at ? new Date(item.due_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "No due date"}
-        </p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 truncate text-sm font-medium text-ink">{item.title}</p>
+        <span className={cn("flex-shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-medium", TONE_CLASSES[status.tone])}>
+          {status.label}
+        </span>
       </div>
-      <div className="flex flex-shrink-0 items-center gap-2">
-        <span className="text-xs text-ink-soft">{item.progress_pct}%</span>
-        {item.completed && <CheckCircle2 className="h-4 w-4 text-success" />}
+
+      <div className="flex flex-col gap-1 text-[11px] text-ink-faint">
+        <div className="flex justify-between">
+          <span>Due</span>
+          <span className="text-ink-soft">
+            {item.due_at ? new Date(item.due_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "Not set"}
+          </span>
+        </div>
+        {item.opens_at && (
+          <div className="flex justify-between">
+            <span>Opens</span>
+            <span className="text-ink-soft">{new Date(item.opens_at).toLocaleDateString(undefined, { dateStyle: "medium" })}</span>
+          </div>
+        )}
       </div>
+
+      <div>
+        <div className="mb-1 flex items-center justify-between text-[11px]">
+          <span className="text-ink-faint">Progress</span>
+          <span className="font-medium text-ink-soft">{item.progress_pct}%</span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-line-soft">
+          <div
+            className={cn("h-full rounded-full", item.completed ? "bg-success" : "bg-primary")}
+            style={{ width: `${item.progress_pct}%` }}
+          />
+        </div>
+      </div>
+
+      <span className="self-end text-[10.5px] font-medium text-primary">Open course →</span>
     </button>
   );
 }
@@ -64,7 +128,8 @@ function CourseRow({ item }: { item: CalendarItem }) {
  * (dashboard) route group (AuthGuard bounces them to ROLE_HOME). */
 export default function CalendarPage() {
   const { data, isLoading } = useMyCalendar();
-  const today = startOfDay(new Date());
+  const now = new Date();
+  const today = startOfDay(now);
   const [cursor, setCursor] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [selected, setSelected] = useState<Date>(today);
 
@@ -92,7 +157,7 @@ export default function CalendarPage() {
     const allDone = items.every((i) => i.completed);
     if (allDone) return "bg-success";
     if (anyOverdue) return "bg-danger";
-    if (startOfDay(d).getTime() === today.getTime()) return "bg-amber-500";
+    if (startOfDay(d).getTime() === today.getTime()) return "bg-amber";
     return "bg-primary";
   }
 
@@ -102,8 +167,8 @@ export default function CalendarPage() {
       <div className="mx-auto w-full max-w-[1080px] flex-1 px-4 pb-6 pt-3 md:px-8 md:pt-6">
         <div className="mb-4 flex items-center justify-between">
           <p className="max-w-[500px] text-[11.5px] text-ink-faint">
-            Har assigned course, due date ke hisaab se — aapka apna due date (agar admin ne set kiya ho) ya course
-            ki apni close date. {overdueCount > 0 && (
+            Every assigned course, by when it&apos;s due — your own due date if your admin set one, otherwise the
+            course&apos;s own close date. {overdueCount > 0 && (
               <span className="font-medium text-danger"> {overdueCount} overdue.</span>
             )}
           </p>
@@ -176,10 +241,10 @@ export default function CalendarPage() {
                 {selected.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}
               </p>
               {selectedItems.length === 0 ? (
-                <p className="text-[11.5px] text-ink-faint">Is din kuch due nahi hai.</p>
+                <p className="text-[11.5px] text-ink-faint">Nothing due on this date.</p>
               ) : (
                 <div className="flex flex-col gap-2">
-                  {selectedItems.map((i) => <CourseRow key={i.course_id} item={i} />)}
+                  {selectedItems.map((i) => <EventCard key={i.course_id} item={i} now={now} />)}
                 </div>
               )}
 
@@ -189,7 +254,7 @@ export default function CalendarPage() {
                     <AlertTriangle className="h-3.5 w-3.5" /> No due date set
                   </p>
                   <div className="flex flex-col gap-2">
-                    {noDueDate.map((i) => <CourseRow key={i.course_id} item={i} />)}
+                    {noDueDate.map((i) => <EventCard key={i.course_id} item={i} now={now} />)}
                   </div>
                 </div>
               )}
