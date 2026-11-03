@@ -149,7 +149,8 @@ export interface QuestionInput {
 export type ModuleRestriction =
   | { type: "date_window"; opens_at: string | null; closes_at: string | null }
   | { type: "profile_field"; field: "country" | "location" | "job_title"; value: string }
-  | { type: "module_score"; module_id: string; min_score: number };
+  | { type: "module_score"; module_id: string; min_score: number }
+  | { type: "group"; group_id: string };
 
 export interface Module {
   id: string;
@@ -230,6 +231,24 @@ export interface EnrolledLearner {
   due_at: string | null;
   /** True when due_at came from a personal override, not the course default. */
   due_overridden: boolean;
+  /** Which of this course's groups (see CourseGroup) this learner belongs
+   * to, by name — display only. */
+  group_names: string[];
+}
+
+/** A course-scoped sub-group of enrolled learners — e.g. "Batch A" —
+ * distinct from an org-wide Team (which is what a course gets ASSIGNED
+ * to). Used to scope Participants/Gradebook by sub-group, to gate a
+ * module to just this group (see ModuleRestriction's "group" type), and
+ * for an optional group-wide due date that applies to every member who
+ * doesn't already have their own personal due-date override. */
+export interface CourseGroup {
+  id: string;
+  course_id: string;
+  name: string;
+  member_user_ids: string[];
+  member_count: number;
+  due_at: string | null;
 }
 
 /** One course on the learner's own Calendar page — their effective due

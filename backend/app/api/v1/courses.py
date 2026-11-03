@@ -13,19 +13,21 @@ from app.models.course import Course
 from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CourseAssignRequest, CourseCreate, CourseListItem,
-    CourseModuleProgressOut, CourseOut, CourseUpdate, DueOverrideOut, DueOverrideSet, EnrolledLearnerOut, GradebookOut,
-    LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem, QuizAttemptOut,
+    AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CourseAssignRequest, CourseCreate, CourseGroupIn,
+    CourseGroupOut, CourseGroupUpdate, CourseListItem, CourseModuleProgressOut, CourseOut, CourseUpdate,
+    DueOverrideOut, DueOverrideSet, EnrolledLearnerOut, GradebookOut, LearnerCourseOut, ModuleCreate, ModuleOut,
+    ModuleReorderRequest, ModuleUpdate, MyCourseItem, QuizAttemptOut,
 )
 from app.schemas.learn import (
     CompleteRequest, CompleteResult, QuizResult, QuizSubmit, ScormCheckpointIn, ScormProgressOut, WatchCheckpointIn,
     WatchProgressOut,
 )
 from app.services.course_service import (
-    _assigned_to, _validate_ids_belong_to_org, _would_create_cycle, add_module, assign_course, get_course_or_404,
-    get_my_course, list_attempt_overrides, list_calendar, list_courses, list_enrolled, list_gradebook,
-    list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules,
-    set_attempt_override, set_due_override, update_module, upload_module_content, upload_scorm_package,
+    _assigned_to, _validate_ids_belong_to_org, _would_create_cycle, add_module, assign_course, create_course_group,
+    delete_course_group, get_course_or_404, get_my_course, list_attempt_overrides, list_calendar,
+    list_course_groups, list_courses, list_enrolled, list_gradebook, list_module_progress, list_my_courses,
+    list_quiz_attempts, remove_module_content, reorder_modules, set_attempt_override, set_due_override,
+    update_course_group, update_module, upload_module_content, upload_scorm_package,
 )
 from app.services import audit_log_service
 from app.services import learn_service as progress_svc
@@ -390,6 +392,54 @@ async def put_due_override(
     every other enrollment-editing action."""
     course = await get_course_or_404(db, course_id, current_user.org_id)
     return await set_due_override(db, course, user_id, body.due_at)
+
+
+# ---------- Groups/cohorts — course-scoped sub-groups of enrolled
+# learners (see CourseGroup's docstring). Org Admin only, same reasoning
+# as due-override above: groups can gate module content and set a
+# group-wide due date, so they're course *configuration*, not just a
+# reporting view (unlike /enrolled or /gradebook, which Team Lead can
+# also read). ----------
+
+@router.get(
+    "/{course_id}/groups", response_model=list[CourseGroupOut],
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
+async def get_course_groups(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    return await list_course_groups(db, course)
+
+
+@router.post(
+    "/{course_id}/groups", response_model=CourseGroupOut, status_code=201,
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
+async def post_course_group(course_id: uuid.UUID, body: CourseGroupIn, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    return await create_course_group(db, course, body)
+
+
+@router.patch(
+    "/{course_id}/groups/{group_id}", response_model=CourseGroupOut,
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
+async def patch_course_group(
+    course_id: uuid.UUID, group_id: uuid.UUID, body: CourseGroupUpdate,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    return await update_course_group(db, course, group_id, body)
+
+
+@router.delete(
+    "/{course_id}/groups/{group_id}", status_code=204,
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
+async def delete_course_group_endpoint(
+    course_id: uuid.UUID, group_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    await delete_course_group(db, course, group_id)
 
 
 @router.get("/calendar/mine", response_model=list[CalendarItemOut])

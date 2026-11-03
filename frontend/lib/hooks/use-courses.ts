@@ -2,8 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type {
-  AttemptOverride, CalendarItem, Course, CourseListItem, CourseModuleProgress, EnrolledLearner, Gradebook, Module,
-  QuestionInput, QuizAttempt,
+  AttemptOverride, CalendarItem, Course, CourseGroup, CourseListItem, CourseModuleProgress, EnrolledLearner,
+  Gradebook, Module, QuestionInput, QuizAttempt,
 } from "@/lib/types";
 
 export function useCourses() {
@@ -259,5 +259,50 @@ export function useMyCalendar() {
   return useQuery({
     queryKey: ["courses", "calendar", "mine"],
     queryFn: () => api.get<CalendarItem[]>("/api/v1/courses/calendar/mine"),
+  });
+}
+
+/** Groups/cohorts inside one course — see CourseGroup's docstring.
+ * Org Admin only. */
+export function useCourseGroups(courseId: string) {
+  return useQuery({
+    queryKey: ["courses", courseId, "groups"],
+    queryFn: () => api.get<CourseGroup[]>(`/api/v1/courses/${courseId}/groups`),
+    enabled: !!courseId,
+  });
+}
+
+export function useCreateCourseGroup(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; member_user_ids?: string[]; due_at?: string | null }) =>
+      api.post<CourseGroup>(`/api/v1/courses/${courseId}/groups`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "groups"] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "enrolled"] });
+    },
+  });
+}
+
+export function useUpdateCourseGroup(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ groupId, body }: { groupId: string; body: Partial<Pick<CourseGroup, "name" | "member_user_ids" | "due_at">> }) =>
+      api.patch<CourseGroup>(`/api/v1/courses/${courseId}/groups/${groupId}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "groups"] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "enrolled"] });
+    },
+  });
+}
+
+export function useDeleteCourseGroup(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (groupId: string) => api.delete(`/api/v1/courses/${courseId}/groups/${groupId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "groups"] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "enrolled"] });
+    },
   });
 }

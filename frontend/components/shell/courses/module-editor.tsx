@@ -10,7 +10,7 @@ import { useUploadModuleFile, useRemoveModuleFile, useUploadScormPackage } from 
 import { useQuestionBanks, useQuestionBank, useImportBankQuestions, useUploadQuestionImage } from "@/lib/hooks/use-question-banks";
 import { newQuestion, tempId } from "@/lib/quiz-utils";
 import { ApiError } from "@/lib/api-client";
-import type { Module, ModuleRestriction, ModuleType, QuestionType, QuizQuestion } from "@/lib/types";
+import type { CourseGroup, Module, ModuleRestriction, ModuleType, QuestionType, QuizQuestion } from "@/lib/types";
 
 const moduleTypeLabel: Record<ModuleType, string> = {
   watch: "Watch video", quiz: "Pass quiz", read: "Read & acknowledge", manual: "Manual sign-off", scorm: "SCORM package",
@@ -727,7 +727,7 @@ function WatchQuestionsBuilder({
 }
 
 const RESTRICTION_TYPE_LABEL: Record<ModuleRestriction["type"], string> = {
-  date_window: "Date window", profile_field: "Learner profile", module_score: "Prior module score",
+  date_window: "Date window", profile_field: "Learner profile", module_score: "Prior module score", group: "Group",
 };
 
 // "YYYY-MM-DDTHH:MM:SS+00:00" -> "YYYY-MM-DD", for a <input type="date"> value.
@@ -739,15 +739,20 @@ export function restrictionValid(r: ModuleRestriction): boolean {
   if (r.type === "date_window") return !!(r.opens_at || r.closes_at) && (!r.opens_at || !r.closes_at || r.closes_at > r.opens_at);
   if (r.type === "profile_field") return !!r.value.trim();
   if (r.type === "module_score") return !!r.module_id && r.min_score >= 0 && r.min_score <= 100;
+  if (r.type === "group") return !!r.group_id;
   return true;
 }
 
 /** One card per restriction — editable in place. `otherModules` is every
  * other module on this course, in position order, for the module_score
- * type's "which earlier module" picker. */
+ * type's "which earlier module" picker. `groups` is this course's own
+ * groups/cohorts, for the group type's picker. */
 function RestrictionCard({
-  restriction: r, otherModules, onChange, onDelete,
-}: { restriction: ModuleRestriction; otherModules: Module[]; onChange: (next: ModuleRestriction) => void; onDelete: () => void }) {
+  restriction: r, otherModules, groups, onChange, onDelete,
+}: {
+  restriction: ModuleRestriction; otherModules: Module[]; groups: CourseGroup[];
+  onChange: (next: ModuleRestriction) => void; onDelete: () => void;
+}) {
   return (
     <div className="rounded-lg border border-line-soft bg-paper p-2.5">
       <div className="mb-2 flex items-center justify-between">
@@ -812,6 +817,20 @@ function RestrictionCard({
           </div>
         </div>
       )}
+
+      {r.type === "group" && (
+        groups.length === 0 ? (
+          <p className="text-[11px] text-ink-faint">No groups on this course yet — add one under the More tab first.</p>
+        ) : (
+          <select
+            value={r.group_id} onChange={(e) => onChange({ ...r, group_id: e.target.value })}
+            className="h-7 w-full rounded-md border border-line px-1.5 text-[11px]"
+          >
+            <option value="">Choose a group…</option>
+            {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+        )
+      )}
       {!restrictionValid(r) && <p className="mt-1.5 text-[10.5px] text-amber">Finish setting this up — it won't be saved until it's valid.</p>}
     </div>
   );
@@ -825,8 +844,8 @@ function RestrictionCard({
  * admin mid-edit (e.g. just clicked "+ Prior score" and hasn't picked the
  * module yet) never gets a save error for the incomplete entry. */
 function RestrictionsEditor({
-  restrictions, otherModules, onChange,
-}: { restrictions: ModuleRestriction[]; otherModules: Module[]; onChange: (next: ModuleRestriction[]) => void }) {
+  restrictions, otherModules, groups, onChange,
+}: { restrictions: ModuleRestriction[]; otherModules: Module[]; groups: CourseGroup[]; onChange: (next: ModuleRestriction[]) => void }) {
   const update = (i: number, next: ModuleRestriction) => onChange(restrictions.map((r, ri) => (ri === i ? next : r)));
   const remove = (i: number) => onChange(restrictions.filter((_, ri) => ri !== i));
 
@@ -838,7 +857,7 @@ function RestrictionsEditor({
       {restrictions.length > 0 && (
         <div className="mb-2 flex flex-col gap-2">
           {restrictions.map((r, i) => (
-            <RestrictionCard key={i} restriction={r} otherModules={otherModules} onChange={(next) => update(i, next)} onDelete={() => remove(i)} />
+            <RestrictionCard key={i} restriction={r} otherModules={otherModules} groups={groups} onChange={(next) => update(i, next)} onDelete={() => remove(i)} />
           ))}
         </div>
       )}
@@ -861,6 +880,13 @@ function RestrictionsEditor({
           className="rounded-md border border-dashed border-line px-2 py-1 text-[10.5px] font-medium text-primary disabled:opacity-40"
         >
           + Prior module score
+        </button>
+        <button
+          disabled={groups.length === 0}
+          onClick={() => onChange([...restrictions, { type: "group", group_id: groups[0]?.id ?? "" }])}
+          className="rounded-md border border-dashed border-line px-2 py-1 text-[10.5px] font-medium text-primary disabled:opacity-40"
+        >
+          + Group
         </button>
       </div>
     </div>
@@ -923,6 +949,7 @@ export function ModuleEditorRow({
   courseId,
   module: m,
   allModules,
+  groups,
   onChange,
   onDelete,
   isDirty,
@@ -933,6 +960,9 @@ export function ModuleEditorRow({
   courseId: string;
   module: Module;
   allModules: Module[];
+  // This course's own groups/cohorts, for the "group" restriction's
+  // picker — empty is fine, the button just stays disabled.
+  groups: CourseGroup[];
   // Updates this module's local draft only — nothing is sent to the
   // server until onSave is called. The caller (CourseManagePage) still
   // owns the actual module state and marks it dirty on any onChange.
@@ -1219,6 +1249,7 @@ export function ModuleEditorRow({
           <RestrictionsEditor
             restrictions={m.restrictions}
             otherModules={allModules.filter((om) => om.id !== m.id)}
+            groups={groups}
             onChange={(next) => onChange({ restrictions: next })}
           />
 

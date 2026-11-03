@@ -60,14 +60,20 @@ class ModuleRestrictionIn(BaseModel):
       job_title — the free-text fields on User) must equal `value`.
     - module_score: an earlier module (`module_id`) must already have a
       recorded score of at least `min_score`.
+    - group: the learner must be a member of this course's `group_id`
+      (see CourseGroup) — not validated against the course here (this
+      schema has no DB access); an unknown/deleted group_id is simply
+      never satisfied, same forward-compatible-and-honest fallback as an
+      unknown restriction type gets in learn_service._restriction_reason.
     """
-    type: Literal["date_window", "profile_field", "module_score"]
+    type: Literal["date_window", "profile_field", "module_score", "group"]
     opens_at: datetime | None = None
     closes_at: datetime | None = None
     field: str | None = None
     value: str | None = None
     module_id: uuid.UUID | None = None
     min_score: int | None = None
+    group_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def _check_shape(self):
@@ -86,6 +92,9 @@ class ModuleRestrictionIn(BaseModel):
                 raise ValueError("A module_score restriction needs module_id")
             if self.min_score is None or not (0 <= self.min_score <= 100):
                 raise ValueError("min_score must be between 0 and 100")
+        elif self.type == "group":
+            if self.group_id is None:
+                raise ValueError("A group restriction needs group_id")
         return self
 
 
@@ -299,6 +308,54 @@ class EnrolledLearnerOut(BaseModel):
     # else the course's own closes_at, else None (no due date at all).
     due_at: datetime | None = None
     due_overridden: bool = False  # true when due_at came from a personal override, not the course default
+    # Which of this course's groups (see CourseGroup) this learner belongs
+    # to, by name — just for display on the Participants list; membership
+    # itself is only ever edited through the group endpoints below.
+    group_names: list[str] = []
+
+
+class CourseGroupIn(BaseModel):
+    """Authoring shape for creating/replacing a course group — see
+    CourseGroup's docstring. member_user_ids isn't validated against
+    "actually enrolled in this course" here (team-based enrollment can
+    shift under a group at any time); the API layer only checks the ids
+    are real users in this org."""
+    name: str
+    member_user_ids: list[uuid.UUID] = []
+    due_at: datetime | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Group name can't be empty")
+        return v
+
+
+class CourseGroupUpdate(BaseModel):
+    """Partial update — same exclude_unset convention as ModuleUpdate:
+    an omitted field is left alone, an explicit null on due_at clears the
+    group's own due date back to "no effect" (falls through to the
+    course default or a personal override)."""
+    name: str | None = None
+    member_user_ids: list[uuid.UUID] | None = None
+    due_at: datetime | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("Group name can't be empty")
+        return v
+
+
+class CourseGroupOut(BaseModel):
+    id: uuid.UUID
+    course_id: uuid.UUID
+    name: str
+    member_user_ids: list[uuid.UUID]
+    member_count: int
+    due_at: datetime | None = None
 
 
 class ModuleSummaryOut(BaseModel):

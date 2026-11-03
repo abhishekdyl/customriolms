@@ -10,15 +10,17 @@ from app.models.badge import Badge
 from app.models.category import Category
 from app.models.course import Course
 from app.models.course_due_override import CourseDueOverride
+from app.models.course_group import CourseGroup
 from app.models.module import Module, ModuleQuizQuestion, ModuleType
 from app.models.quiz_attempt import QuizAttempt
 from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    AttemptOverrideOut, CalendarItemOut, CourseListItem, CourseModuleProgressOut, DueOverrideOut, EnrolledLearnerOut,
-    GradableModuleOut, GradebookOut, GradebookRowOut, LearnerCourseOut, LearnerModuleOut, LearnerModuleProgressOut,
-    ModuleCreate, ModuleProgressCellOut, ModuleSummaryOut, ModuleUpdate, MyCourseItem, QuizAttemptOut,
+    AttemptOverrideOut, CalendarItemOut, CourseGroupIn, CourseGroupOut, CourseGroupUpdate, CourseListItem,
+    CourseModuleProgressOut, DueOverrideOut, EnrolledLearnerOut, GradableModuleOut, GradebookOut, GradebookRowOut,
+    LearnerCourseOut, LearnerModuleOut, LearnerModuleProgressOut, ModuleCreate, ModuleProgressCellOut,
+    ModuleSummaryOut, ModuleUpdate, MyCourseItem, QuizAttemptOut,
 )
 from app.schemas.question import QuestionLearnerOut
 # Real per-learner progress (ModuleProgress-backed) lives in
@@ -505,12 +507,27 @@ async def _due_overrides_map(db: AsyncSession, course_id: uuid.UUID) -> dict[uui
 
 
 def _effective_due(course: Course, overrides: dict[uuid.UUID, datetime], user_id: uuid.UUID) -> tuple[datetime | None, bool]:
-    """(due_at, overridden) for one learner on one course — their own
-    CourseDueOverride if one is set, else the course's own closes_at
-    (which already doubles as the default due date — see Course's
-    docstring), else None when the course has no end date at all."""
+    """(due_at, overridden) for one learner on one course. Precedence:
+    1. their own CourseDueOverride, if one is set (overridden=True) —
+       always wins, same as before groups existed.
+    2. the earliest due_at among any of this course's groups (see
+       CourseGroup) they're a member of, if any group has one set
+       (overridden=False — it's not a PERSONAL override, so the
+       Participants editor's "Reset" link correctly stays hidden for it;
+       to change it the admin edits the group, or the learner's own
+       membership, not this row). The earliest, not the latest, wins when
+       a learner is in more than one group with a due date — the
+       strictest requirement applies, same "most specific wins" spirit
+       as a personal override beating this.
+    3. else the course's own closes_at (overridden=False), else None."""
     if user_id in overrides:
         return overrides[user_id], True
+    group_dues = [
+        g.due_at for g in (course.groups or [])
+        if g.due_at is not None and user_id in (g.member_user_ids or [])
+    ]
+    if group_dues:
+        return min(group_dues), False
     return course.closes_at, False
 
 
@@ -535,10 +552,11 @@ async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[
         done = await progress_svc.completed_map(db, user.id)
         pct, _, _ = progress_svc.course_progress(course, done)
         due_at, overridden = _effective_due(course, overrides, user.id)
+        group_names = [g.name for g in (course.groups or []) if user.id in (g.member_user_ids or [])]
         out.append(EnrolledLearnerOut(
             user_id=user.id, name=user.full_name, email=user.email, team_name=team_name,
             via="direct" if via_direct else "team", progress_pct=pct, completed=pct >= 100,
-            due_at=due_at, due_overridden=overridden,
+            due_at=due_at, due_overridden=overridden, group_names=group_names,
         ))
     out.sort(key=lambda r: r.name.lower())
     return out
@@ -565,6 +583,62 @@ async def set_due_override(db: AsyncSession, course: Course, user_id: uuid.UUID,
         db.add(existing)
     await db.commit()
     return DueOverrideOut(course_id=course.id, user_id=user_id, due_at=due_at)
+
+
+def _group_out(group: CourseGroup) -> CourseGroupOut:
+    return CourseGroupOut(
+        id=group.id, course_id=group.course_id, name=group.name,
+        member_user_ids=group.member_user_ids or [], member_count=len(group.member_user_ids or []),
+        due_at=group.due_at,
+    )
+
+
+async def list_course_groups(db: AsyncSession, course: Course) -> list[CourseGroupOut]:
+    rows = await db.execute(select(CourseGroup).where(CourseGroup.course_id == course.id).order_by(CourseGroup.name))
+    return [_group_out(g) for g in rows.scalars().all()]
+
+
+async def create_course_group(db: AsyncSession, course: Course, body: CourseGroupIn) -> CourseGroupOut:
+    await _validate_ids_belong_to_org(db, User, body.member_user_ids, course.org_id, "learner")
+    group = CourseGroup(
+        org_id=course.org_id, course_id=course.id, name=body.name.strip(),
+        member_user_ids=list(dict.fromkeys(body.member_user_ids)), due_at=body.due_at,
+    )
+    db.add(group)
+    await db.commit()
+    await db.refresh(group)
+    return _group_out(group)
+
+
+async def get_course_group_or_404(db: AsyncSession, course: Course, group_id: uuid.UUID) -> CourseGroup:
+    group = (await db.execute(
+        select(CourseGroup).where(CourseGroup.id == group_id, CourseGroup.course_id == course.id)
+    )).scalar_one_or_none()
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return group
+
+
+async def update_course_group(db: AsyncSession, course: Course, group_id: uuid.UUID, body: CourseGroupUpdate) -> CourseGroupOut:
+    group = await get_course_group_or_404(db, course, group_id)
+    data = body.model_dump(exclude_unset=True)
+    if "name" in data:
+        group.name = data["name"].strip()
+    if "member_user_ids" in data:
+        ids = data["member_user_ids"] or []
+        await _validate_ids_belong_to_org(db, User, ids, course.org_id, "learner")
+        group.member_user_ids = list(dict.fromkeys(ids))
+    if "due_at" in data:
+        group.due_at = data["due_at"]  # explicit null clears it — see CourseGroupUpdate's docstring
+    await db.commit()
+    await db.refresh(group)
+    return _group_out(group)
+
+
+async def delete_course_group(db: AsyncSession, course: Course, group_id: uuid.UUID) -> None:
+    group = await get_course_group_or_404(db, course, group_id)
+    await db.delete(group)
+    await db.commit()
 
 
 async def list_calendar(db: AsyncSession, learner: User) -> list[CalendarItemOut]:

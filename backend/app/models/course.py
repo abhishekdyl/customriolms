@@ -138,3 +138,11 @@ class Course(Base):
     modules: Mapped[list["Module"]] = relationship(
         back_populates="course", cascade="all, delete-orphan", order_by="Module.position", lazy="selectin"
     )
+    # Groups/cohorts inside this course — see CourseGroup's docstring.
+    # selectin for the same reason as modules above: learn_service reads
+    # a learner's group membership (member_group_ids) directly off this
+    # relationship during response serialization, outside an awaited
+    # query, so it has to already be in memory by then.
+    groups: Mapped[list["CourseGroup"]] = relationship(
+        back_populates="course", cascade="all, delete-orphan", lazy="selectin"
+    )

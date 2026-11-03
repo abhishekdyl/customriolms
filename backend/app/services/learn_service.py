@@ -144,7 +144,14 @@ def ordered_modules(course: Course) -> list[Module]:
     return sorted((m for m in course.modules if m.published), key=lambda m: m.position)
 
 
-def _restriction_reason(course: Course, restriction: dict, done: dict, user: User) -> str | None:
+def member_group_ids(course: Course, user_id: uuid.UUID) -> set[uuid.UUID]:
+    """Every CourseGroup on this course that user_id belongs to — a pure
+    lookup over course.groups (selectin-loaded, see Course model), same
+    "no extra query" convention as _counted_modules/ordered_modules."""
+    return {g.id for g in (course.groups or []) if user_id in (g.member_user_ids or [])}
+
+
+def _restriction_reason(course: Course, restriction: dict, done: dict, user: User, group_ids: set[uuid.UUID]) -> str | None:
     """None if this one restriction (one entry of Module.restrictions) is
     satisfied; otherwise the human-readable reason it isn't. Unknown
     restriction types never block — forward-compatible with whatever gets
@@ -186,6 +193,15 @@ def _restriction_reason(course: Course, restriction: dict, done: dict, user: Use
             return f'Score at least {min_score}% on "{ref_title}" first.'
         return None
 
+    if rtype == "group":
+        gid = restriction.get("group_id")
+        gid = gid if isinstance(gid, uuid.UUID) else uuid.UUID(str(gid))
+        if gid not in group_ids:
+            group = next((g for g in (course.groups or []) if g.id == gid), None)
+            gname = group.name if group else "a specific group"
+            return f'Only available to the "{gname}" group.'
+        return None
+
     return None
 
 
@@ -197,7 +213,8 @@ def module_locked(course: Course, module: Module, done: dict, user: User) -> tup
        before this one must be done first (the "video > scorm > quiz >
        certificate" chain).
     2. module.restrictions (this module's own list — date windows, a
-       learner profile field, or a minimum score on another module). ALL
+       learner profile field, a minimum score on another module, or
+       membership in one of this course's groups — see CourseGroup). ALL
        of them must pass; the first failing one's reason is returned.
 
     Both default to "nothing extra", so an existing module/course stays
@@ -208,8 +225,9 @@ def module_locked(course: Course, module: Module, done: dict, user: User) -> tup
         if idx is not None and idx > 0 and ordered[idx - 1].id not in done:
             return True, f'Finish "{ordered[idx - 1].title}" first to unlock this module.'
 
+    group_ids = member_group_ids(course, user.id)
     for restriction in (module.restrictions or []):
-        reason = _restriction_reason(course, restriction, done, user)
+        reason = _restriction_reason(course, restriction, done, user, group_ids)
         if reason:
             return True, reason
 

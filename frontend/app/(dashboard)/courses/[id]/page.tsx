@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   useCourse, useCourses, useAddModule, useUpdateModule, useDeleteModule, useDeleteCourse, useReorderModules, useUpdateCourse,
-  useEnrolledLearners, useUploadCourseCoverImage, useRemoveCourseCoverImage, useSetDueOverride,
+  useEnrolledLearners, useUploadCourseCoverImage, useRemoveCourseCoverImage, useSetDueOverride, useCourseGroups,
 } from "@/lib/hooks/use-courses";
 import { useCategories } from "@/lib/hooks/use-categories";
 import { useBadges } from "@/lib/hooks/use-badges";
@@ -19,6 +19,7 @@ import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
 import { useDraft } from "@/lib/hooks/use-draft";
 import { SaveBar } from "@/components/ui/save-bar";
 import { ModuleEditorRow, restrictionValid } from "@/components/shell/courses/module-editor";
+import { GroupsPanel } from "@/components/shell/courses/groups-panel";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
 import { QuizAttemptsSection } from "@/components/shell/courses/quiz-attempts";
 import { ModuleProgressMatrix } from "@/components/shell/courses/module-progress-matrix";
@@ -72,6 +73,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   const { data: badges } = useBadges();
   const { data: certTemplates } = useCertTemplates();
   const { data: enrolled, isLoading: enrolledLoading } = useEnrolledLearners(id);
+  const { data: groups } = useCourseGroups(id);
   const setDueOverride = useSetDueOverride(id);
   const [editingDueFor, setEditingDueFor] = useState<string | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -419,6 +421,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                       courseId={id}
                       module={m}
                       allModules={modules}
+                      groups={groups ?? []}
                       onChange={(patch) => patchModule(m.id, patch)}
                       onDelete={() => { if (confirm("Remove this module?")) deleteModule.mutate(m.id); }}
                       isDirty={dirtyIds.has(m.id)}
@@ -652,6 +655,13 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                     <p className="truncate text-[11px] text-ink-faint">
                       {e.email} · {e.via === "team" ? (e.team_name ?? "via team") : "assigned directly"}
                     </p>
+                    {e.group_names.length > 0 && (
+                      <div className="mt-0.5 flex flex-wrap gap-1">
+                        {e.group_names.map((g) => (
+                          <span key={g} className="rounded-full bg-primary-soft px-1.5 py-0.5 text-[9.5px] text-primary">{g}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-shrink-0 items-center gap-2">
                     {editingDueFor === e.user_id ? (
@@ -719,6 +729,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
       {tab === "more" && (
         <div className="flex flex-col gap-6 pb-2">
+          <GroupsPanel courseId={id} enrolled={enrolled ?? []} />
+
           <div className="rounded-xl border border-line bg-surface p-4">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-xs font-medium text-ink-faint">Course completion rules</p>
