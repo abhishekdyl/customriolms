@@ -295,6 +295,11 @@ export interface Course extends CourseListItem {
   /** When true, modules unlock one at a time in position order — a
    * learner can't open/complete module N+1 until module N is done. */
   sequential_unlock: boolean;
+  /** Other courses that must be 100% complete before a learner can start
+   * this one. Soft references (no FK) — validated at the API layer, same
+   * pattern as assigned_team_ids/assigned_user_ids. Empty means no
+   * prerequisite. See backend Course.prerequisite_course_ids. */
+  prerequisite_course_ids: string[];
   /** Gradebook pass/fail cutoff — the weighted course grade (see
    * GradebookRow.weighted_grade) must be at least this percentage for a
    * learner to show as "Passed" there. See backend Course.pass_mark. */
@@ -454,6 +459,11 @@ export interface CertTemplate {
 /** A course assigned to the logged-in learner, with their own progress. */
 export interface MyCourse extends CourseListItem {
   progress_pct: number;
+  /** True when an incomplete prerequisite course blocks this one — visible
+   * but inert, same philosophy as a locked module. */
+  locked: boolean;
+  /** Human-readable reason for the lock above (null when not locked). */
+  locked_reason: string | null;
 }
 
 export type ModuleKind = "watch" | "read" | "quiz" | "manual" | "scorm";

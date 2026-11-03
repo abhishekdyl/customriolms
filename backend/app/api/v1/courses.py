@@ -22,10 +22,10 @@ from app.schemas.learn import (
     WatchProgressOut,
 )
 from app.services.course_service import (
-    _assigned_to, add_module, assign_course, get_course_or_404, get_my_course, list_attempt_overrides, list_calendar,
-    list_courses, list_enrolled, list_gradebook, list_module_progress, list_my_courses, list_quiz_attempts,
-    remove_module_content, reorder_modules, set_attempt_override, set_due_override, update_module,
-    upload_module_content, upload_scorm_package,
+    _assigned_to, _validate_ids_belong_to_org, _would_create_cycle, add_module, assign_course, get_course_or_404,
+    get_my_course, list_attempt_overrides, list_calendar, list_courses, list_enrolled, list_gradebook,
+    list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules,
+    set_attempt_override, set_due_override, update_module, upload_module_content, upload_scorm_package,
 )
 from app.services import audit_log_service
 from app.services import learn_service as progress_svc
@@ -213,6 +213,14 @@ async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSessi
         if any(i not in valid_ids for i in ids):
             raise HTTPException(status_code=400, detail="One or more of those modules aren't on this course")
         data["completion_module_ids"] = ids
+    if "prerequisite_course_ids" in data:
+        ids = data["prerequisite_course_ids"] or []
+        if course.id in ids:
+            raise HTTPException(status_code=400, detail="A course can't be its own prerequisite")
+        await _validate_ids_belong_to_org(db, Course, ids, current_user.org_id, "prerequisite course")
+        if ids and await _would_create_cycle(db, course.id, ids):
+            raise HTTPException(status_code=400, detail="That would create a prerequisite cycle")
+        data["prerequisite_course_ids"] = ids
     old_published = course.published
     for key, value in data.items():
         setattr(course, key, value)

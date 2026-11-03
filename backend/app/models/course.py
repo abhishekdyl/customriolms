@@ -44,6 +44,17 @@ class Course(Base):
     assigned_team_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)
     assigned_user_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)
 
+    # Prerequisites / learning paths — other courses (in this org) that
+    # must be 100% complete (same course_progress rule as everywhere
+    # else) before a learner can open or complete anything in THIS
+    # course. Soft-referenced ids, same reasoning as badge_ids/skill_ids
+    # above (a join table buys nothing here, and the API layer validates
+    # ids + rejects self-reference and cycles — see
+    # course_service._would_create_cycle). Empty by default, so an
+    # existing course's behavior never changes until an admin opts in —
+    # same convention as sequential_unlock/completion_module_ids.
+    prerequisite_course_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)
+
     # Certificate on completion — soft-referenced badge_ids (Badge table exists now,
     # but badge_ids stays a plain array since Postgres can't FK individual array
     # elements without a join table). certificate_template_id IS a real FK now

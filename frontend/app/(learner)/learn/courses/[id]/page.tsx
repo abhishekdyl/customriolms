@@ -873,6 +873,15 @@ export default function CourseViewPage() {
           ))}
         </div>
 
+        {course.locked && (
+          <div className="mt-4 flex items-center gap-2.5 rounded-lg border border-line-soft bg-line-soft/40 px-4 py-3">
+            <Lock size={16} color="var(--color-ink-faint)" />
+            <span className="text-[12.5px] text-ink-faint">
+              {course.locked_reason ?? "This course is locked until a prerequisite is complete."}
+            </span>
+          </div>
+        )}
+
         <div className="py-4">
           {tab === "content" && (
             <div className="flex flex-col gap-0.5">

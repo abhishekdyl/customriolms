@@ -269,6 +269,11 @@ class CourseUpdate(BaseModel):
     sequential_unlock: bool | None = None
     # Gradebook pass/fail cutoff — see Course.pass_mark's docstring.
     pass_mark: int | None = Field(default=None, ge=0, le=100)
+    # Prerequisites / learning paths — see Course.prerequisite_course_ids'
+    # docstring. [] or null clears it; ids must belong to this org, must
+    # not include this course itself, and must not create a cycle —
+    # validated in the endpoint, same as completion_module_ids above.
+    prerequisite_course_ids: list[uuid.UUID] | None = None
 
     _check_opens = field_validator("opens_at")(_reject_past)
     _check_closes = field_validator("closes_at")(_reject_past)
@@ -478,6 +483,9 @@ class CourseOut(BaseModel):
     sequential_unlock: bool = False
     # Gradebook pass/fail cutoff — see Course.pass_mark's docstring.
     pass_mark: int = 50
+    # Prerequisites / learning paths — see Course.prerequisite_course_ids'
+    # docstring.
+    prerequisite_course_ids: list[uuid.UUID] = []
     cover_image_url: str | None = None
     # Not sent to the client (exclude=True) — same file_key/file_url
     # pattern as ModuleOut above: the storage key is permanent, the
@@ -525,12 +533,16 @@ class CourseListItem(BaseModel):
 
 class MyCourseItem(CourseListItem):
     """What a learner sees on Home / My Courses: a course assigned to them
-    (via their team or directly), plus their own progress on it.
-
-    progress_pct is 0 for now — per-learner progress tracking
-    (enrollments / module_progress) isn't built yet. The frontend already
-    renders it, so wiring real numbers later is a backend-only change."""
+    (via their team or directly), plus their own progress on it."""
     progress_pct: int = 0
+    # Prerequisites / learning paths — true when one or more of this
+    # course's own prerequisite_course_ids isn't 100% complete for this
+    # learner yet (see learn_service.course_locked). The course still
+    # shows up in the list (so the learner can see it's coming and why
+    # it's locked) — same "visible but inert" convention as a locked
+    # module. locked_reason names the first unmet prerequisite.
+    locked: bool = False
+    locked_reason: str | None = None
 
 
 # ---------- Learner-facing course view ----------

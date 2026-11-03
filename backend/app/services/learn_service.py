@@ -216,6 +216,43 @@ def module_locked(course: Course, module: Module, done: dict, user: User) -> tup
     return False, None
 
 
+def course_locked(course: Course, prereq_courses: list[Course], done: dict) -> tuple[bool, str | None]:
+    """(locked, reason) for Course.prerequisite_course_ids — every listed
+    prerequisite course must be 100% complete (same course_progress rule
+    used everywhere else) before a learner can open or complete anything
+    in THIS course. `prereq_courses` must be the actual Course rows for
+    course.prerequisite_course_ids (caller fetches them — this function
+    stays pure/sync, same convention as module_locked). Empty
+    prerequisite_course_ids is never locked by this, same "nothing extra
+    by default" rule as sequential_unlock/module.restrictions."""
+    for prereq in prereq_courses:
+        pct, _, _ = course_progress(prereq, done)
+        if pct < 100:
+            return True, f'Complete "{prereq.title}" first to unlock this course.'
+    return False, None
+
+
+async def _prereq_courses(db: AsyncSession, course: Course) -> list[Course]:
+    if not course.prerequisite_course_ids:
+        return []
+    rows = await db.execute(select(Course).where(Course.id.in_(course.prerequisite_course_ids)))
+    return list(rows.scalars().all())
+
+
+async def assert_prerequisites_met(db: AsyncSession, user: User, course: Course) -> None:
+    """Raises 403 if `course` has an unmet prerequisite for this learner —
+    called at the same action sites as assert_course_open, so a direct
+    API call can't bypass what the course list/detail views already
+    hide behind a lock icon."""
+    prereqs = await _prereq_courses(db, course)
+    if not prereqs:
+        return
+    done = await completed_map(db, user.id)
+    locked, reason = course_locked(course, prereqs, done)
+    if locked:
+        raise HTTPException(status_code=403, detail=reason or "This course is locked.")
+
+
 def status_for(pct: int) -> str:
     return "completed" if pct >= 100 else "not_started" if pct == 0 else "in_progress"
 
@@ -388,6 +425,7 @@ async def retake_scorm_module(db: AsyncSession, user: User, module_id: uuid.UUID
     if module.type != ModuleType.SCORM:
         raise HTTPException(status_code=400, detail="This module isn't a SCORM module")
     assert_course_open(course)
+    await assert_prerequisites_met(db, user, course)
 
     attempts_so_far = (await db.execute(
         select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
@@ -460,6 +498,7 @@ async def retake_watch_module(db: AsyncSession, user: User, module_id: uuid.UUID
     if module.type != ModuleType.WATCH:
         raise HTTPException(status_code=400, detail="This module isn't a WATCH module")
     assert_course_open(course)
+    await assert_prerequisites_met(db, user, course)
 
     attempts_so_far = (await db.execute(
         select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
@@ -493,6 +532,7 @@ async def complete_module(
     if module.type == ModuleType.QUIZ:
         raise HTTPException(status_code=400, detail="Quiz modules are completed by passing the quiz")
     assert_course_open(course)
+    await assert_prerequisites_met(db, user, course)
     await _assert_module_unlocked(db, user, course, module)
 
     score = None
@@ -777,6 +817,7 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
     if module.type != ModuleType.QUIZ or not module.questions:
         raise HTTPException(status_code=400, detail="This module has no quiz")
     assert_course_open(course)
+    await assert_prerequisites_met(db, user, course)
     await _assert_module_unlocked(db, user, course, module)
 
     attempts_so_far = (await db.execute(

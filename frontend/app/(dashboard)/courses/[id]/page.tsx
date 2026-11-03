@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
-  useCourse, useAddModule, useUpdateModule, useDeleteModule, useDeleteCourse, useReorderModules, useUpdateCourse,
+  useCourse, useCourses, useAddModule, useUpdateModule, useDeleteModule, useDeleteCourse, useReorderModules, useUpdateCourse,
   useEnrolledLearners, useUploadCourseCoverImage, useRemoveCourseCoverImage, useSetDueOverride,
 } from "@/lib/hooks/use-courses";
 import { useCategories } from "@/lib/hooks/use-categories";
@@ -179,10 +179,16 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
         completion_mode: course.completion_mode,
         sequential_unlock: course.sequential_unlock,
         pass_mark: course.pass_mark,
+        prerequisite_course_ids: course.prerequisite_course_ids,
       }
     : undefined;
   const { draft: rulesDraftRaw, setDraft: setRulesDraft, dirty: rulesDirty, cancel: cancelRulesRaw } = useDraft(rulesServerValue);
   const [rulesSaved, setRulesSaved] = useState(false);
+  const [rulesError, setRulesError] = useState<string | null>(null);
+
+  // Every other course in the org, for the prerequisite picker below —
+  // a course can't require itself, so that one is filtered out at render.
+  const { data: allCourses } = useCourses();
 
   if (isLoading || !course) return <div className="p-8 text-sm text-ink-faint">Loading…</div>;
 
@@ -238,8 +244,10 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
   };
 
   const saveRules = () => {
+    setRulesError(null);
     updateCourse.mutate(rulesDraft, {
       onSuccess: () => { setRulesSaved(true); setTimeout(() => setRulesSaved(false), 2000); },
+      onError: (err) => setRulesError(err instanceof ApiError ? err.message : "Couldn't save — try again."),
     });
   };
 
@@ -796,6 +804,41 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                 <span className="text-xs text-ink-faint">%</span>
               </div>
             </div>
+
+            <div className="border-t border-line-soft pt-3">
+              <span className="text-sm text-ink">Prerequisite courses</span>
+              <p className="mb-2 mt-0.5 text-[11px] text-ink-faint">
+                A learner can&apos;t start this course until every course picked here is 100% complete. They&apos;ll
+                see it on their course list, locked, with the reason shown.
+              </p>
+              {(allCourses ?? []).filter((c) => c.id !== id).length === 0 ? (
+                <p className="text-xs text-ink-faint">No other courses in this organization yet.</p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {(allCourses ?? []).filter((c) => c.id !== id).map((c) => {
+                    const checked = rulesDraft.prerequisite_course_ids.includes(c.id);
+                    return (
+                      <label key={c.id} className="flex items-center gap-2 text-xs text-ink-soft">
+                        <input
+                          type="checkbox" checked={checked}
+                          onChange={() => {
+                            setRulesDraft((d) => ({
+                              ...d,
+                              prerequisite_course_ids: checked
+                                ? d.prerequisite_course_ids.filter((x) => x !== c.id)
+                                : [...d.prerequisite_course_ids, c.id],
+                            }));
+                          }}
+                        />
+                        {c.title}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {rulesError && <p className="mt-3 text-xs text-danger">{rulesError}</p>}
 
             <SaveBar
               dirty={rulesDirty}

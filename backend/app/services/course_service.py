@@ -39,6 +39,27 @@ async def _validate_ids_belong_to_org(db: AsyncSession, model, ids: list[uuid.UU
         raise HTTPException(status_code=400, detail=f"Unknown {label} id(s): {', '.join(str(m) for m in missing)}")
 
 
+async def _would_create_cycle(db: AsyncSession, course_id: uuid.UUID, candidate_prereq_ids: list[uuid.UUID]) -> bool:
+    """True if setting course_id's prerequisites to candidate_prereq_ids
+    would create a cycle anywhere in the prerequisite graph — i.e. one of
+    the candidates (transitively, through ITS OWN prerequisites) already
+    depends on course_id. Plain BFS over prerequisite_course_ids edges;
+    a course catalogue is small enough that one query per visited node
+    is fine, same N+1-is-fine convention as list_enrolled/list_gradebook."""
+    seen: set[uuid.UUID] = set()
+    queue = list(candidate_prereq_ids)
+    while queue:
+        pid = queue.pop()
+        if pid == course_id:
+            return True
+        if pid in seen:
+            continue
+        seen.add(pid)
+        row = (await db.execute(select(Course.prerequisite_course_ids).where(Course.id == pid))).scalar_one_or_none()
+        queue.extend(row or [])
+    return False
+
+
 async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListItem]:
     result = await db.execute(
         select(Course, Category.name.label("category_name"), func.count(Module.id).label("module_count"))
@@ -102,16 +123,32 @@ async def list_my_courses(db: AsyncSession, user: User) -> list[MyCourseItem]:
     )).scalars().all()
     courses_by_id = {c.id: c for c in courses}
     done = await progress_svc.completed_map(db, user.id)
+
+    # Every prerequisite course any of these courses point to, fetched in
+    # one batch rather than per-course — a learner's course list is the
+    # hottest path in the app, so this stays one extra query total, not N.
+    # Most prerequisites are themselves among the learner's own assigned
+    # courses (already in courses_by_id); only the ones that aren't need
+    # a second query.
+    all_prereq_ids = {pid for c in courses for pid in (c.prerequisite_course_ids or [])}
+    missing_prereq_ids = all_prereq_ids - set(courses_by_id)
+    prereq_by_id = dict(courses_by_id)
+    if missing_prereq_ids:
+        extra = (await db.execute(select(Course).where(Course.id.in_(missing_prereq_ids)))).scalars().all()
+        prereq_by_id.update({c.id: c for c in extra})
+
     out = []
     for course, category_name, module_count in rows:
         pct, _, _ = progress_svc.course_progress(courses_by_id[course.id], done)
+        prereqs = [prereq_by_id[pid] for pid in (course.prerequisite_course_ids or []) if pid in prereq_by_id]
+        locked, locked_reason = progress_svc.course_locked(course, prereqs, done)
         out.append(MyCourseItem(
             id=course.id, title=course.title, category_id=course.category_id, category_name=category_name,
             duration_label=course.duration_label, module_count=module_count,
             assigned_team_count=len(course.assigned_team_ids or []),
             opens_at=course.opens_at, closes_at=course.closes_at,
             cover_image_url=storage_service.presigned_get_url(course.cover_image_key) if course.cover_image_key else None,
-            progress_pct=pct,
+            progress_pct=pct, locked=locked, locked_reason=locked_reason,
         ))
     return out
 
@@ -136,6 +173,14 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
     watch_progress = await progress_svc.watch_progress_map(db, user.id)
     scorm_progress = await progress_svc.scorm_progress_map(db, user.id)
     pct, completed_count, _ = progress_svc.course_progress(course, done)
+
+    # Prerequisites / learning paths — an unmet prerequisite locks the
+    # WHOLE course, overriding each module's own sequential_unlock/
+    # restrictions check below (there's no point reporting "finish
+    # module 2 first" on a course the learner can't even start yet).
+    prereq_courses = await progress_svc._prereq_courses(db, course)
+    course_is_locked, course_lock_reason = progress_svc.course_locked(course, prereq_courses, done)
+
     modules = []
     for m in course.modules:
         # A draft module (see Module.published) — still being authored,
@@ -148,7 +193,10 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
         # module shows up in the list (so the learner can see what's
         # coming and why it's locked) but with no file to open and no
         # quiz questions to answer.
-        locked, lock_reason = progress_svc.module_locked(course, m, done, user)
+        if course_is_locked:
+            locked, lock_reason = True, course_lock_reason
+        else:
+            locked, lock_reason = progress_svc.module_locked(course, m, done, user)
         modules.append(LearnerModuleOut(
             id=m.id, title=m.title, type=m.type, position=m.position, required=m.required, threshold=m.threshold,
             file_url=(
@@ -185,6 +233,7 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
         assigned_team_count=len(course.assigned_team_ids or []),
         opens_at=course.opens_at, closes_at=course.closes_at,
         progress_pct=pct, modules=modules, completed_module_count=completed_count,
+        locked=course_is_locked, locked_reason=course_lock_reason,
     )
 
 
