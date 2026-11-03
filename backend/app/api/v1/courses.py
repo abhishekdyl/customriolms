@@ -26,6 +26,7 @@ from app.services.course_service import (
     list_enrolled, list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules,
     set_attempt_override, update_module, upload_module_content, upload_scorm_package,
 )
+from app.services import audit_log_service
 from app.services import learn_service as progress_svc
 from app.services import storage_service
 
@@ -167,6 +168,11 @@ async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db), 
                      opens_at=body.opens_at, closes_at=body.closes_at)
     db.add(course)
     await db.commit()
+    await audit_log_service.record(
+        db, org_id=current_user.org_id, actor=current_user, action="course.created",
+        entity_type="course", entity_id=course.id, entity_label=course.title,
+        detail=f"Created course \"{course.title}\" (draft)",
+    )
     # Not db.refresh() — see course_service.get_course_or_404's note; a
     # plain refresh() doesn't reload relationships (modules, category),
     # and this response needs both. Re-fetching through the same helper
@@ -206,9 +212,23 @@ async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSessi
         if any(i not in valid_ids for i in ids):
             raise HTTPException(status_code=400, detail="One or more of those modules aren't on this course")
         data["completion_module_ids"] = ids
+    old_published = course.published
     for key, value in data.items():
         setattr(course, key, value)
     await db.commit()
+    if "published" in data and data["published"] != old_published:
+        await audit_log_service.record(
+            db, org_id=current_user.org_id, actor=current_user, action="course.published" if course.published else "course.unpublished",
+            entity_type="course", entity_id=course.id, entity_label=course.title,
+            detail=f"{'Published' if course.published else 'Unpublished'} course \"{course.title}\"",
+        )
+    other_changes = {k: v for k, v in data.items() if k != "published"}
+    if other_changes:
+        await audit_log_service.record(
+            db, org_id=current_user.org_id, actor=current_user, action="course.updated",
+            entity_type="course", entity_id=course.id, entity_label=course.title,
+            detail=f"Updated course \"{course.title}\": {', '.join(sorted(other_changes))}",
+        )
     return await get_course_or_404(db, course_id, current_user.org_id)
 
 
@@ -249,8 +269,14 @@ async def delete_course_cover_image(course_id: uuid.UUID, db: AsyncSession = Dep
 @router.delete("/{course_id}", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
 async def delete_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
+    title = course.title
     await db.delete(course)  # cascades to modules and their questions
     await db.commit()
+    await audit_log_service.record(
+        db, org_id=current_user.org_id, actor=current_user, action="course.deleted",
+        entity_type="course", entity_id=course_id, entity_label=title,
+        detail=f"Deleted course \"{title}\"",
+    )
 
 
 @router.post("/{course_id}/assign", response_model=CourseOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))])

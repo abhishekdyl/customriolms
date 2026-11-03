@@ -52,7 +52,7 @@ async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListIt
             id=course.id, title=course.title, category_id=course.category_id, category_name=category_name,
             duration_label=course.duration_label, module_count=module_count,
             assigned_team_count=len(course.assigned_team_ids or []),
-            opens_at=course.opens_at, closes_at=course.closes_at,
+            opens_at=course.opens_at, closes_at=course.closes_at, published=course.published,
             cover_image_url=storage_service.presigned_get_url(course.cover_image_key) if course.cover_image_key else None,
         ))
     return items
@@ -84,7 +84,11 @@ async def list_my_courses(db: AsyncSession, user: User) -> list[MyCourseItem]:
         # Module.published's docstring). The ON-clause condition (not a
         # WHERE) keeps the outer join's "0 modules" courses intact.
         .outerjoin(Module, (Module.course_id == Course.id) & (Module.published == True))  # noqa: E712
-        .where(Course.org_id == user.org_id, or_(*_assigned_to(user)))
+        # A draft course (see Course.published's docstring) doesn't exist
+        # for a learner at all yet, even if it's already assigned to
+        # them — same "not even as a locked placeholder" rule as a draft
+        # module.
+        .where(Course.org_id == user.org_id, Course.published == True, or_(*_assigned_to(user)))  # noqa: E712
         .group_by(Course.id, Category.name)
         .order_by(Course.title)
     )
@@ -116,7 +120,10 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
     A course that exists but isn't assigned to this user is a 404, same as
     one that doesn't exist — so ids can't be probed."""
     result = await db.execute(
-        select(Course).where(Course.id == course_id, Course.org_id == user.org_id, or_(*_assigned_to(user)))
+        # Same draft gate as list_my_courses — a course in draft is a 404
+        # for a learner, identical to one that isn't assigned to them at
+        # all, so a direct-link guess can't tell the two apart.
+        select(Course).where(Course.id == course_id, Course.org_id == user.org_id, Course.published == True, or_(*_assigned_to(user)))  # noqa: E712
     )
     course = result.scalar_one_or_none()
     if course is None:

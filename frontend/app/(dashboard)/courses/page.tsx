@@ -56,7 +56,8 @@ function CreateCourseDialog({ open, onOpenChange }: { open: boolean; onOpenChang
             </p>
           )}
           <p className="text-xs text-ink-faint">
-            Start with just a title — you&apos;ll add modules, quizzes, completion rules and a cover image on the next screen.
+            Start with just a title — you&apos;ll add modules, quizzes, completion rules and a cover image on the next
+            screen. It starts as a draft (hidden from every learner, even once assigned) until you publish it.
           </p>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Course title" autoFocus required />
           <select

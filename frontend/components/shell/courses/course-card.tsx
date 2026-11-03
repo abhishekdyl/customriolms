@@ -120,7 +120,17 @@ export function CourseCard({
       </div>
       <div className="p-4">
         <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-[11.5px] text-ink-faint">{c.category_name ?? "Uncategorized"}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11.5px] text-ink-faint">{c.category_name ?? "Uncategorized"}</span>
+            {!c.published && (
+              <span
+                title="Not visible to any learner yet, even if already assigned — publish it from the Settings tab"
+                className="rounded-full bg-ink-faint/15 px-2 py-0.5 text-[10px] font-medium text-ink-soft"
+              >
+                Draft
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-0.5">
             <span className="mr-1 text-[11.5px] text-ink-faint">{c.duration_label}</span>
             <button onClick={(e) => { stop(e); copyShareLink(); }} title="Copy shareable course link" className="rounded p-1 hover:bg-paper">

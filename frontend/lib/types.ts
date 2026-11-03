@@ -204,6 +204,10 @@ export interface CourseListItem {
   opens_at: string | null;
   closes_at: string | null;
   cover_image_url: string | null;
+  /** Draft/published gate — a brand-new course starts false (hidden from
+   * every learner, even one it's already assigned to) until the admin
+   * explicitly publishes it. See backend Course.published's docstring. */
+  published: boolean;
 }
 
 /** One learner enrolled in a course — via their team or assigned directly —
@@ -272,6 +276,19 @@ export interface Course extends CourseListItem {
   /** Fresh presigned URL, null when no cover image is set. */
   cover_image_url: string | null;
   modules: Module[];
+}
+
+/** One row of the "kisne kya badla, kab" audit trail — see
+ * app.models.audit_log.AuditLog on the backend. Org Admin only. */
+export interface AuditLogEntry {
+  id: string;
+  actor_name: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  entity_label: string;
+  detail: string;
+  created_at: string;
 }
 
 export type OrgPlan = "starter" | "growth" | "enterprise";

@@ -24,7 +24,7 @@ from app.schemas.user import (
     UserOut,
 )
 from app.schemas.profile_field import ProfileFieldValueOut, ProfileFieldValuesUpdate
-from app.services import dashboard_service
+from app.services import audit_log_service, dashboard_service
 from app.services import profile_field_service
 from app.services.invite_service import bulk_invite_from_csv, invite_user
 
@@ -125,9 +125,15 @@ async def change_role(user_id: uuid.UUID, body: UpdateRoleRequest, db: AsyncSess
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="You can't change your own role")
     user = await _get_user_or_404(db, user_id, current_user.org_id)
+    old_role = user.role
     user.role = body.role
     await db.commit()
-    # TODO(audit log module): AuditLog.record(actor=current_user, action="role_change", target=user)
+    if old_role != user.role:
+        await audit_log_service.record(
+            db, org_id=current_user.org_id, actor=current_user, action="user.role_changed",
+            entity_type="user", entity_id=user.id, entity_label=user.full_name,
+            detail=f"Changed role: {old_role.value} → {user.role.value}",
+        )
     return user
 
 
@@ -225,6 +231,7 @@ async def update_user_profile(
         if team_check.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
+    old_role = user.role
     user.firstname, user.lastname = split_full_name(body.name)
     user.role = body.role
     user.team_id = body.team_id
@@ -236,6 +243,12 @@ async def update_user_profile(
 
     await db.commit()
     await db.refresh(user)
+    if old_role != user.role:
+        await audit_log_service.record(
+            db, org_id=current_user.org_id, actor=current_user, action="user.role_changed",
+            entity_type="user", entity_id=user.id, entity_label=user.full_name,
+            detail=f"Changed role: {old_role.value} → {user.role.value} (via profile edit)",
+        )
     team_name = None
     if user.team_id is not None:
         team_name = (await db.execute(select(Team.name).where(Team.id == user.team_id))).scalar_one_or_none()

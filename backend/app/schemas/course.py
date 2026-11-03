@@ -226,6 +226,12 @@ class CourseUpdate(BaseModel):
     duration_label: str | None = None
     opens_at: datetime | None = None
     closes_at: datetime | None = None
+    # Draft/published gate — see Course.published's docstring. Omitted
+    # (the normal case while an admin is still editing) leaves the
+    # course exactly as it was; sending it explicitly is how the admin
+    # manually publishes/un-publishes it, same pattern as
+    # ModuleUpdate.published.
+    published: bool | None = None
     certificate_enabled: bool | None = None
     certificate_template_id: uuid.UUID | None = None
     certificate_name: str | None = None
@@ -360,8 +366,12 @@ class CourseOut(BaseModel):
     duration_label: str
     opens_at: datetime | None
     closes_at: datetime | None
-    assigned_team_ids: list[uuid.UUID]
-    assigned_user_ids: list[uuid.UUID]
+    # Draft/published gate — see Course.published's docstring. Always
+    # present for the admin authoring view; a learner never receives
+    # this field at all (CourseListItem via list_my_courses / MyCourseItem
+    # / LearnerCourseOut already filter drafts out entirely, so there's
+    # nothing for them to read it off of).
+    published: bool = True
     certificate_enabled: bool
     certificate_template_id: uuid.UUID | None
     certificate_name: str | None
@@ -398,6 +408,12 @@ class CourseListItem(BaseModel):
     assigned_team_count: int = 0
     opens_at: datetime | None = None
     closes_at: datetime | None = None
+    # Draft/published gate — see Course.published's docstring. Shown on
+    # the admin course-card as a status badge; a learner's own list
+    # (MyCourseItem, which extends this) never actually carries a draft
+    # course in the first place (list_my_courses filters it out), so the
+    # field being here too is harmless, just always True for them.
+    published: bool = True
     # Same presigned-on-read pattern as CourseOut.cover_image_url — the
     # service builds this directly from the course's cover_image_key, so
     # it's a plain field here rather than a model_validator (the service

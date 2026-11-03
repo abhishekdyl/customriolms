@@ -313,9 +313,23 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
         <ArrowLeft className="h-3.5 w-3.5" /> Courses
       </Link>
 
-      <div className="mb-1">
-        <h1 className="font-head text-xl text-ink">{course.title}</h1>
-        <p className="text-[11px] text-ink-faint">Rename it, change its description, category or cover image under the Settings tab.</p>
+      <div className="mb-1 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="font-head text-xl text-ink">{course.title}</h1>
+          <p className="text-[11px] text-ink-faint">Rename it, change its description, category or cover image under the Settings tab.</p>
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5">
+          <div className="text-right">
+            <p className="text-[11px] font-medium text-ink">{course.published ? "Published" : "Draft"}</p>
+            <p className="text-[10px] text-ink-faint">
+              {course.published ? "Visible to assigned learners" : "Hidden from every learner"}
+            </p>
+          </div>
+          <Switch
+            checked={course.published}
+            onCheckedChange={(v) => updateCourse.mutate({ published: v })}
+          />
+        </div>
       </div>
 
       {isClosed(course.closes_at) && (

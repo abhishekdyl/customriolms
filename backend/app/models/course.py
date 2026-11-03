@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ARRAY, Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import ARRAY, Boolean, DateTime, ForeignKey, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -88,6 +88,22 @@ class Course(Base):
     # never goes stale. Null = no cover set, the course card falls back
     # to its own placeholder.
     cover_image_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Draft/published gate — same idea as Module.published (see its
+    # docstring), one level up: a brand-new course (create_course) is
+    # created with this False, so an admin can spend a week building it
+    # out — adding modules, a cover image, completion rules — without it
+    # being even half-visible to any learner it gets assigned to in the
+    # meantime. The admin flips it on explicitly (PATCH .../publish or
+    # CourseUpdate.published) once it's actually ready.
+    # Checked learner-side only (course_service.list_my_courses/
+    # get_my_course) — the admin's own course-management view always
+    # shows every course, draft or not, same as a module's own list.
+    # server_default "true" so every row that existed before this column
+    # did (created back when a course went live immediately) keeps
+    # working exactly as before — nothing already-assigned and visible
+    # silently disappears from a learner's course list.
+    published: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("true"), nullable=False)
 
     org: Mapped["Org"] = relationship()
     # lazy="selectin": both of these get read into CourseOut on every
