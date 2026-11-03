@@ -1194,6 +1194,28 @@ export function ModuleEditorRow({
             </div>
           )}
 
+          {/* Gradebook weight only means something for a module that
+           * actually produces a graded percentage — a QUIZ always, a
+           * SCORM module only once "Require a grade" above is on (see
+           * ScormCompletionCriteria). Everything else (WATCH, READ,
+           * MANUAL, or a SCORM module not requiring a grade) stays a
+           * plain pass/fail completion item and is skipped by the
+           * Gradebook tab entirely — see backend course_service._is_gradable. */}
+          {(m.type === "quiz" || (m.type === "scorm" && m.scorm_completion_graded)) && (
+            <div className="flex items-center justify-between rounded-lg border border-line-soft p-2.5">
+              <div>
+                <span className="text-xs text-ink-soft">Gradebook weight</span>
+                <p className="text-[10.5px] text-ink-faint">How much this counts toward the course's weighted grade, relative to its other graded modules.</p>
+              </div>
+              <input
+                type="number" min={1}
+                value={m.weight}
+                onChange={(e) => onChange({ weight: Math.max(1, Number(e.target.value) || 1) })}
+                className="h-7 w-16 rounded-md border border-line px-1.5 text-xs"
+              />
+            </div>
+          )}
+
           <RestrictionsEditor
             restrictions={m.restrictions}
             otherModules={allModules.filter((om) => om.id !== m.id)}

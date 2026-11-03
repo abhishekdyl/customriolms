@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ARRAY, Boolean, DateTime, ForeignKey, String, Text, text
+from sqlalchemy import ARRAY, Boolean, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -80,6 +80,15 @@ class Course(Base):
     # as everywhere else in this file — validated as a Literal at the API
     # layer (schemas/course.py).
     completion_mode: Mapped[str] = mapped_column(String(10), default="all", nullable=False)
+
+    # Gradebook pass/fail cutoff — the single weighted/aggregate course
+    # grade (see gradebook_service.course_grade) must be at least this
+    # percentage for a learner to be marked "Passed" there. Independent
+    # of a QUIZ module's own `threshold` (that's a per-module pass mark
+    # just for unlocking/completion); this is the course-wide number the
+    # Gradebook tab reports. 50 is an arbitrary but ordinary default —
+    # same reasoning as Module.threshold's own default.
+    pass_mark: Mapped[int] = mapped_column(Integer, default=50, server_default=text("50"), nullable=False)
 
     # Course cover image — same dedup-ledger pattern as a module's own
     # file (see Module.file_key / storage_service.store_file): a storage

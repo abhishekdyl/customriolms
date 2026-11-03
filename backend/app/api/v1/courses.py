@@ -14,8 +14,8 @@ from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
 from app.schemas.course import (
     AttemptOverrideOut, AttemptOverrideSet, CourseAssignRequest, CourseCreate, CourseListItem, CourseModuleProgressOut,
-    CourseOut, CourseUpdate, EnrolledLearnerOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest,
-    ModuleUpdate, MyCourseItem, QuizAttemptOut,
+    CourseOut, CourseUpdate, EnrolledLearnerOut, GradebookOut, LearnerCourseOut, ModuleCreate, ModuleOut,
+    ModuleReorderRequest, ModuleUpdate, MyCourseItem, QuizAttemptOut,
 )
 from app.schemas.learn import (
     CompleteRequest, CompleteResult, QuizResult, QuizSubmit, ScormCheckpointIn, ScormProgressOut, WatchCheckpointIn,
@@ -23,8 +23,8 @@ from app.schemas.learn import (
 )
 from app.services.course_service import (
     _assigned_to, add_module, assign_course, get_course_or_404, get_my_course, list_attempt_overrides, list_courses,
-    list_enrolled, list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content, reorder_modules,
-    set_attempt_override, update_module, upload_module_content, upload_scorm_package,
+    list_enrolled, list_gradebook, list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content,
+    reorder_modules, set_attempt_override, update_module, upload_module_content, upload_scorm_package,
 )
 from app.services import audit_log_service
 from app.services import learn_service as progress_svc
@@ -308,6 +308,19 @@ async def get_module_progress(course_id: uuid.UUID, db: AsyncSession = Depends(g
     their rolled-up course %. A Team Lead only sees their own team."""
     course = await get_course_or_404(db, course_id, current_user.org_id)
     return await list_module_progress(db, course, current_user)
+
+
+@router.get(
+    "/{course_id}/gradebook", response_model=GradebookOut,
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+)
+async def get_gradebook(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The Moodle-style single weighted/aggregate course grade — every
+    QUIZ (and grade-required SCORM) module's best score, weighted and
+    averaged, plus the pass/fail cutoff (Course.pass_mark). A Team Lead
+    only sees their own team's members."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    return await list_gradebook(db, course, current_user)
 
 
 @router.get(

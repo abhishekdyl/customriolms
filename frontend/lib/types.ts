@@ -166,6 +166,11 @@ export interface Module {
   // (null = unlimited). See backend Module's docstring.
   retake_enabled: boolean;
   retake_limit: number | null;
+  // Gradebook weight — how much this module counts toward the course's
+  // weighted grade, relative to its other GRADABLE modules (a QUIZ
+  // always; a SCORM module only when scorm_completion_graded is on).
+  // Meaningless on any other module. See backend Module.weight docstring.
+  weight: number;
   // Draft/published gate — a brand-new module starts false (hidden from
   // every learner) and flips true the first time it's explicitly saved,
   // or whenever this is set directly (manual publish/un-publish). See
@@ -273,9 +278,42 @@ export interface Course extends CourseListItem {
   /** When true, modules unlock one at a time in position order — a
    * learner can't open/complete module N+1 until module N is done. */
   sequential_unlock: boolean;
+  /** Gradebook pass/fail cutoff — the weighted course grade (see
+   * GradebookRow.weighted_grade) must be at least this percentage for a
+   * learner to show as "Passed" there. See backend Course.pass_mark. */
+  pass_mark: number;
   /** Fresh presigned URL, null when no cover image is set. */
   cover_image_url: string | null;
   modules: Module[];
+}
+
+/** One module that actually counts toward the weighted course grade —
+ * see GradebookRow and backend course_service._is_gradable. */
+export interface GradableModule {
+  id: string;
+  title: string;
+  weight: number;
+}
+
+/** One learner's weighted/aggregate course grade. From
+ * GET /courses/{id}/gradebook (Org Admin / Team Lead). */
+export interface GradebookRow {
+  user_id: string;
+  name: string;
+  email: string;
+  team_name: string | null;
+  graded_count: number;
+  total_gradable: number;
+  /** Null when graded_count is 0 — nothing to average yet, not a 0%. */
+  weighted_grade: number | null;
+  /** Null alongside weighted_grade; otherwise weighted_grade >= pass_mark. */
+  passed: boolean | null;
+}
+
+export interface Gradebook {
+  pass_mark: number;
+  modules: GradableModule[];
+  learners: GradebookRow[];
 }
 
 /** One row of the "kisne kya badla, kab" audit trail — see

@@ -15,9 +15,9 @@ from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    AttemptOverrideOut, CourseListItem, CourseModuleProgressOut, EnrolledLearnerOut, LearnerCourseOut, LearnerModuleOut,
-    LearnerModuleProgressOut, ModuleCreate, ModuleProgressCellOut, ModuleSummaryOut, ModuleUpdate, MyCourseItem,
-    QuizAttemptOut,
+    AttemptOverrideOut, CourseListItem, CourseModuleProgressOut, EnrolledLearnerOut, GradableModuleOut, GradebookOut,
+    GradebookRowOut, LearnerCourseOut, LearnerModuleOut, LearnerModuleProgressOut, ModuleCreate, ModuleProgressCellOut,
+    ModuleSummaryOut, ModuleUpdate, MyCourseItem, QuizAttemptOut,
 )
 from app.schemas.question import QuestionLearnerOut
 # Real per-learner progress (ModuleProgress-backed) lives in
@@ -510,6 +510,90 @@ async def list_module_progress(db: AsyncSession, course: Course, viewer: User) -
         ))
     learners.sort(key=lambda r: r.name.lower())
     return CourseModuleProgressOut(modules=module_summaries, learners=learners)
+
+
+# A module actually counts toward the weighted course grade only when it
+# can carry a real, graded percentage — QUIZ always; SCORM only when the
+# admin explicitly required a grade (scorm_completion_graded). Every other
+# type (WATCH, READ, MANUAL, or a SCORM module that doesn't require a
+# grade) stays a pass/fail completion item, same convention
+# learn_service.build_progress's skill-radar already follows (only a
+# QUIZ's real score counts there; anything else done counts as full
+# marks) — the gradebook just doesn't count those at all rather than
+# forcing them to 100.
+def _is_gradable(m: Module) -> bool:
+    return m.type == ModuleType.QUIZ or (m.type == ModuleType.SCORM and m.scorm_completion_graded)
+
+
+def _weighted_grade(gradable: list[Module], scores: dict[uuid.UUID, int]) -> tuple[int | None, int]:
+    """(weighted_grade, graded_count) for ONE learner, given `scores` —
+    this learner's own module_id -> best score map (see list_gradebook).
+    weighted_grade is None when graded_count is 0 — nothing graded yet,
+    not a 0%. A gradable module this learner has no attempt on yet is
+    simply excluded from both the numerator and the weight total, so a
+    learner mid-course is graded only on what's actually been marked so
+    far, exactly like the live "running total" a gradebook normally shows
+    before everything is in."""
+    weighted_sum = 0
+    weight_total = 0
+    graded_count = 0
+    for m in gradable:
+        score = scores.get(m.id)
+        if score is None:
+            continue
+        graded_count += 1
+        weighted_sum += score * m.weight
+        weight_total += m.weight
+    grade = round(weighted_sum / weight_total) if weight_total else None
+    return grade, graded_count
+
+
+async def list_gradebook(db: AsyncSession, course: Course, viewer: User) -> GradebookOut:
+    """The Moodle-style single weighted/aggregate course grade — same
+    enrolled-learner resolution and Team Lead scoping as list_enrolled —
+    plus the pass/fail cutoff (Course.pass_mark).
+
+    Deliberately sourced from QuizAttempt (this learner's BEST score ever
+    recorded on each gradable module), not ModuleProgress — a QUIZ or
+    graded-SCORM module only gets a ModuleProgress row once it's actually
+    PASSED (see learn_service.submit_quiz/complete_module), so a failing
+    attempt would otherwise vanish from the grade entirely instead of
+    counting against it. QuizAttempt gets a row for every submission,
+    pass or fail, which is exactly what a grade needs to reflect."""
+    gradable = [m for m in course.modules if m.published and _is_gradable(m)]
+    module_summaries = [GradableModuleOut(id=m.id, title=m.title, weight=m.weight) for m in gradable]
+    gradable_ids = [m.id for m in gradable]
+
+    best_by_user: dict[uuid.UUID, dict[uuid.UUID, int]] = {}
+    if gradable_ids:
+        best_rows = await db.execute(
+            select(QuizAttempt.user_id, QuizAttempt.module_id, func.max(QuizAttempt.score))
+            .where(QuizAttempt.module_id.in_(gradable_ids), QuizAttempt.org_id == course.org_id)
+            .group_by(QuizAttempt.user_id, QuizAttempt.module_id)
+        )
+        for user_id, module_id, best_score in best_rows.all():
+            best_by_user.setdefault(user_id, {})[module_id] = best_score
+
+    rows = await db.execute(
+        select(User, Team.name).outerjoin(Team, Team.id == User.team_id)
+        .where(User.org_id == course.org_id, User.role == RoleName.LEARNER)
+    )
+    learners: list[GradebookRowOut] = []
+    for user, team_name in rows.all():
+        if viewer.role == RoleName.TEAM_LEAD and user.team_id != viewer.team_id:
+            continue
+        via_direct = user.id in (course.assigned_user_ids or [])
+        via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
+        if not via_direct and not via_team:
+            continue
+        grade, graded_count = _weighted_grade(gradable, best_by_user.get(user.id, {}))
+        learners.append(GradebookRowOut(
+            user_id=user.id, name=user.full_name, email=user.email, team_name=team_name,
+            graded_count=graded_count, total_gradable=len(gradable), weighted_grade=grade,
+            passed=None if grade is None else grade >= course.pass_mark,
+        ))
+    learners.sort(key=lambda r: r.name.lower())
+    return GradebookOut(pass_mark=course.pass_mark, modules=module_summaries, learners=learners)
 
 
 async def list_quiz_attempts(db: AsyncSession, course: Course, viewer: User) -> list[QuizAttemptOut]:

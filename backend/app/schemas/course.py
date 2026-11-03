@@ -26,12 +26,22 @@ class ModuleCreate(BaseModel):
     # attempts (null = unlimited).
     retake_enabled: bool = False
     retake_limit: int | None = None
+    # Gradebook weight — see Module.weight's docstring. 1 (equal weighting
+    # with every other gradable module) unless the admin sets otherwise.
+    weight: int = 1
 
     @field_validator("retake_limit")
     @classmethod
     def _positive_limit(cls, v):
         if v is not None and v < 1:
             raise ValueError("retake_limit must be at least 1, or omitted for unlimited")
+        return v
+
+    @field_validator("weight")
+    @classmethod
+    def _positive_weight(cls, v):
+        if v < 1:
+            raise ValueError("weight must be at least 1")
         return v
 
 
@@ -93,6 +103,10 @@ class ModuleUpdate(BaseModel):
     # same pattern as every other nullable field here (e.g.
     # certificate_template_id above).
     retake_limit: int | None = None
+    # Gradebook weight — see Module.weight's docstring and ModuleCreate's
+    # own weight field above. Omitted leaves the module's existing weight
+    # untouched.
+    weight: int | None = None
     # file_url/file_name/file_size_label are deliberately not here — a
     # module's file is only ever set by the real upload endpoint (and
     # cleared by the matching delete endpoint), never by a free-text PATCH.
@@ -125,6 +139,13 @@ class ModuleUpdate(BaseModel):
             raise ValueError("retake_limit must be at least 1, or omitted/null for unlimited")
         return v
 
+    @field_validator("weight")
+    @classmethod
+    def _positive_weight(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("weight must be at least 1")
+        return v
+
 
 class ModuleOut(BaseModel):
     id: uuid.UUID
@@ -136,6 +157,7 @@ class ModuleOut(BaseModel):
     video_question_min_correct: int | None = None
     retake_enabled: bool = False
     retake_limit: int | None = None
+    weight: int = 1
     published: bool = True
     file_url: str | None
     file_name: str | None
@@ -245,6 +267,8 @@ class CourseUpdate(BaseModel):
     completion_module_ids: list[uuid.UUID] | None = None
     completion_mode: Literal["all", "any"] | None = None
     sequential_unlock: bool | None = None
+    # Gradebook pass/fail cutoff — see Course.pass_mark's docstring.
+    pass_mark: int | None = Field(default=None, ge=0, le=100)
 
     _check_opens = field_validator("opens_at")(_reject_past)
     _check_closes = field_validator("closes_at")(_reject_past)
@@ -299,6 +323,43 @@ class CourseModuleProgressOut(BaseModel):
     columns, learners as rows, backing list_module_progress."""
     modules: list[ModuleSummaryOut]
     learners: list[LearnerModuleProgressOut]
+
+
+# ---------- Gradebook ----------
+class GradableModuleOut(BaseModel):
+    """One module that actually counts toward the weighted course grade —
+    see gradebook_service.GRADABLE for exactly which ones qualify."""
+    id: uuid.UUID
+    title: str
+    weight: int
+
+
+class GradebookRowOut(BaseModel):
+    """One learner's weighted/aggregate grade on this course (GET
+    /courses/{id}/gradebook, Org Admin / Team Lead) — the Moodle-style
+    single course total, built from every GRADABLE module's best score so
+    far, each counted by its own weight. See gradebook_service.course_grade."""
+    user_id: uuid.UUID
+    name: str
+    email: str
+    team_name: str | None
+    # How many of the course's gradable modules this learner has an
+    # actual score on yet — "3 of 5 graded" context for weighted_grade,
+    # since a learner mid-course is scored only on what they've done so
+    # far (an un-attempted gradable module is excluded, not counted as 0).
+    graded_count: int
+    total_gradable: int
+    # None when graded_count is 0 — nothing to average yet, not a 0%.
+    weighted_grade: int | None
+    # None alongside weighted_grade (nothing to judge pass/fail on yet);
+    # otherwise weighted_grade >= the course's pass_mark.
+    passed: bool | None
+
+
+class GradebookOut(BaseModel):
+    pass_mark: int
+    modules: list[GradableModuleOut]
+    learners: list[GradebookRowOut]
 
 
 class QuizAttemptAnswerOut(BaseModel):
@@ -366,6 +427,8 @@ class CourseOut(BaseModel):
     duration_label: str
     opens_at: datetime | None
     closes_at: datetime | None
+    assigned_team_ids: list[uuid.UUID]
+    assigned_user_ids: list[uuid.UUID]
     # Draft/published gate — see Course.published's docstring. Always
     # present for the admin authoring view; a learner never receives
     # this field at all (CourseListItem via list_my_courses / MyCourseItem
@@ -380,6 +443,8 @@ class CourseOut(BaseModel):
     completion_module_ids: list[uuid.UUID] = []
     completion_mode: Literal["all", "any"] = "all"
     sequential_unlock: bool = False
+    # Gradebook pass/fail cutoff — see Course.pass_mark's docstring.
+    pass_mark: int = 50
     cover_image_url: str | None = None
     # Not sent to the client (exclude=True) — same file_key/file_url
     # pattern as ModuleOut above: the storage key is permanent, the

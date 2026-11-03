@@ -22,6 +22,7 @@ import { ModuleEditorRow, restrictionValid } from "@/components/shell/courses/mo
 import { AssignModal } from "@/components/shell/courses/assign-modal";
 import { QuizAttemptsSection } from "@/components/shell/courses/quiz-attempts";
 import { ModuleProgressMatrix } from "@/components/shell/courses/module-progress-matrix";
+import { GradebookTable } from "@/components/shell/courses/gradebook-table";
 import { toQuestionInput } from "@/lib/quiz-utils";
 import { cn, isoToLocal, localToIso, nowLocal } from "@/lib/utils";
 import { ApiError } from "@/lib/api-client";
@@ -175,6 +176,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
         completion_module_ids: course.completion_module_ids,
         completion_mode: course.completion_mode,
         sequential_unlock: course.sequential_unlock,
+        pass_mark: course.pass_mark,
       }
     : undefined;
   const { draft: rulesDraftRaw, setDraft: setRulesDraft, dirty: rulesDirty, cancel: cancelRulesRaw } = useDraft(rulesServerValue);
@@ -653,6 +655,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
       {tab === "grades" && (
         <div>
+          <GradebookTable courseId={id} />
           <ModuleProgressMatrix courseId={id} />
           <QuizAttemptsSection courseId={id} />
         </div>
@@ -725,6 +728,25 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
                 <p className="text-[11px] text-ink-faint">A learner must finish each module before the next one (by the order under the Course tab) unlocks.</p>
               </div>
               <Switch checked={rulesDraft.sequential_unlock} onCheckedChange={(v) => setRulesDraft((d) => ({ ...d, sequential_unlock: v }))} />
+            </div>
+
+            <div className="flex items-center justify-between border-t border-line-soft pt-3">
+              <div>
+                <span className="text-sm text-ink">Gradebook pass mark</span>
+                <p className="text-[11px] text-ink-faint">
+                  The weighted course grade (Grades tab) must reach this to show as Passed. Set a module&apos;s own
+                  weight under its editor on the Course tab.
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number" min={0} max={100}
+                  value={rulesDraft.pass_mark}
+                  onChange={(e) => setRulesDraft((d) => ({ ...d, pass_mark: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }))}
+                  className="h-8 w-16 rounded-md border border-line px-2 text-xs"
+                />
+                <span className="text-xs text-ink-faint">%</span>
+              </div>
             </div>
 
             <SaveBar

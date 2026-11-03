@@ -2,7 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type {
-  AttemptOverride, Course, CourseListItem, CourseModuleProgress, EnrolledLearner, Module, QuestionInput, QuizAttempt,
+  AttemptOverride, Course, CourseListItem, CourseModuleProgress, EnrolledLearner, Gradebook, Module, QuestionInput,
+  QuizAttempt,
 } from "@/lib/types";
 
 export function useCourses() {
@@ -222,6 +223,18 @@ export function useModuleProgress(courseId: string) {
   return useQuery({
     queryKey: ["courses", courseId, "module-progress"],
     queryFn: () => api.get<CourseModuleProgress>(`/api/v1/courses/${courseId}/module-progress`),
+    enabled: !!courseId,
+  });
+}
+
+/** The Moodle-style single weighted/aggregate course grade — every
+ * QUIZ (and grade-required SCORM) module's best score, weighted and
+ * averaged, plus the pass/fail cutoff. Org Admin sees everyone; Team
+ * Lead sees only their own team. From GET /courses/{id}/gradebook. */
+export function useGradebook(courseId: string) {
+  return useQuery({
+    queryKey: ["courses", courseId, "gradebook"],
+    queryFn: () => api.get<Gradebook>(`/api/v1/courses/${courseId}/gradebook`),
     enabled: !!courseId,
   });
 }

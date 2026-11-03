@@ -56,6 +56,21 @@ class Module(Base):
     required: Mapped[bool] = mapped_column(Boolean, default=True)
     threshold: Mapped[int] = mapped_column(Integer, default=90)  # min % watched (WATCH) or min score (QUIZ)
 
+    # Gradebook weight — how much this module counts toward the course's
+    # single weighted/aggregate grade (see gradebook_service), relative to
+    # every other GRADABLE module on the same course (QUIZ always; SCORM
+    # only when scorm_completion_graded requires a grade — see that
+    # column's docstring). A plain relative weight, not a percentage that
+    # has to sum to 100 across the course — gradebook_service normalizes
+    # by whatever the weights of the modules actually graded so far add up
+    # to, so adding a module later never requires re-balancing every other
+    # one's weight. Meaningless (and ignored) on a WATCH/READ/MANUAL
+    # module, or a SCORM one that isn't set to require a grade — those
+    # stay pass/fail "completion" items, same convention
+    # learn_service.build_progress's skill-radar already uses (only a
+    # QUIZ's real score counts; anything else done counts as full marks).
+    weight: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"), nullable=False)
+
     # Retake control — currently only enforced for QUIZ modules (see
     # learn_service.submit_quiz). retake_enabled off means exactly one
     # attempt ever, pass or fail. On, retake_limit caps the TOTAL number
