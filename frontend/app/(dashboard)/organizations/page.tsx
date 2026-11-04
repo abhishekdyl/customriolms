@@ -1,11 +1,11 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Plus, Building2, Users as UsersIcon, Search, Bell, Pencil } from "lucide-react";
+import { Plus, Building2, Users as UsersIcon, Search, Bell, Pencil, Lock, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useOrgs, useCreateOrg, useUpdateOrg, useUpdateOrgStatus } from "@/lib/hooks/use-orgs";
+import { useOrgs, useCreateOrg, useUpdateOrg, useUpdateOrgAdmin, useUpdateOrgStatus } from "@/lib/hooks/use-orgs";
 import { ApiError } from "@/lib/api-client";
 import type { Org, OrgPlan, OrgStatus } from "@/lib/types";
 
@@ -90,20 +90,54 @@ function CreateOrgDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
 
 function EditOrgDialog({ org, onOpenChange }: { org: Org | null; onOpenChange: (v: boolean) => void }) {
   const updateOrg = useUpdateOrg();
+  const updateAdmin = useUpdateOrgAdmin();
   const [form, setForm] = useState({ name: org?.name ?? "", plan: (org?.plan ?? "starter") as OrgPlan, user_limit: org?.user_limit ?? 20 });
+  // The Org Admin's own details are shown read-only by default — this is
+  // someone else's account, being edited from the platform side, not a
+  // field on the org itself — and only unlocked on request so it's never
+  // changed by accident while editing the org's plan/seats.
+  const [adminEditable, setAdminEditable] = useState(false);
+  const [adminName, setAdminName] = useState(org?.admin_name ?? "");
+  const [adminEmail, setAdminEmail] = useState(org?.admin_email ?? "");
+  const [adminPassword, setAdminPassword] = useState("");
 
   // Reset the form whenever a different org is opened for editing.
   useMemo(() => {
-    if (org) setForm({ name: org.name, plan: org.plan, user_limit: org.user_limit });
+    if (org) {
+      setForm({ name: org.name, plan: org.plan, user_limit: org.user_limit });
+      setAdminEditable(false);
+      setAdminName(org.admin_name ?? "");
+      setAdminEmail(org.admin_email ?? "");
+      setAdminPassword("");
+    }
   }, [org]);
 
   if (!org) return null;
+
+  const adminChanged =
+    adminEditable && (adminName.trim() !== (org.admin_name ?? "") || adminEmail.trim() !== (org.admin_email ?? "") || adminPassword.trim() !== "");
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     updateOrg.mutate(
       { id: org.id, name: form.name, plan: form.plan, user_limit: form.user_limit },
-      { onSuccess: () => onOpenChange(false) }
+      {
+        onSuccess: () => {
+          if (adminChanged && org.admin_id) {
+            updateAdmin.mutate(
+              {
+                id: org.id,
+                name: adminName.trim() !== (org.admin_name ?? "") ? adminName.trim() : undefined,
+                email: adminEmail.trim() !== (org.admin_email ?? "") ? adminEmail.trim() : undefined,
+                password: adminPassword.trim() || undefined,
+              },
+              { onSuccess: () => onOpenChange(false) }
+            );
+          } else {
+            onOpenChange(false);
+          }
+        },
+      }
     );
   };
 
@@ -114,9 +148,11 @@ function EditOrgDialog({ org, onOpenChange }: { org: Org | null; onOpenChange: (
           <DialogTitle>Edit organization</DialogTitle>
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-3.5 p-6">
-          {updateOrg.isError && (
+          {(updateOrg.isError || updateAdmin.isError) && (
             <p className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">
-              {updateOrg.error instanceof ApiError ? updateOrg.error.message : "Something went wrong."}
+              {updateOrg.error instanceof ApiError ? updateOrg.error.message
+                : updateAdmin.error instanceof ApiError ? updateAdmin.error.message
+                : "Something went wrong."}
             </p>
           )}
           <div>
@@ -146,8 +182,51 @@ function EditOrgDialog({ org, onOpenChange }: { org: Org | null; onOpenChange: (
             />
             <p className="mt-1 text-[11px] text-ink-faint">Changing plan resets this to that plan&apos;s default unless you edit it here too.</p>
           </div>
-          <Button type="submit" className="mt-2" disabled={updateOrg.isPending}>
-            {updateOrg.isPending ? "Saving…" : "Save changes"}
+
+          <div className="mt-1 border-t border-line-soft pt-3.5">
+            <div className="mb-2.5 flex items-center justify-between">
+              <p className="text-xs font-medium text-ink-faint">Org Admin for this org</p>
+              {org.admin_id && (
+                <button
+                  type="button"
+                  onClick={() => setAdminEditable((v) => !v)}
+                  className="flex items-center gap-1 text-[11.5px] font-medium text-primary"
+                >
+                  {adminEditable ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                  {adminEditable ? "Lock" : "Edit"}
+                </button>
+              )}
+            </div>
+            {!org.admin_id ? (
+              <p className="text-[12.5px] text-ink-faint">This org has no Org Admin yet.</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <div>
+                  <Label className="mb-1.5 block">Admin name</Label>
+                  <Input value={adminName} disabled={!adminEditable} onChange={(e) => setAdminName(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block">Admin email</Label>
+                  <Input type="email" value={adminEmail} disabled={!adminEditable} onChange={(e) => setAdminEmail(e.target.value)} />
+                </div>
+                {adminEditable && (
+                  <div>
+                    <Label className="mb-1.5 block">Reset password (optional)</Label>
+                    <Input
+                      type="password" minLength={8} placeholder="Leave blank to keep their current password"
+                      value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)}
+                    />
+                    <p className="mt-1 text-[11px] text-ink-faint">
+                      Setting this signs them out everywhere and forces them to pick a new password on next login.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <Button type="submit" className="mt-2" disabled={updateOrg.isPending || updateAdmin.isPending}>
+            {updateOrg.isPending || updateAdmin.isPending ? "Saving…" : "Save changes"}
           </Button>
         </form>
       </DialogContent>
@@ -246,10 +325,11 @@ export default function OrganizationsPage() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium text-ink">{org.name}</span>
+                <span className="text-[11px] text-ink-faint">({org.slug})</span>
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${statusStyle[org.status]}`}>{org.status}</span>
               </div>
               <div className="mt-0.5 flex items-center gap-3 text-xs text-ink-faint">
-                <span>{org.slug}</span>
+                <span>{org.admin_name ? `${org.admin_name} · ${org.admin_email}` : "No Org Admin"}</span>
                 <span>{planLabel[org.plan]}</span>
                 <span className="flex items-center gap-1"><UsersIcon className="h-3 w-3" /> {org.user_count}/{org.user_limit} seats</span>
                 <span>since {new Date(org.created_at).toLocaleDateString(undefined, { month: "short", year: "numeric" })}</span>

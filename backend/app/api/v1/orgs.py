@@ -10,6 +10,7 @@ from app.models.org import PLAN_USER_LIMITS, Org, OrgStatus
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.user import RoleName, User, split_full_name
 from app.schemas.org import (
+    OrgAdminUpdateRequest,
     OrgCreateRequest,
     OrgOut,
     OrgProfileUpdateRequest,
@@ -112,16 +113,23 @@ async def list_orgs(db: AsyncSession = Depends(get_db)):
     # One org can end up with more than one ORG_ADMIN over time (e.g. an
     # invited co-admin), so this takes the first by id rather than assuming
     # exactly one row — just needs to be a stable, deterministic pick for
-    # display, not "the" canonical admin.
+    # display, not "the" canonical admin. The same resolution is reused by
+    # update_org_admin below, so "the admin this page shows" and "the
+    # admin editing it actually changes" always agree.
     admins_result = await db.execute(
-        select(User.org_id, User.email).where(User.role == RoleName.ORG_ADMIN).order_by(User.id)
+        select(User).where(User.role == RoleName.ORG_ADMIN).order_by(User.id)
     )
-    admin_emails: dict = {}
-    for org_id, email in admins_result.all():
-        admin_emails.setdefault(org_id, email)
+    admins_by_org: dict = {}
+    for admin in admins_result.scalars().all():
+        admins_by_org.setdefault(admin.org_id, admin)
 
     return [
-        OrgOut.model_validate({**org.__dict__, "user_count": counts.get(org.id, 0), "admin_email": admin_emails.get(org.id)})
+        OrgOut.model_validate({
+            **org.__dict__, "user_count": counts.get(org.id, 0),
+            "admin_id": (a := admins_by_org.get(org.id)) and a.id,
+            "admin_name": a and a.full_name,
+            "admin_email": a and a.email,
+        })
         for org in orgs
     ]
 
@@ -154,7 +162,7 @@ async def create_org(body: OrgCreateRequest, db: AsyncSession = Depends(get_db))
     await db.commit()
     await db.refresh(org)
 
-    return OrgOut.model_validate({**org.__dict__, "user_count": 1, "admin_email": admin.email})
+    return OrgOut.model_validate({**org.__dict__, "user_count": 1, "admin_id": admin.id, "admin_name": admin.full_name, "admin_email": admin.email})
 
 
 @router.patch("/{org_id}/status", response_model=OrgOut, dependencies=super_admin_only)
@@ -214,6 +222,58 @@ async def update_org(org_id: str, body: OrgUpdateRequest, db: AsyncSession = Dep
 
     count_result = await db.execute(select(func.count(User.id)).where(User.org_id == org.id))
     return OrgOut.model_validate({**org.__dict__, "user_count": count_result.scalar_one()})
+
+
+@router.patch("/{org_id}/admin", response_model=OrgOut, dependencies=super_admin_only)
+async def update_org_admin(org_id: str, body: OrgAdminUpdateRequest, db: AsyncSession = Depends(get_db)):
+    """Super Admin editing this org's Org Admin from the Organizations
+    page — see OrgAdminUpdateRequest's docstring for why this needs its
+    own endpoint rather than reusing /users/{id}/profile. Targets
+    whichever user list_orgs/get_my_org resolve as "the" admin (first
+    ORG_ADMIN by id) — same resolution, so what's shown and what's
+    edited always match."""
+    org_result = await db.execute(select(Org).where(Org.id == org_id, Org.slug != PLATFORM_ORG_SLUG))
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Org not found")
+
+    admin_result = await db.execute(
+        select(User).where(User.org_id == org.id, User.role == RoleName.ORG_ADMIN).order_by(User.id)
+    )
+    admin = admin_result.scalars().first()
+    if admin is None:
+        raise HTTPException(status_code=404, detail="This org has no Org Admin yet")
+
+    if body.email is not None and body.email.lower() != admin.email:
+        email = body.email.lower()
+        clash = await db.execute(select(User.id).where(User.email == email, User.id != admin.id))
+        if clash.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"{email} is already registered to another account")
+        if admin.username == admin.email:
+            admin.username = email
+        admin.email = email
+
+    if body.name is not None:
+        admin.firstname, admin.lastname = split_full_name(body.name)
+
+    if body.password is not None:
+        admin.hashed_password = hash_password(body.password)
+        # Same reasoning as a fresh invite's default password — the Super
+        # Admin set this one on the admin's behalf, so the admin is forced
+        # to replace it with something only they know before doing
+        # anything else, and every session reset by it (below) can't be
+        # resumed with the old password either way.
+        admin.must_change_password = True
+        await revoke_all_sessions(str(admin.id))
+
+    await db.commit()
+    await db.refresh(org)
+
+    count_result = await db.execute(select(func.count(User.id)).where(User.org_id == org.id))
+    return OrgOut.model_validate({
+        **org.__dict__, "user_count": count_result.scalar_one(),
+        "admin_id": admin.id, "admin_name": admin.full_name, "admin_email": admin.email,
+    })
 
 
 @router.delete("/{org_id}", status_code=204, dependencies=super_admin_only)

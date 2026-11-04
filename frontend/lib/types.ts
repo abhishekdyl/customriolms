@@ -494,6 +494,8 @@ export interface Org {
   logo_url: string | null;
   allow_custom_username: boolean;
   user_count: number;
+  admin_id: string | null;
+  admin_name: string | null;
   admin_email: string | null;
 }
 

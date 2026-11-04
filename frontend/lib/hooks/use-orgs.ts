@@ -63,6 +63,20 @@ export function useUpdateOrg() {
   });
 }
 
+/** Super Admin editing this org's Org Admin (name/email/temporary
+ * password) from the Organizations page — see orgs.py's
+ * update_org_admin for why this needs its own endpoint rather than
+ * /users/{id}/profile. Every field optional; omit what you're not
+ * changing. */
+export function useUpdateOrgAdmin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; name?: string; email?: string; password?: string }) =>
+      api.patch<Org>(`/api/v1/orgs/${id}/admin`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["orgs"] }),
+  });
+}
+
 export function useDeleteOrg() {
   const qc = useQueryClient();
   return useMutation({
