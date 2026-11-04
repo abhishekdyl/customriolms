@@ -12,6 +12,7 @@ class AuditLogOut(BaseModel):
     entity_id: uuid.UUID | None
     entity_label: str
     detail: str
+    course_id: uuid.UUID | None = None
     created_at: datetime
 
     class Config:

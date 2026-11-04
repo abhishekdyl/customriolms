@@ -4,21 +4,14 @@ import { useState } from "react";
 import { History } from "lucide-react";
 import { Topbar } from "@/components/shell/topbar";
 import { useAuditLog } from "@/lib/hooks/use-audit-log";
+import { AUDIT_ACTION_LABEL } from "@/lib/audit-log-labels";
 
 const FAMILIES = [
   { value: "", label: "All" },
   { value: "course", label: "Courses" },
+  { value: "module", label: "Modules" },
   { value: "user", label: "Users" },
 ];
-
-const actionLabel: Record<string, string> = {
-  "course.created": "Course created",
-  "course.updated": "Course updated",
-  "course.published": "Course published",
-  "course.unpublished": "Course unpublished",
-  "course.deleted": "Course deleted",
-  "user.role_changed": "Role changed",
-};
 
 /** "Kisne kya badla, kab" — every course create/publish/update/delete and
  * user role change in this org, newest first. Org Admin only. */
@@ -76,7 +69,7 @@ export default function AuditLogPage() {
                 <tr key={r.id} className="border-t border-line-soft align-top">
                   <td className="whitespace-nowrap px-3 py-2.5 text-ink-faint">{new Date(r.created_at).toLocaleString()}</td>
                   <td className="px-3 py-2.5 text-ink">{r.actor_name}</td>
-                  <td className="px-3 py-2.5 text-ink-soft">{actionLabel[r.action] ?? r.action}</td>
+                  <td className="px-3 py-2.5 text-ink-soft">{AUDIT_ACTION_LABEL[r.action] ?? r.action}</td>
                   <td className="max-w-[160px] truncate px-3 py-2.5 text-ink-faint" title={r.entity_label}>{r.entity_label}</td>
                   <td className="px-3 py-2.5 text-ink-faint">{r.detail}</td>
                 </tr>

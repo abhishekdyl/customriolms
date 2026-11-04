@@ -384,6 +384,7 @@ export interface AuditLogEntry {
   entity_id: string | null;
   entity_label: string;
   detail: string;
+  course_id: string | null;
   created_at: string;
 }
 

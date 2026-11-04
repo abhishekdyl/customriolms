@@ -2,8 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type {
-  AttemptOverride, CalendarItem, Course, CourseExportFile, CourseGroup, CourseImportResult, CourseListItem,
-  CourseModuleProgress, EnrolledLearner, Gradebook, Module, QuestionInput, QuizAttempt,
+  AttemptOverride, AuditLogEntry, CalendarItem, Course, CourseExportFile, CourseGroup, CourseImportResult,
+  CourseListItem, CourseModuleProgress, EnrolledLearner, Gradebook, Module, QuestionInput, QuizAttempt,
 } from "@/lib/types";
 
 export function useCourses() {
@@ -66,6 +66,18 @@ export function useImportCourse() {
   });
 }
 
+/** This course's own change history — every edit to the course itself
+ * plus every module under it (content saves, file/SCORM replaces, quiz
+ * questions, restrictions, deletes), newest first. The same rows as the
+ * org-wide Audit Log, pre-filtered to this course. */
+export function useCourseActivity(courseId: string) {
+  return useQuery({
+    queryKey: ["courses", courseId, "activity"],
+    queryFn: () => api.get<AuditLogEntry[]>(`/api/v1/courses/${courseId}/activity`),
+    enabled: !!courseId,
+  });
+}
+
 /** Uploads/replaces the course's cover image. */
 export function useUploadCourseCoverImage(courseId: string) {
   const qc = useQueryClient();
@@ -78,6 +90,7 @@ export function useUploadCourseCoverImage(courseId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["courses", courseId] });
       qc.invalidateQueries({ queryKey: ["courses"] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "activity"] });
     },
   });
 }
@@ -89,6 +102,7 @@ export function useRemoveCourseCoverImage(courseId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["courses", courseId] });
       qc.invalidateQueries({ queryKey: ["courses"] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "activity"] });
     },
   });
 }
@@ -100,6 +114,7 @@ export function useUpdateCourse(courseId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["courses", courseId] });
       qc.invalidateQueries({ queryKey: ["courses"] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "activity"] });
     },
   });
 }
@@ -139,7 +154,10 @@ export function useAddModule(courseId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { title: string; type?: string }) => api.post<Module>(`/api/v1/courses/${courseId}/modules`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "activity"] });
+    },
   });
 }
 
@@ -151,7 +169,10 @@ export function useUpdateModule(courseId: string) {
     // shape with a server id + presigned image_url) — see quiz-utils.ts.
     mutationFn: ({ moduleId, ...body }: { moduleId: string } & Omit<Partial<Module>, "questions"> & { questions?: QuestionInput[] }) =>
       api.patch<Module>(`/api/v1/courses/${courseId}/modules/${moduleId}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "activity"] });
+    },
   });
 }
 
@@ -166,7 +187,10 @@ export function useUploadModuleFile(courseId: string) {
       formData.append("file", file);
       return api.upload<Module>(`/api/v1/courses/${courseId}/modules/${moduleId}/upload`, formData);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "activity"] });
+    },
   });
 }
 
@@ -180,7 +204,10 @@ export function useUploadScormPackage(courseId: string) {
       formData.append("file", file);
       return api.upload<Module>(`/api/v1/courses/${courseId}/modules/${moduleId}/scorm-upload`, formData);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "activity"] });
+    },
   });
 }
 
@@ -188,7 +215,10 @@ export function useRemoveModuleFile(courseId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (moduleId: string) => api.delete(`/api/v1/courses/${courseId}/modules/${moduleId}/file`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "activity"] });
+    },
   });
 }
 
@@ -196,7 +226,10 @@ export function useDeleteModule(courseId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (moduleId: string) => api.delete(`/api/v1/courses/${courseId}/modules/${moduleId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "activity"] });
+    },
   });
 }
 
@@ -204,7 +237,10 @@ export function useReorderModules(courseId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (moduleIds: string[]) => api.post(`/api/v1/courses/${courseId}/modules/reorder`, { module_ids: moduleIds }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", courseId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "activity"] });
+    },
   });
 }
 

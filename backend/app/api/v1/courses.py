@@ -12,6 +12,7 @@ from app.models.category import Category
 from app.models.course import Course
 from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
+from app.schemas.audit_log import AuditLogOut
 from app.schemas.course import (
     AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CourseAssignRequest, CourseCreate, CourseDuplicateRequest,
     CourseGroupIn, CourseGroupOut, CourseGroupUpdate, CourseImportRequest, CourseImportResult, CourseListItem,
@@ -176,7 +177,7 @@ async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db), 
     await audit_log_service.record(
         db, org_id=current_user.org_id, actor=current_user, action="course.created",
         entity_type="course", entity_id=course.id, entity_label=course.title,
-        detail=f"Created course \"{course.title}\" (draft)",
+        detail=f"Created course \"{course.title}\" (draft)", course_id=course.id,
     )
     # Not db.refresh() — see course_service.get_course_or_404's note; a
     # plain refresh() doesn't reload relationships (modules, category),
@@ -196,7 +197,7 @@ async def import_course(body: CourseImportRequest, db: AsyncSession = Depends(ge
     await audit_log_service.record(
         db, org_id=current_user.org_id, actor=current_user, action="course.imported",
         entity_type="course", entity_id=course.id, entity_label=course.title,
-        detail=f"Imported course \"{course.title}\" from a file ({len(warnings)} warning(s))",
+        detail=f"Imported course \"{course.title}\" from a file ({len(warnings)} warning(s))", course_id=course.id,
     )
     return CourseImportResult(course=course, warnings=warnings)
 
@@ -224,9 +225,20 @@ async def duplicate_course_endpoint(
     await audit_log_service.record(
         db, org_id=current_user.org_id, actor=current_user, action="course.duplicated",
         entity_type="course", entity_id=new_course.id, entity_label=new_course.title,
-        detail=f"Duplicated \"{course.title}\" as \"{new_course.title}\"",
+        detail=f"Duplicated \"{course.title}\" as \"{new_course.title}\"", course_id=new_course.id,
     )
     return new_course
+
+
+@router.get("/{course_id}/activity", response_model=list[AuditLogOut], dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+async def get_course_activity(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """This course's own change history — every edit to the course itself
+    plus every module under it (content saves, file/SCORM replaces, quiz
+    questions, restrictions, deletes), newest first. Same rows as the
+    org-wide Audit Log, pre-filtered to this course (see
+    audit_log_service.list_course_activity)."""
+    await get_course_or_404(db, course_id, current_user.org_id)  # ownership check
+    return await audit_log_service.list_course_activity(db, current_user.org_id, course_id)
 
 
 @router.get("/{course_id}/export", dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
@@ -281,14 +293,14 @@ async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSessi
         await audit_log_service.record(
             db, org_id=current_user.org_id, actor=current_user, action="course.published" if course.published else "course.unpublished",
             entity_type="course", entity_id=course.id, entity_label=course.title,
-            detail=f"{'Published' if course.published else 'Unpublished'} course \"{course.title}\"",
+            detail=f"{'Published' if course.published else 'Unpublished'} course \"{course.title}\"", course_id=course.id,
         )
     other_changes = {k: v for k, v in data.items() if k != "published"}
     if other_changes:
         await audit_log_service.record(
             db, org_id=current_user.org_id, actor=current_user, action="course.updated",
             entity_type="course", entity_id=course.id, entity_label=course.title,
-            detail=f"Updated course \"{course.title}\": {', '.join(sorted(other_changes))}",
+            detail=f"Updated course \"{course.title}\": {', '.join(sorted(other_changes))}", course_id=course.id,
         )
     return await get_course_or_404(db, course_id, current_user.org_id)
 
@@ -336,7 +348,7 @@ async def delete_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     await audit_log_service.record(
         db, org_id=current_user.org_id, actor=current_user, action="course.deleted",
         entity_type="course", entity_id=course_id, entity_label=title,
-        detail=f"Deleted course \"{title}\"",
+        detail=f"Deleted course \"{title}\"", course_id=course_id,
     )
 
 
@@ -508,7 +520,13 @@ async def get_my_calendar(db: AsyncSession = Depends(get_db), current_user: User
 @router.post("/{course_id}/modules", response_model=ModuleOut, status_code=201, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
 async def create_module(course_id: uuid.UUID, body: ModuleCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
-    return await add_module(db, course, body)
+    module = await add_module(db, course, body)
+    await audit_log_service.record(
+        db, org_id=current_user.org_id, actor=current_user, action="module.created",
+        entity_type="module", entity_id=module.id, entity_label=module.title,
+        detail=f"Added module \"{module.title}\" to \"{course.title}\"", course_id=course.id,
+    )
+    return module
 
 
 @router.patch("/{course_id}/modules/{module_id}", response_model=ModuleOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
@@ -520,21 +538,45 @@ async def patch_module(course_id: uuid.UUID, module_id: uuid.UUID, body: ModuleU
         for r in body.restrictions:
             if r.type == "module_score" and r.module_id not in other_ids:
                 raise HTTPException(status_code=400, detail="That module_score restriction references a module that isn't on this course")
-    return await update_module(db, module, body, current_user.org_id)
+    changed = sorted(body.model_dump(exclude_unset=True))
+    updated = await update_module(db, module, body, current_user.org_id)
+    if changed:
+        # Every module Save, even one touching only quiz `questions` or
+        # `restrictions`, lands here — per the admin's own scope: "module
+        # changes ho to module save karana hoga". One line per save, not
+        # a field-by-field diff (see AuditLog's docstring on why detail
+        # stays a flat human-readable string).
+        await audit_log_service.record(
+            db, org_id=current_user.org_id, actor=current_user, action="module.updated",
+            entity_type="module", entity_id=module.id, entity_label=updated.title,
+            detail=f"Updated module \"{updated.title}\" on \"{course.title}\": {', '.join(changed)}", course_id=course.id,
+        )
+    return updated
 
 
 @router.delete("/{course_id}/modules/{module_id}", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
 async def delete_module(course_id: uuid.UUID, module_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    await get_course_or_404(db, course_id, current_user.org_id)
+    course = await get_course_or_404(db, course_id, current_user.org_id)
     module = await _get_module_or_404(db, module_id, course_id)
+    title = module.title
     await db.delete(module)
     await db.commit()
+    await audit_log_service.record(
+        db, org_id=current_user.org_id, actor=current_user, action="module.deleted",
+        entity_type="module", entity_id=module_id, entity_label=title,
+        detail=f"Deleted module \"{title}\" from \"{course.title}\"", course_id=course.id,
+    )
 
 
 @router.post("/{course_id}/modules/reorder", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
 async def reorder(course_id: uuid.UUID, body: ModuleReorderRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     await reorder_modules(db, course, body.module_ids)
+    await audit_log_service.record(
+        db, org_id=current_user.org_id, actor=current_user, action="course.modules_reordered",
+        entity_type="course", entity_id=course.id, entity_label=course.title,
+        detail=f"Reordered modules on \"{course.title}\"", course_id=course.id,
+    )
 
 
 @router.post("/{course_id}/modules/{module_id}/upload", response_model=ModuleOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
@@ -545,20 +587,31 @@ async def upload_module_file(
     """Real file upload for a WATCH (video) or READ (PDF/DOC/PPT) module —
     stored in object storage (R2 in production), validated by type/size
     for the module's kind. Replaces any file the module already had."""
-    await get_course_or_404(db, course_id, current_user.org_id)
+    course = await get_course_or_404(db, course_id, current_user.org_id)
     module = await _get_module_or_404(db, module_id, course_id)
     if module.type.value not in ("watch", "read"):
         raise HTTPException(status_code=400, detail="This module type doesn't accept a file upload")
-    return await upload_module_content(db, module, file, current_user.org_id, current_user)
+    updated = await upload_module_content(db, module, file, current_user.org_id, current_user)
+    await audit_log_service.record(
+        db, org_id=current_user.org_id, actor=current_user, action="module.file_uploaded",
+        entity_type="module", entity_id=module.id, entity_label=updated.title,
+        detail=f"Replaced file on module \"{updated.title}\" ({file.filename}) on \"{course.title}\"", course_id=course.id,
+    )
+    return updated
 
 
 @router.delete("/{course_id}/modules/{module_id}/file", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
 async def delete_module_file(
     course_id: uuid.UUID, module_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
-    await get_course_or_404(db, course_id, current_user.org_id)
+    course = await get_course_or_404(db, course_id, current_user.org_id)
     module = await _get_module_or_404(db, module_id, course_id)
     await remove_module_content(db, module)
+    await audit_log_service.record(
+        db, org_id=current_user.org_id, actor=current_user, action="module.file_removed",
+        entity_type="module", entity_id=module.id, entity_label=module.title,
+        detail=f"Removed file from module \"{module.title}\" on \"{course.title}\"", course_id=course.id,
+    )
 
 
 @router.post("/{course_id}/modules/{module_id}/scorm-upload", response_model=ModuleOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
@@ -568,11 +621,17 @@ async def upload_scorm(
 ):
     """Unpacks a SCORM 1.2/2004 .zip and points the module at its launch
     file — see scorm_service.parse_zip for the manifest parsing."""
-    await get_course_or_404(db, course_id, current_user.org_id)
+    course = await get_course_or_404(db, course_id, current_user.org_id)
     module = await _get_module_or_404(db, module_id, course_id)
     if module.type != ModuleType.SCORM:
         raise HTTPException(status_code=400, detail="This module isn't a SCORM module")
-    return await upload_scorm_package(db, module, file, current_user.org_id, current_user)
+    updated = await upload_scorm_package(db, module, file, current_user.org_id, current_user)
+    await audit_log_service.record(
+        db, org_id=current_user.org_id, actor=current_user, action="module.scorm_uploaded",
+        entity_type="module", entity_id=module.id, entity_label=updated.title,
+        detail=f"Replaced SCORM package on module \"{updated.title}\" ({file.filename}) on \"{course.title}\"", course_id=course.id,
+    )
+    return updated
 
 
 @router.get("/{course_id}/modules/{module_id}/scorm-content/{file_path:path}")

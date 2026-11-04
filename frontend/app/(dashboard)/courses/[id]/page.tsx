@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Plus, ChevronUp, ChevronDown, Users, Award, Lock, BookOpen, Settings as SettingsIcon,
-  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X,
+  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,7 @@ import { useDraft } from "@/lib/hooks/use-draft";
 import { SaveBar } from "@/components/ui/save-bar";
 import { ModuleEditorRow, restrictionValid } from "@/components/shell/courses/module-editor";
 import { GroupsPanel } from "@/components/shell/courses/groups-panel";
+import { ActivityPanel } from "@/components/shell/courses/activity-panel";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
 import { QuizAttemptsSection } from "@/components/shell/courses/quiz-attempts";
 import { ModuleProgressMatrix } from "@/components/shell/courses/module-progress-matrix";
@@ -47,11 +48,14 @@ import type { Module } from "@/lib/types";
 //  - More: the Moodle-style completion-rules picker (which modules must
 //    finish, ALL vs ANY, sequential unlock) and the delete-course danger
 //    zone.
+//  - Activity: this course's own change log — every save on the course
+//    itself and every module under it, who and when. Read-only.
 const TABS = [
   { id: "course", label: "Course", icon: BookOpen },
   { id: "settings", label: "Settings", icon: SettingsIcon },
   { id: "participants", label: "Participants", icon: Users },
   { id: "grades", label: "Grades", icon: BarChart3 },
+  { id: "activity", label: "Activity", icon: History },
   { id: "more", label: "More", icon: MoreHorizontal },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -729,6 +733,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
           <QuizAttemptsSection courseId={id} />
         </div>
       )}
+
+      {tab === "activity" && <ActivityPanel courseId={id} />}
 
       {tab === "more" && (
         <div className="flex flex-col gap-6 pb-2">

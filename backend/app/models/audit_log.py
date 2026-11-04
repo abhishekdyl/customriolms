@@ -46,6 +46,18 @@ class AuditLog(Base):
     entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     entity_label: Mapped[str] = mapped_column(String(300), nullable=False, default="")
 
+    # Which course this happened under, when relevant — set on every
+    # course.* row (equal to entity_id there) AND on every module.*
+    # row (the module's *parent* course, since entity_id for those is
+    # the module itself). Unconstrained UUID, same snapshot reasoning
+    # as actor_id/entity_id — a deleted course's past log rows stay
+    # put. Exists purely so a course's own "Activity" tab (see
+    # audit_log_service.list_course_activity) can pull its full history
+    # — course edits and every module edit under it — in one indexed
+    # query, without entity_id alone being able to express "belongs to
+    # this course" for a module-level row.
+    course_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+
     # One human-readable line — "Published course \"Onboarding 2026\"",
     # "Changed role: LEARNER -> TEAM_LEAD" — built by the caller at the
     # moment of the action, not reconstructed later from before/after
