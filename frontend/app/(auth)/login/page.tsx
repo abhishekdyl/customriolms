@@ -8,8 +8,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLogin } from "@/lib/hooks/use-auth";
+import { usePlatformStatus } from "@/lib/hooks/use-orgs";
 import { ApiError } from "@/lib/api-client";
 import { GoogleSignInButton } from "@/components/shell/auth/google-sign-in-button";
+
+/** Lets someone trying to log in during maintenance know it's not a
+ * login failure on their end — login itself still works for everyone
+ * (it's whatever they land on after that gets blocked, for anyone but
+ * Super Admin — see AuthGuard). */
+function MaintenanceNotice() {
+  const { data: status } = usePlatformStatus();
+  if (!status?.maintenance_mode) return null;
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-amber-soft px-3.5 py-3 mb-4">
+      <AlertCircle className="h-4 w-4 text-amber flex-shrink-0" />
+      <span className="text-sm text-ink">Riosmart LMS is undergoing maintenance — only platform staff can sign in right now.</span>
+    </div>
+  );
+}
 
 /** Shown after a password reset — isolated in its own component because
  * useSearchParams needs a Suspense boundary, and there's no reason to
@@ -88,6 +104,7 @@ export default function LoginPage() {
           <Suspense fallback={null}>
             <ResetSuccessBanner />
           </Suspense>
+          <MaintenanceNotice />
 
           {login.isError && (
             <div className="flex items-center gap-2 rounded-lg bg-danger-soft px-3.5 py-3 mb-4">

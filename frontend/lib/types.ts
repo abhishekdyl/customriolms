@@ -506,6 +506,16 @@ export interface Org {
 
 export interface PlatformSettings {
   allow_self_serve_signup: boolean;
+  maintenance_mode: boolean;
+  debug_mode: boolean;
+}
+
+/** What the public, unauthenticated GET /api/v1/orgs/platform-status
+ * returns — a narrower view than PlatformSettings, fetchable before
+ * anyone has logged in. */
+export interface PlatformStatus {
+  maintenance_mode: boolean;
+  debug_mode: boolean;
 }
 
 export interface SuperAdmin {

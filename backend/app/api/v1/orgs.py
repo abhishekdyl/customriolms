@@ -18,6 +18,7 @@ from app.schemas.org import (
     OrgUpdateStatusRequest,
     PlatformSettingsOut,
     PlatformSettingsUpdateRequest,
+    PlatformStatusOut,
     SuperAdminOut,
 )
 
@@ -165,6 +166,60 @@ async def create_org(body: OrgCreateRequest, db: AsyncSession = Depends(get_db))
     return OrgOut.model_validate({**org.__dict__, "user_count": 1, "admin_id": admin.id, "admin_name": admin.full_name, "admin_email": admin.email})
 
 
+# These three stay ABOVE the /{org_id}... routes below on purpose: FastAPI/
+# Starlette matches routes in declaration order, and /{org_id} is a
+# catch-all for any single path segment — placed first, it would swallow
+# a request for "/platform-settings" as org_id="platform-settings" before
+# this file's own platform-settings handler ever saw it. (This is exactly
+# what happened before this comment existed — PATCH /platform-settings
+# silently 500'd trying to parse "platform-settings" as a UUID.)
+@router.get("/platform-settings", response_model=PlatformSettingsOut, dependencies=super_admin_only)
+async def get_platform_settings(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(PlatformSettings).where(PlatformSettings.id == SINGLETON_ID))
+    settings_row = result.scalar_one_or_none()
+    if settings_row is None:
+        # First time anyone opens this screen — create the one row with defaults.
+        settings_row = PlatformSettings(id=SINGLETON_ID)
+        db.add(settings_row)
+        await db.commit()
+        await db.refresh(settings_row)
+    return settings_row
+
+
+@router.patch("/platform-settings", response_model=PlatformSettingsOut, dependencies=super_admin_only)
+async def update_platform_settings(body: PlatformSettingsUpdateRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(PlatformSettings).where(PlatformSettings.id == SINGLETON_ID))
+    settings_row = result.scalar_one_or_none()
+    if settings_row is None:
+        settings_row = PlatformSettings(id=SINGLETON_ID)
+        db.add(settings_row)
+
+    if body.allow_self_serve_signup is not None:
+        settings_row.allow_self_serve_signup = body.allow_self_serve_signup
+    if body.maintenance_mode is not None:
+        settings_row.maintenance_mode = body.maintenance_mode
+    if body.debug_mode is not None:
+        settings_row.debug_mode = body.debug_mode
+    await db.commit()
+    await db.refresh(settings_row)
+    return settings_row
+
+
+@router.get("/platform-status", response_model=PlatformStatusOut)
+async def get_platform_status(db: AsyncSession = Depends(get_db)):
+    """Public, unauthenticated — the frontend calls this before anyone
+    has logged in (to decide whether to show the maintenance page) and
+    on every page while logged in (to decide whether to show the debug
+    bar). Deliberately open: a visitor who isn't logged in yet still
+    needs to know the site is in maintenance, and an org_id-scoped check
+    would be pointless anyway since both switches are site-wide."""
+    result = await db.execute(select(PlatformSettings).where(PlatformSettings.id == SINGLETON_ID))
+    settings_row = result.scalar_one_or_none()
+    if settings_row is None:
+        return PlatformStatusOut(maintenance_mode=False, debug_mode=False)
+    return PlatformStatusOut(maintenance_mode=settings_row.maintenance_mode, debug_mode=settings_row.debug_mode)
+
+
 @router.patch("/{org_id}/status", response_model=OrgOut, dependencies=super_admin_only)
 async def update_org_status(org_id: str, body: OrgUpdateStatusRequest, db: AsyncSession = Depends(get_db)):
     """Suspend pauses learner access without deleting any data (matches
@@ -300,33 +355,6 @@ async def delete_org(org_id: str, db: AsyncSession = Depends(get_db)):
 
     await db.delete(org)
     await db.commit()
-
-
-@router.get("/platform-settings", response_model=PlatformSettingsOut, dependencies=super_admin_only)
-async def get_platform_settings(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(PlatformSettings).where(PlatformSettings.id == SINGLETON_ID))
-    settings_row = result.scalar_one_or_none()
-    if settings_row is None:
-        # First time anyone opens this screen — create the one row with defaults.
-        settings_row = PlatformSettings(id=SINGLETON_ID)
-        db.add(settings_row)
-        await db.commit()
-        await db.refresh(settings_row)
-    return settings_row
-
-
-@router.patch("/platform-settings", response_model=PlatformSettingsOut, dependencies=super_admin_only)
-async def update_platform_settings(body: PlatformSettingsUpdateRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(PlatformSettings).where(PlatformSettings.id == SINGLETON_ID))
-    settings_row = result.scalar_one_or_none()
-    if settings_row is None:
-        settings_row = PlatformSettings(id=SINGLETON_ID)
-        db.add(settings_row)
-
-    settings_row.allow_self_serve_signup = body.allow_self_serve_signup
-    await db.commit()
-    await db.refresh(settings_row)
-    return settings_row
 
 
 @router.get("/super-admins", response_model=list[SuperAdminOut], dependencies=super_admin_only)

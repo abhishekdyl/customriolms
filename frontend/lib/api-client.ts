@@ -7,9 +7,17 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  // Method/path of the request that failed — optional because a couple
+  // of call sites (upload/download's own inline error paths) don't pass
+  // them. Only consumed by the debug bar (see lib/debug-store.ts) to
+  // show which request failed, never required for normal error handling.
+  method?: string;
+  path?: string;
+  constructor(message: string, status: number, method?: string, path?: string) {
     super(message);
     this.status = status;
+    this.method = method;
+    this.path = path;
   }
 }
 
@@ -57,7 +65,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       }
     }
 
-    throw new ApiError(detail, res.status);
+    throw new ApiError(detail, res.status, options.method || "GET", path);
   }
 
   if (res.status === 204) return undefined as T;

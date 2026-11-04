@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Server, ShieldQuestion, Wand2, UserCog, Send, Loader2, CheckCircle2, AlertCircle, Building2, Clock, Check, X } from "lucide-react";
+import { Server, ShieldQuestion, Wand2, UserCog, Send, Loader2, CheckCircle2, AlertCircle, Building2, Clock, Check, X, Wrench, Bug, AlertTriangle } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,13 +14,14 @@ import { SaveBar } from "@/components/ui/save-bar";
 
 const PORT_ENCRYPTION_HINTS: Record<string, "TLS" | "SSL"> = { "465": "SSL", "587": "TLS", "25": "TLS", "2525": "TLS" };
 
-type TabId = "email" | "registration" | "ai" | "superadmins";
+type TabId = "email" | "registration" | "ai" | "superadmins" | "system";
 
 const tabs: { id: TabId; label: string; icon: typeof Server }[] = [
   { id: "email", label: "Email & Notifications", icon: Server },
   { id: "registration", label: "Registration", icon: ShieldQuestion },
   { id: "ai", label: "AI Configuration", icon: Wand2 },
   { id: "superadmins", label: "Super Admins", icon: UserCog },
+  { id: "system", label: "System", icon: Wrench },
 ];
 
 // ---------------------------------------------------------------------------
@@ -308,6 +309,96 @@ function RegistrationTab() {
 }
 
 // ---------------------------------------------------------------------------
+// System — site-wide switches Super Admin flips temporarily while
+// working on the platform itself: Maintenance mode locks everyone else
+// out (Super Admin keeps working, so this is also how it gets turned
+// back off), Debug mode surfaces real errors in a banner above every
+// page's header instead of failing silently. Neither is meant to be
+// left on — both get a loud warning right under their switch.
+// ---------------------------------------------------------------------------
+function SystemTab() {
+  const { data: settings, isLoading } = usePlatformSettings();
+  const updateSettings = useUpdatePlatformSettings();
+  const serverValue = settings
+    ? { maintenance_mode: settings.maintenance_mode, debug_mode: settings.debug_mode }
+    : undefined;
+  const { draft, setDraft, dirty, cancel } = useDraft(serverValue);
+  const [saved, setSaved] = useState(false);
+
+  return (
+    <div className="max-w-2xl">
+      <section className="mb-5 rounded-xl border border-line bg-surface p-5">
+        {isLoading || !draft ? (
+          <p className="text-sm text-ink-faint">Loading…</p>
+        ) : (
+          <div className="flex flex-col divide-y divide-line-soft">
+            <div className="flex items-center justify-between pb-5">
+              <div>
+                <div className="text-sm font-medium text-ink">Maintenance mode</div>
+                <div className="mt-0.5 max-w-md text-xs text-ink-faint">
+                  When on, every org&apos;s users are signed out of the product and shown a &quot;we&apos;ll be right
+                  back&quot; page — only you (Super Admin) can still log in and use the platform, which is also how
+                  you turn this back off.
+                </div>
+              </div>
+              <Switch
+                checked={draft.maintenance_mode}
+                onCheckedChange={(checked) => setDraft((d) => ({ ...d, maintenance_mode: checked }))}
+              />
+            </div>
+            <div className="flex items-center justify-between pt-5">
+              <div>
+                <div className="text-sm font-medium text-ink">Debug mode</div>
+                <div className="mt-0.5 max-w-md text-xs text-ink-faint">
+                  When on, any API or page error — for anyone, in any org — prints as a banner above that page&apos;s
+                  header instead of failing silently: method, endpoint, status and the real error message. Meant for
+                  chasing a specific issue, not for leaving on.
+                </div>
+              </div>
+              <Switch
+                checked={draft.debug_mode}
+                onCheckedChange={(checked) => setDraft((d) => ({ ...d, debug_mode: checked }))}
+              />
+            </div>
+          </div>
+        )}
+      </section>
+
+      {draft?.maintenance_mode && (
+        <div className="mb-3 flex items-start gap-3 rounded-lg border-l-[3px] border-danger bg-danger-soft px-4 py-3.5">
+          <Wrench className="mt-0.5 h-4 w-4 flex-shrink-0 text-danger" />
+          <p className="text-[13px] text-ink">
+            Every Org Admin, Team Lead, custom-role user and learner will be locked out the moment you save this.
+          </p>
+        </div>
+      )}
+      {draft?.debug_mode && (
+        <div className="mb-3 flex items-start gap-3 rounded-lg border-l-[3px] border-amber bg-amber-soft px-4 py-3.5">
+          <Bug className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber" />
+          <p className="text-[13px] text-ink">
+            Error details (including the real exception message) become visible to everyone, not just you — turn
+            this back off once you&apos;re done.
+          </p>
+        </div>
+      )}
+      <div className="flex items-start gap-3 rounded-lg border-l-[3px] border-primary bg-primary-soft px-4 py-3.5">
+        <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
+        <p className="text-[13px] text-ink">Both switches are platform-wide — they affect every organization at once, not just one.</p>
+      </div>
+
+      <SaveBar
+        dirty={dirty}
+        saving={updateSettings.isPending}
+        savedFlash={saved}
+        onCancel={cancel}
+        onSave={() => updateSettings.mutate(draft!, { onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); } })}
+        className="mt-4 rounded-xl border-t-0"
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // AI Configuration — LAYOUT ONLY, same reasoning as Email & Notifications:
 // no AiSettings model/endpoint on the backend yet (the actual Claude API
 // key is currently read from backend env vars, not editable per platform
@@ -491,6 +582,7 @@ export default function PlatformSettingsPage() {
       {tab === "registration" && <RegistrationTab />}
       {tab === "ai" && <AiConfigurationTab />}
       {tab === "superadmins" && <SuperAdminsTab />}
+      {tab === "system" && <SystemTab />}
     </div>
   );
 }

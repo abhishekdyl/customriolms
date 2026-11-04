@@ -91,13 +91,32 @@ class OrgProfileUpdateRequest(BaseModel):
 
 class PlatformSettingsOut(BaseModel):
     allow_self_serve_signup: bool
+    maintenance_mode: bool
+    debug_mode: bool
 
     class Config:
         from_attributes = True
 
 
 class PlatformSettingsUpdateRequest(BaseModel):
-    allow_self_serve_signup: bool
+    # All optional and merged server-side (only a field that's actually
+    # present gets written) — the Registration tab's save and the
+    # System tab's save each touch only their own field(s), so one
+    # doesn't clobber whatever the other last set.
+    allow_self_serve_signup: bool | None = None
+    maintenance_mode: bool | None = None
+    debug_mode: bool | None = None
+
+
+class PlatformStatusOut(BaseModel):
+    """What app/main.py's public, unauthenticated /platform-status
+    exposes — just enough for the frontend to decide whether to show the
+    maintenance page / debug bar before anyone has even logged in.
+    Deliberately a SEPARATE, narrower schema from PlatformSettingsOut:
+    this endpoint has no auth at all, so nothing else on that row
+    (allow_self_serve_signup, say) belongs in it."""
+    maintenance_mode: bool
+    debug_mode: bool
 
 
 class SuperAdminOut(BaseModel):

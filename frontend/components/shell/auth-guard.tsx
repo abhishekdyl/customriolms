@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { usePathname, useParams, useRouter } from "next/navigation";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { useMyCustomFields } from "@/lib/hooks/use-profile-fields";
+import { usePlatformStatus } from "@/lib/hooks/use-orgs";
+import { MaintenancePage } from "@/components/shell/maintenance-page";
 import { profilePath, roleHome } from "@/lib/role-home";
 import type { RoleName } from "@/lib/types";
 
@@ -34,6 +36,14 @@ export function AuthGuard({
   const params = useParams<{ org?: string }>();
   const [hasToken, setHasToken] = useState(false);
   const { data: user, isError } = useCurrentUser();
+  // Public, unauthenticated — independent of whether /auth/me itself
+  // succeeded, since during maintenance it 503s for everyone except
+  // Super Admin (see deps._validate_token). This is what tells apart a
+  // genuine auth failure (isError, show nothing, let the token check
+  // below bounce to /login) from "the whole platform is paused right
+  // now" (show the maintenance page instead).
+  const { data: platformStatus } = usePlatformStatus();
+  const inMaintenance = !!platformStatus?.maintenance_mode && user?.role !== "super_admin";
   // Only actually needed once a password-change isn't already pending —
   // see the enabled flag below — so this never fires an extra request
   // for someone who's about to be bounced to /change-password anyway.
@@ -93,7 +103,9 @@ export function AuthGuard({
     }
   }, [missingRequiredField, ownProfilePath, pathname, router]);
 
-  if (!hasToken || isError) return null;
+  if (!hasToken) return null;
+  if (inMaintenance) return <MaintenancePage />;
+  if (isError) return null;
   if (user?.must_change_password) return null;
   // When roles are restricted, wait until we actually know the role
   // (and render nothing while redirecting a wrong-role visitor).

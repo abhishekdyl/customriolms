@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.core.session import is_session_active
 from app.models.org import Org, OrgStatus
+from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.user import RoleName, User, UserStatus
 from app.services import permission_service
 
@@ -135,6 +136,22 @@ async def _validate_token(token: str, db: AsyncSession) -> User:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Your organization has been suspended. Contact your Riosmart representative.",
+            )
+
+    # Platform-wide maintenance mode (see PlatformSettings.maintenance_mode)
+    # locks everyone except Super Admin out of every authenticated
+    # endpoint — not just this one. Super Admin keeps working (and can
+    # still log in) the whole time it's on. /auth/login itself doesn't go
+    # through get_current_user, so a locked-out user can still obtain a
+    # token; it's only once they try to USE it (e.g. /auth/me, right
+    # after login) that this 503s and the frontend shows the maintenance
+    # page instead.
+    if user.role != RoleName.SUPER_ADMIN:
+        settings_result = await db.execute(select(PlatformSettings.maintenance_mode).where(PlatformSettings.id == SINGLETON_ID))
+        if settings_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Riosmart LMS is currently undergoing maintenance. Please check back shortly.",
             )
 
     return user

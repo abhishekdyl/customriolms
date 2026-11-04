@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { Org, OrgPlan, OrgStatus, PlatformSettings, SuperAdmin } from "@/lib/types";
+import type { Org, OrgPlan, OrgStatus, PlatformSettings, PlatformStatus, SuperAdmin } from "@/lib/types";
 
 export function useOrgs() {
   return useQuery({ queryKey: ["orgs"], queryFn: () => api.get<Org[]>("/api/v1/orgs") });
@@ -92,11 +92,32 @@ export function usePlatformSettings() {
 export function useUpdatePlatformSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: PlatformSettings) => api.patch<PlatformSettings>("/api/v1/orgs/platform-settings", body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["platform-settings"] }),
+    // Partial — the backend merges only whatever's present (see
+    // update_platform_settings), so a tab that only cares about one
+    // field never clobbers what another tab last saved.
+    mutationFn: (body: Partial<PlatformSettings>) => api.patch<PlatformSettings>("/api/v1/orgs/platform-settings", body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["platform-settings"] });
+      qc.invalidateQueries({ queryKey: ["platform-status"] });
+    },
   });
 }
 
 export function useSuperAdmins() {
   return useQuery({ queryKey: ["super-admins"], queryFn: () => api.get<SuperAdmin[]>("/api/v1/orgs/super-admins") });
+}
+
+/** Public, unauthenticated — safe to call before login (MaintenanceGate
+ * uses it to decide whether to show the maintenance page at all) and on
+ * every page while logged in (DebugBar uses it to decide whether to show
+ * the debug banner). Polls periodically so a Super Admin flipping the
+ * switch takes effect for everyone else without a refresh. */
+export function usePlatformStatus() {
+  return useQuery({
+    queryKey: ["platform-status"],
+    queryFn: () => api.get<PlatformStatus>("/api/v1/orgs/platform-status"),
+    retry: false,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
 }
