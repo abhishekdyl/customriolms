@@ -18,6 +18,7 @@ const fieldTypeOptions: { value: ProfileFieldType; label: string }[] = [
   { value: "checkbox", label: "Checkbox" },
   { value: "radio", label: "Radio buttons" },
   { value: "select", label: "Dropdown" },
+  { value: "datetime", label: "Date/Time" },
 ];
 
 function CustomFieldsCard() {

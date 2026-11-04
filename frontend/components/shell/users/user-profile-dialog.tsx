@@ -187,6 +187,12 @@ export function UserProfileDialog({
                           <option value="">—</option>
                           {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
                         </select>
+                      ) : f.field_type === "datetime" ? (
+                        <Input
+                          type="datetime-local"
+                          value={fieldValues[f.shortname] ?? ""} disabled={!canEdit}
+                          onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.shortname]: e.target.value }))}
+                        />
                       ) : (
                         <Input
                           value={fieldValues[f.shortname] ?? ""} disabled={!canEdit}

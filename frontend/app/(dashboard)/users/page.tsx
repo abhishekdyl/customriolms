@@ -50,6 +50,66 @@ function RoleOptions({ customRoles }: { customRoles: CustomRole[] | undefined })
   );
 }
 
+/** One form control for an org-defined custom profile field, matching the
+ * same set of types the field catalog supports (see
+ * backend/app/models/profile_field.py). Shared by the single "Create a
+ * user" form below — the invite flow that previously never asked for
+ * these at all. */
+function CustomFieldInput({
+  field, value, onChange,
+}: {
+  field: ProfileField;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  if (field.field_type === "textarea") {
+    return (
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={2}
+        className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none"
+      />
+    );
+  }
+  if (field.field_type === "checkbox") {
+    return (
+      <label className="flex items-center gap-2 text-sm text-ink-soft">
+        <input type="checkbox" checked={value === "true"} onChange={(e) => onChange(e.target.checked ? "true" : "false")} />
+        Yes
+      </label>
+    );
+  }
+  if (field.field_type === "radio") {
+    return (
+      <div className="flex flex-col gap-1.5">
+        {field.options.map((opt) => (
+          <label key={opt} className="flex items-center gap-2 text-sm text-ink-soft">
+            <input type="radio" name={field.shortname} checked={value === opt} onChange={() => onChange(opt)} />
+            {opt}
+          </label>
+        ))}
+      </div>
+    );
+  }
+  if (field.field_type === "select") {
+    return (
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-10 rounded-lg border border-line bg-surface px-3 text-sm outline-none"
+      >
+        <option value="">Select…</option>
+        {field.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+      </select>
+    );
+  }
+  if (field.field_type === "datetime") {
+    return <Input type="datetime-local" value={value} onChange={(e) => onChange(e.target.value)} />;
+  }
+  return <Input value={value} onChange={(e) => onChange(e.target.value)} />;
+}
+
 // A sensible example value per field type, so a downloaded template row
 // is something an admin can just overwrite rather than puzzle out. A
 // required field gets a value that visibly flags itself as a stand-in
@@ -67,6 +127,8 @@ function exampleValueFor(field: ProfileField): string {
       return field.options[0] ?? tag;
     case "textarea":
       return field.required ? "Required - replace with real notes" : "Optional notes";
+    case "datetime":
+      return "2026-01-15T09:00";
     default:
       return field.required ? "Required - replace with real value" : "Optional";
   }
@@ -133,6 +195,11 @@ export default function UsersPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteTeamId, setInviteTeamId] = useState("");
   const [inviteRoleValue, setInviteRoleValue] = useState<string>("learner");
+  // Org-defined custom field values for the single "Create a user" form,
+  // keyed by shortname — same shape bulk CSV invite already sent, just
+  // never collected here until now. A required field blocks submit (see
+  // missingRequiredField below), same enforcement the backend repeats.
+  const [inviteCustomValues, setInviteCustomValues] = useState<Record<string, string>>({});
   const [inviteSuccess, setInviteSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [bulkResult, setBulkResult] = useState<BulkInviteResult | null>(null);
@@ -150,13 +217,23 @@ export default function UsersPage() {
   const suspendedCount = users?.filter((u) => u.status === "suspended").length ?? 0;
   const joinUrl = org ? `https://app.riosmartlms.com/join/${org.slug}` : "";
 
+  // Mirrors the backend's own check (invite_single_user 400s on exactly
+  // this) — caught here first so the admin sees which field is missing
+  // without a round-trip, same as the name/email checks already do.
+  const missingRequiredField = requiredFields.find((f) => !(inviteCustomValues[f.shortname] ?? "").trim());
+
   const submitInvite = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteName.trim() || !inviteEmail.trim() || atLimit) return;
+    if (!inviteName.trim() || !inviteEmail.trim() || atLimit || missingRequiredField) return;
     const { role, custom_role_id } = decodeRoleValue(inviteRoleValue);
     invite.mutate(
-      { name: inviteName.trim(), email: inviteEmail.trim(), team_id: inviteTeamId || null, role, custom_role_id },
-      { onSuccess: () => { setInviteName(""); setInviteEmail(""); setInviteTeamId(""); setInviteRoleValue("learner"); setInviteSuccess(true); } }
+      { name: inviteName.trim(), email: inviteEmail.trim(), team_id: inviteTeamId || null, role, custom_role_id, custom_fields: inviteCustomValues },
+      {
+        onSuccess: () => {
+          setInviteName(""); setInviteEmail(""); setInviteTeamId(""); setInviteRoleValue("learner");
+          setInviteCustomValues({}); setInviteSuccess(true);
+        },
+      }
     );
   };
 
@@ -349,7 +426,29 @@ export default function UsersPage() {
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
-            <Button type="submit" disabled={atLimit || !inviteName.trim() || !inviteEmail.trim() || invite.isPending} className="self-start">
+
+            {profileFields && profileFields.length > 0 && (
+              <div className="flex flex-col gap-2.5 border-t border-line-soft pt-2.5">
+                {profileFields.map((f) => (
+                  <div key={f.id} className="flex flex-col gap-1">
+                    <label className="text-[11px] font-medium text-ink-faint">
+                      {f.name} {f.required && <span className="text-danger">*</span>}
+                    </label>
+                    <CustomFieldInput
+                      field={f}
+                      value={inviteCustomValues[f.shortname] ?? ""}
+                      onChange={(v) => setInviteCustomValues((prev) => ({ ...prev, [f.shortname]: v }))}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              disabled={atLimit || !inviteName.trim() || !inviteEmail.trim() || !!missingRequiredField || invite.isPending}
+              className="self-start"
+            >
               {invite.isPending ? "Creating…" : "Create user"}
             </Button>
             {invite.isError && (

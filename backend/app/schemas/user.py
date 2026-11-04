@@ -35,6 +35,13 @@ class InviteUserRequest(BaseModel):
     # doesn't send it — the UI always sends it now. Falls back to the email
     # prefix (see invite_user) when omitted or blank.
     name: str | None = None
+    # This org's custom profile field values, keyed by shortname — same
+    # shape as ProfileFieldValuesUpdate. The endpoint checks every
+    # required field has a non-empty entry here before creating the user,
+    # same enforcement bulk CSV invite already had; which fields exist
+    # and which are required can only be resolved against the DB, so that
+    # check lives in the endpoint, not this schema.
+    custom_fields: dict[str, str | None] = {}
 
     @model_validator(mode="after")
     def _check_custom_role(self):

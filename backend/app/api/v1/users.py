@@ -107,12 +107,28 @@ async def invite_single_user(body: InviteUserRequest, db: AsyncSession = Depends
 
     await _check_custom_role_belongs_to_org(db, body.custom_role_id, current_user.org_id)
     org = await _get_org_or_404(db, current_user.org_id)
+
+    # Same enforcement bulk CSV invite already had (see
+    # bulk_invite_from_csv's docstring): a field an Org Admin marked
+    # required must have a non-empty value before the user is created at
+    # all, not left to be filled in later with nothing stopping it from
+    # never happening.
+    fields = await profile_field_service.list_fields(db, current_user.org_id)
+    missing = [
+        f.name for f in fields
+        if f.required and not (body.custom_fields.get(f.shortname) or "").strip()
+    ]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required field(s): {', '.join(missing)}")
+
     try:
         user = await invite_user(
             db, org=org, email=body.email.lower(),
             name=(body.name or "").strip() or body.email.split("@")[0], role=body.role, team_id=body.team_id,
             custom_role_id=body.custom_role_id,
         )
+        if body.custom_fields:
+            await profile_field_service.set_values_for_user(db, current_user.org_id, user.id, body.custom_fields, commit=False)
         await db.commit()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -32,6 +32,7 @@ class ProfileFieldType(str, enum.Enum):
     CHECKBOX = "checkbox"   # boolean, stored as "true"/"false" in value
     RADIO = "radio"         # exactly one of `options`
     SELECT = "select"       # exactly one of `options`, dropdown
+    DATETIME = "datetime"   # stored as an ISO-8601 string in value, same as every other type here
 
 
 class UserInfoField(Base):

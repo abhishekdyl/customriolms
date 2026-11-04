@@ -754,7 +754,7 @@ export interface AttemptOverride {
   extra_attempts: number;
 }
 
-export type ProfileFieldType = "input" | "textarea" | "checkbox" | "radio" | "select";
+export type ProfileFieldType = "input" | "textarea" | "checkbox" | "radio" | "select" | "datetime";
 
 /** Org-admin-defined custom profile field. Mirrors ProfileFieldOut. */
 export interface ProfileField {

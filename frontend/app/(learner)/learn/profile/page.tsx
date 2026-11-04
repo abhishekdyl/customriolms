@@ -300,6 +300,12 @@ function CustomFieldsCard() {
                 <option value="">Select…</option>
                 {f.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
               </select>
+            ) : f.field_type === "datetime" ? (
+              <Input
+                id={f.shortname} type="datetime-local"
+                value={draft[f.shortname] ?? ""} onChange={(e) => setValue(f.shortname, e.target.value)}
+                className="mt-1.5"
+              />
             ) : (
               <Input id={f.shortname} value={draft[f.shortname] ?? ""} onChange={(e) => setValue(f.shortname, e.target.value)} className="mt-1.5" />
             )}
