@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QRCodeSVG } from "@/components/shell/qr-code";
 import { UserProfileDialog } from "@/components/shell/users/user-profile-dialog";
+import { CustomFieldInput } from "@/components/shell/custom-field-input";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { useTeams } from "@/lib/hooks/use-teams";
 import { useProfileFields } from "@/lib/hooks/use-profile-fields";
@@ -55,61 +56,6 @@ function RoleOptions({ customRoles }: { customRoles: CustomRole[] | undefined })
  * backend/app/models/profile_field.py). Shared by the single "Create a
  * user" form below — the invite flow that previously never asked for
  * these at all. */
-function CustomFieldInput({
-  field, value, onChange,
-}: {
-  field: ProfileField;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  if (field.field_type === "textarea") {
-    return (
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        rows={2}
-        className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none"
-      />
-    );
-  }
-  if (field.field_type === "checkbox") {
-    return (
-      <label className="flex items-center gap-2 text-sm text-ink-soft">
-        <input type="checkbox" checked={value === "true"} onChange={(e) => onChange(e.target.checked ? "true" : "false")} />
-        Yes
-      </label>
-    );
-  }
-  if (field.field_type === "radio") {
-    return (
-      <div className="flex flex-col gap-1.5">
-        {field.options.map((opt) => (
-          <label key={opt} className="flex items-center gap-2 text-sm text-ink-soft">
-            <input type="radio" name={field.shortname} checked={value === opt} onChange={() => onChange(opt)} />
-            {opt}
-          </label>
-        ))}
-      </div>
-    );
-  }
-  if (field.field_type === "select") {
-    return (
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-10 rounded-lg border border-line bg-surface px-3 text-sm outline-none"
-      >
-        <option value="">Select…</option>
-        {field.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-      </select>
-    );
-  }
-  if (field.field_type === "datetime") {
-    return <Input type="datetime-local" value={value} onChange={(e) => onChange(e.target.value)} />;
-  }
-  return <Input value={value} onChange={(e) => onChange(e.target.value)} />;
-}
-
 // A sensible example value per field type, so a downloaded template row
 // is something an admin can just overwrite rather than puzzle out. A
 // required field gets a value that visibly flags itself as a stand-in

@@ -124,10 +124,10 @@ export function Sidebar() {
         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-amber font-head text-[11px] font-bold text-white">
           {user?.full_name?.split(" ").map((n) => n[0]).join("") || "…"}
         </div>
-        <div className="flex-1 min-w-0">
+        <Link href="/profile" className="min-w-0 flex-1" title="Your profile">
           <div className="truncate text-xs text-white">{user?.full_name || "Loading…"}</div>
           <div className="text-[11px] text-white/50">{user?.role?.replace("_", " ") || ""}</div>
-        </div>
+        </Link>
         <button onClick={logout} title="Log out"><LogOut className="h-4 w-4 text-white/50" /></button>
       </div>
     </motion.div>

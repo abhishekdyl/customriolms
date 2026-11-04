@@ -57,11 +57,15 @@ export function useUpdateUserCustomFields(userId: string | null) {
   });
 }
 
-/** The current user's own custom field values — GET/PATCH /api/v1/auth/me/custom-fields. */
-export function useMyCustomFields() {
+/** The current user's own custom field values — GET/PATCH /api/v1/auth/me/custom-fields.
+ * `enabled: false` (AuthGuard passes this while a password change is
+ * still pending) skips the request entirely rather than just ignoring
+ * its result, since it'd 401/be pointless before that's resolved. */
+export function useMyCustomFields(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["my-custom-fields"],
     queryFn: () => api.get<ProfileFieldValue[]>("/api/v1/auth/me/custom-fields"),
+    enabled: options?.enabled ?? true,
   });
 }
 
