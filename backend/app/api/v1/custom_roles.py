@@ -6,9 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_role
 from app.core.database import get_db
 from app.models.user import RoleName, User
-from app.schemas.custom_role import CapabilityGroupOut, CapabilityOut, CustomRoleIn, CustomRoleOut, CustomRoleUpdate
+from app.schemas.custom_role import (
+    CapabilityGroupOut, CapabilityOut, CustomRoleIn, CustomRoleOut, CustomRoleUpdate, RoleArchetypeOut,
+)
 from app.services import audit_log_service, custom_role_service
-from app.services.permission_service import CAPABILITY_CATALOG
+from app.services.permission_service import ALL_CAPABILITIES, CAPABILITY_CATALOG, _TEAM_LEAD_CAPABILITIES
+from app.models.custom_role import RoleScope
 
 # Defining roles — deciding what a role CAN grant — is reserved to the
 # fixed Org Admin role itself (require_role, not require_capability): a
@@ -30,6 +33,33 @@ async def get_capability_catalog():
     return [
         CapabilityGroupOut(group=group, capabilities=[CapabilityOut(key=k, label=label) for k, label in caps])
         for group, caps in CAPABILITY_CATALOG.items()
+    ]
+
+
+@router.get("/archetypes", response_model=list[RoleArchetypeOut])
+async def get_archetypes():
+    """Starting points for the "New role" form — pick one and its
+    capabilities + scope pre-fill the form, then customize freely from
+    there. Org Admin and Team Lead are real reflections of what those
+    built-in roles can do today (kept in sync automatically since this
+    reads the same BUILTIN_CAPABILITIES the permission checks use) —
+    picking one is just a convenient starting checkbox state, not a
+    link to the built-in role itself."""
+    return [
+        RoleArchetypeOut(
+            key="blank", label="Blank", description="Start with nothing selected",
+            scope=RoleScope.ORG, capabilities=[],
+        ),
+        RoleArchetypeOut(
+            key="org_admin", label="Org Admin",
+            description="Every capability — full access across the whole org",
+            scope=RoleScope.ORG, capabilities=sorted(ALL_CAPABILITIES),
+        ),
+        RoleArchetypeOut(
+            key="team_lead", label="Team Lead",
+            description="What a Team Lead can do today, scoped to their own team",
+            scope=RoleScope.OWN_TEAM, capabilities=sorted(_TEAM_LEAD_CAPABILITIES),
+        ),
     ]
 
 

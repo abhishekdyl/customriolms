@@ -75,3 +75,18 @@ class CapabilityOut(BaseModel):
 class CapabilityGroupOut(BaseModel):
     group: str
     capabilities: list[CapabilityOut]
+
+
+class RoleArchetypeOut(BaseModel):
+    """A starting point for the "New role" form — same idea as Moodle's
+    "Use role or archetype as start point": pick one of these first and
+    the capability checklist + scope come pre-filled with that
+    archetype's set, which the admin can then freely add to or remove
+    from before saving. Purely a frontend convenience — picking one
+    doesn't link the new role to it in any way, it's just a starting
+    checkbox state. See permission_service.BUILTIN_CAPABILITIES."""
+    key: str
+    label: str
+    description: str
+    scope: str
+    capabilities: list[str]

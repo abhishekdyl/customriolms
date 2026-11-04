@@ -1,7 +1,18 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { CapabilityGroup, CustomRole } from "@/lib/types";
+import type { CapabilityGroup, CustomRole, RoleArchetype } from "@/lib/types";
+
+/** Starting points for the "New role" form — Moodle calls this "use role
+ * or archetype as start point". Picking one pre-fills the capability
+ * checklist + scope; the admin then customizes freely from there. */
+export function useRoleArchetypes() {
+  return useQuery({
+    queryKey: ["custom-roles", "archetypes"],
+    queryFn: () => api.get<RoleArchetype[]>("/api/v1/custom-roles/archetypes"),
+    staleTime: Infinity,
+  });
+}
 
 /** The fixed catalog every custom role's capabilities are picked from —
  * grouped for the "Define role" checkbox list. Same for every org, so

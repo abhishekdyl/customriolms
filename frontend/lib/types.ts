@@ -29,6 +29,18 @@ export interface CapabilityGroup {
   capabilities: Capability[];
 }
 
+/** A starting point for the "New role" form — see
+ * backend/app/api/v1/custom_roles.py's /archetypes endpoint. Picking one
+ * pre-fills the capability checklist + scope; purely a form convenience,
+ * not a link to the built-in role. */
+export interface RoleArchetype {
+  key: string;
+  label: string;
+  description: string;
+  scope: "org" | "own_team";
+  capabilities: string[];
+}
+
 export interface User {
   id: string;
   firstname: string;

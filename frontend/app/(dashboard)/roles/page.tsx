@@ -11,8 +11,9 @@ import {
   useCreateCustomRole,
   useUpdateCustomRole,
   useDeleteCustomRole,
+  useRoleArchetypes,
 } from "@/lib/hooks/use-custom-roles";
-import type { CustomRole } from "@/lib/types";
+import type { CustomRole, RoleArchetype } from "@/lib/types";
 
 type Scope = "org" | "own_team";
 
@@ -28,6 +29,7 @@ const emptyForm: FormState = { name: "", description: "", scope: "org", capabili
 export default function RolesPage() {
   const { data: roles, isLoading } = useCustomRoles();
   const { data: catalog } = useCapabilityCatalog();
+  const { data: archetypes } = useRoleArchetypes();
   const createRole = useCreateCustomRole();
   const updateRole = useUpdateCustomRole();
   const deleteRole = useDeleteCustomRole();
@@ -36,19 +38,32 @@ export default function RolesPage() {
   const [editing, setEditing] = useState<CustomRole | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Moodle-style "use role or archetype as start point": a brand new
+  // role starts on this picker screen instead of a blank checkbox wall
+  // — choosing one pre-fills the form below with that archetype's
+  // capabilities + scope, which can then be freely added to / removed
+  // from. Editing an existing role skips straight to the form.
+  const [pickingArchetype, setPickingArchetype] = useState(false);
 
   const mutation = editing ? updateRole : createRole;
 
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm);
+    setPickingArchetype(true);
     setOpen(true);
   };
 
   const openEdit = (role: CustomRole) => {
     setEditing(role);
     setForm({ name: role.name, description: role.description, scope: role.scope, capabilities: [...role.capabilities] });
+    setPickingArchetype(false);
     setOpen(true);
+  };
+
+  const pickArchetype = (archetype: RoleArchetype) => {
+    setForm((f) => ({ ...f, scope: archetype.scope, capabilities: [...archetype.capabilities] }));
+    setPickingArchetype(false);
   };
 
   const toggleCapability = (key: string) => {
@@ -143,9 +158,50 @@ export default function RolesPage() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editing ? `Edit "${editing.name}"` : "New role"}</DialogTitle>
+            <DialogTitle>{pickingArchetype ? "New role — start from" : editing ? `Edit "${editing.name}"` : "New role"}</DialogTitle>
           </DialogHeader>
+
+          {pickingArchetype ? (
+            <div className="flex flex-col gap-3 p-6">
+              <p className="text-sm text-ink-faint">
+                Pick a role to copy its capabilities from as a starting point — you can add or remove anything
+                afterwards. This doesn&apos;t link the new role to the one you pick; it just pre-fills the checklist.
+              </p>
+              <div className="flex flex-col gap-2">
+                {archetypes?.map((a) => (
+                  <button
+                    key={a.key}
+                    type="button"
+                    onClick={() => pickArchetype(a)}
+                    className="rounded-lg border border-line p-4 text-left hover:border-primary hover:bg-primary-soft"
+                  >
+                    <div className="text-sm font-medium text-ink">{a.label}</div>
+                    <div className="text-xs text-ink-faint">{a.description}</div>
+                    <div className="mt-1 text-[11px] text-ink-faint">
+                      {a.capabilities.length} capabilit{a.capabilities.length === 1 ? "y" : "ies"} preselected
+                      {a.key !== "blank" && ` · ${a.scope === "own_team" ? "Own team only" : "Whole org"}`}
+                    </div>
+                  </button>
+                ))}
+                {!archetypes && <p className="text-sm text-ink-faint">Loading…</p>}
+              </div>
+              <div className="flex justify-end">
+                <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
           <form onSubmit={submit} className="flex flex-col gap-5 p-6">
+            {!editing && (
+              <button
+                type="button"
+                onClick={() => setPickingArchetype(true)}
+                className="self-start text-xs text-primary"
+              >
+                ← Change starting point
+              </button>
+            )}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-ink-soft">Name</label>
               <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Content Manager" />
@@ -234,6 +290,7 @@ export default function RolesPage() {
               </Button>
             </div>
           </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>
