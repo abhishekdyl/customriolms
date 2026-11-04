@@ -14,6 +14,13 @@ class RoleName(str, enum.Enum):
     ORG_ADMIN = "org_admin"       # full control within their org
     TEAM_LEAD = "team_lead"       # scoped to their own team(s)
     LEARNER = "learner"           # self-scoped only
+    # An org-defined role beyond these four (see app.models.custom_role.
+    # CustomRole) — a user with this role MUST also have custom_role_id
+    # set; that row (name, scope, capabilities) is what actually governs
+    # what they can do, this enum value is just "not one of the fixed
+    # four, go look at custom_role". See permission_service.py for how
+    # every permission check resolves this.
+    CUSTOM = "custom"
 
 
 class UserStatus(str, enum.Enum):
@@ -58,6 +65,10 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)  # null until an invited user sets one
     role: Mapped[RoleName] = mapped_column(Enum(RoleName), default=RoleName.LEARNER, nullable=False)
+    # Only meaningful when role == RoleName.CUSTOM — see CustomRole's
+    # docstring and RoleName.CUSTOM's. Left null (and ignored) for every
+    # built-in role.
+    custom_role_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("custom_roles.id"), nullable=True)
     status: Mapped[UserStatus] = mapped_column(Enum(UserStatus), default=UserStatus.ACTIVE, nullable=False)
     invite_token: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
     # True for every admin-created account (single invite or bulk CSV) —
@@ -105,6 +116,11 @@ class User(Base):
 
     org: Mapped["Org"] = relationship(back_populates="users")
     team: Mapped["Team | None"] = relationship(back_populates="users")
+    # Eager (selectin), not lazy — every permission check (require_capability,
+    # is_team_scoped) needs this read synchronously off the User object
+    # get_current_user already loaded, with no extra awaited query at the
+    # call site. See CustomRole.
+    custom_role: Mapped["CustomRole | None"] = relationship(back_populates="users", lazy="selectin")  # noqa: F821
 
     @property
     def full_name(self) -> str:

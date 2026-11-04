@@ -3,7 +3,31 @@
 // docs/architecture.md flags OpenAPI-generated types as the
 // longer-term fix once the API surface stabilizes.
 
-export type RoleName = "super_admin" | "org_admin" | "team_lead" | "learner";
+export type RoleName = "super_admin" | "org_admin" | "team_lead" | "learner" | "custom";
+
+/** An org-defined role beyond the four built-in ones — see
+ * backend/app/models/custom_role.py. `scope` is "org" (sees the whole
+ * org, like Org Admin) or "own_team" (sees only their own team, like
+ * Team Lead). `capabilities` are keys from CapabilityGroup's catalog. */
+export interface CustomRole {
+  id: string;
+  name: string;
+  description: string;
+  scope: "org" | "own_team";
+  capabilities: string[];
+  user_count: number;
+  created_at: string;
+}
+
+export interface Capability {
+  key: string;
+  label: string;
+}
+
+export interface CapabilityGroup {
+  group: string;
+  capabilities: Capability[];
+}
 
 export interface User {
   id: string;
@@ -13,6 +37,11 @@ export interface User {
   username: string;
   email: string;
   role: RoleName;
+  custom_role_id?: string | null;
+  custom_role_name?: string | null;
+  // None/absent = every capability (Super Admin / Org Admin) — see
+  // AppUser.capabilities's docstring, same field.
+  capabilities?: string[] | null;
   org_id: string;
   must_change_password?: boolean;
   team_name?: string | null;
@@ -61,6 +90,14 @@ export interface AppUser {
   username: string;
   email: string;
   role: RoleName;
+  custom_role_id?: string | null;
+  custom_role_name?: string | null;
+  // None/absent = every capability (Super Admin / Org Admin). Otherwise
+  // the exact set Team Lead or a custom role grants — see
+  // backend/app/services/permission_service.py. Used to filter the
+  // sidebar and admin buttons for a Team Lead or custom role; the real
+  // enforcement is always server-side.
+  capabilities?: string[] | null;
   status: "invited" | "active" | "suspended" | "deactivated";
   team_id: string | null;
   team_name: string | null;

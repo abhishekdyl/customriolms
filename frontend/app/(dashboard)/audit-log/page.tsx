@@ -11,6 +11,7 @@ const FAMILIES = [
   { value: "course", label: "Courses" },
   { value: "module", label: "Modules" },
   { value: "user", label: "Users" },
+  { value: "role", label: "Roles" },
 ];
 
 /** "Kisne kya badla, kab" — every course create/publish/update/delete and

@@ -22,6 +22,7 @@ from app.models.user import RoleName, User, UserStatus, split_full_name
 from app.services import notification_service as notification_svc
 from app.services import storage_service
 from app.services import profile_field_service
+from app.services import permission_service
 from app.schemas.auth import (
     ChangePasswordRequest, ForgotPasswordRequest, GoogleLoginRequest, GoogleRegisterRequest, LoginRequest, RegisterRequest,
     ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserOut,
@@ -349,6 +350,10 @@ async def _user_out(db: AsyncSession, user: User) -> UserOut:
         team_name = (await db.execute(select(Team.name).where(Team.id == user.team_id))).scalar_one_or_none()
     out = UserOut.model_validate(user)
     out.team_name = team_name
+    if user.custom_role is not None:
+        out.custom_role_name = user.custom_role.name
+    caps = permission_service.user_capabilities(user)
+    out.capabilities = sorted(caps) if caps is not None else None
     if user.avatar_key:
         out.profile_image_url = storage_service.presigned_get_url(user.avatar_key)
     return out

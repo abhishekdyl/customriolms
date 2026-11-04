@@ -47,6 +47,7 @@ async def invite_user(
     name: str,
     role: RoleName,
     team_id: uuid.UUID | None,
+    custom_role_id: uuid.UUID | None = None,
 ) -> User:
     """
     Single source of truth for creating an admin-added user. Both the
@@ -95,6 +96,7 @@ async def invite_user(
         username=email,  # default — see Org.allow_custom_username
         hashed_password=hash_password(DEFAULT_PASSWORD),
         role=role,
+        custom_role_id=custom_role_id,
         status=UserStatus.ACTIVE,
         must_change_password=True,
     )
@@ -146,6 +148,13 @@ async def bulk_invite_from_csv(db: AsyncSession, org: Org, file_bytes: bytes) ->
         for f in required_fields:
             if not (row.get(f.shortname) or "").strip():
                 raise ValueError(f'Row {i} is missing a value for the required field "{f.name}" ({f.shortname})')
+        # A CSV row has no column for which custom role to assign — bulk
+        # invite only ever grants a built-in role. Reject up front, same
+        # severity as every other structural problem above, rather than
+        # silently creating a role="custom" user with no actual
+        # permissions (see User.custom_role_id's docstring).
+        if (row.get("role") or "").strip().lower() == "custom":
+            raise ValueError(f'Row {i}: "custom" isn\'t a role bulk-invite can assign — invite that user individually and pick a custom role')
 
     invited_count = 0
     skipped: list[str] = []

@@ -14,11 +14,40 @@ import { useCurrentUser } from "@/lib/hooks/use-auth";
 import {
   useUsers, useInviteUser, useBulkInvite, useChangeRole, useChangeTeam, useUpdateUserStatus, useRemoveUser,
 } from "@/lib/hooks/use-users";
+import { useCustomRoles } from "@/lib/hooks/use-custom-roles";
 import { ApiError } from "@/lib/api-client";
-import type { AppUser, BulkInviteResult, ProfileField, RoleName } from "@/lib/types";
+import type { AppUser, BulkInviteResult, CustomRole, ProfileField, RoleName } from "@/lib/types";
 
 const roleOptions: RoleName[] = ["learner", "team_lead", "org_admin"];
-const roleLabel: Record<RoleName, string> = { super_admin: "Super Admin", org_admin: "Org Admin", team_lead: "Team Lead", learner: "Learner" };
+// "custom" is deliberately excluded here and handled with its own
+// per-custom-role options below — roleLabel still needs the key so
+// Record<RoleName, string> stays total.
+const roleLabel: Record<RoleName, string> = { super_admin: "Super Admin", org_admin: "Org Admin", team_lead: "Team Lead", learner: "Learner", custom: "Custom role" };
+
+// A <select>'s value can only be one string, so a custom role is
+// encoded as "custom:<roleId>" — decoded back into {role, custom_role_id}
+// right before it reaches the API. Built-in roles pass through as-is.
+function encodeRoleValue(role: RoleName, customRoleId?: string | null): string {
+  return role === "custom" && customRoleId ? `custom:${customRoleId}` : role;
+}
+function decodeRoleValue(value: string): { role: RoleName; custom_role_id: string | null } {
+  if (value.startsWith("custom:")) return { role: "custom", custom_role_id: value.slice("custom:".length) };
+  return { role: value as RoleName, custom_role_id: null };
+}
+/** Renders the 3 built-in options an Org Admin can hand out, plus one
+ * option per custom role the org has defined. */
+function RoleOptions({ customRoles }: { customRoles: CustomRole[] | undefined }) {
+  return (
+    <>
+      {roleOptions.map((r) => (
+        <option key={r} value={r}>{roleLabel[r]}</option>
+      ))}
+      {customRoles?.map((cr) => (
+        <option key={cr.id} value={`custom:${cr.id}`}>{cr.name}</option>
+      ))}
+    </>
+  );
+}
 
 // A sensible example value per field type, so a downloaded template row
 // is something an admin can just overwrite rather than puzzle out. A
@@ -69,6 +98,7 @@ export default function UsersPage() {
   const { data: org } = useMyOrg();
   const { data: teams } = useTeams();
   const { data: users, isLoading } = useUsers();
+  const { data: customRoles } = useCustomRoles();
   const { data: profileFields, isLoading: fieldsLoading, refetch: refetchProfileFields } = useProfileFields();
   const requiredFields = profileFields?.filter((f) => f.required) ?? [];
   const { data: me } = useCurrentUser();
@@ -87,20 +117,23 @@ export default function UsersPage() {
   // Same draft-until-Save pattern as everywhere else: picking a new role
   // in a row's dropdown only edits this local map — it doesn't reach the
   // server until that row's own Save is clicked, and Cancel discards it.
-  const [roleDrafts, setRoleDrafts] = useState<Record<string, RoleName>>({});
+  // Stored as the <select>'s encoded value ("learner", "custom:<id>", …)
+  // rather than RoleName, since a custom role needs its id carried
+  // alongside — see encodeRoleValue/decodeRoleValue.
+  const [roleDrafts, setRoleDrafts] = useState<Record<string, string>>({});
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
 
   const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteTeamId, setInviteTeamId] = useState("");
-  const [inviteRole, setInviteRole] = useState<RoleName>("learner");
+  const [inviteRoleValue, setInviteRoleValue] = useState<string>("learner");
   const [inviteSuccess, setInviteSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [bulkResult, setBulkResult] = useState<BulkInviteResult | null>(null);
 
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkTeamId, setBulkTeamId] = useState("");
-  const [bulkRole, setBulkRole] = useState<RoleName | "">("");
+  const [bulkRole, setBulkRole] = useState<string>("");
   const [confirmBulkRemove, setConfirmBulkRemove] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -114,9 +147,10 @@ export default function UsersPage() {
   const submitInvite = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteName.trim() || !inviteEmail.trim() || atLimit) return;
+    const { role, custom_role_id } = decodeRoleValue(inviteRoleValue);
     invite.mutate(
-      { name: inviteName.trim(), email: inviteEmail.trim(), team_id: inviteTeamId || null, role: inviteRole },
-      { onSuccess: () => { setInviteName(""); setInviteEmail(""); setInviteTeamId(""); setInviteRole("learner"); setInviteSuccess(true); } }
+      { name: inviteName.trim(), email: inviteEmail.trim(), team_id: inviteTeamId || null, role, custom_role_id },
+      { onSuccess: () => { setInviteName(""); setInviteEmail(""); setInviteTeamId(""); setInviteRoleValue("learner"); setInviteSuccess(true); } }
     );
   };
 
@@ -166,7 +200,8 @@ export default function UsersPage() {
   };
   const applyBulkRole = async () => {
     if (!bulkRole) return;
-    const results = await Promise.allSettled(selected.map((id) => changeRole.mutateAsync({ id, role: bulkRole })));
+    const { role, custom_role_id } = decodeRoleValue(bulkRole);
+    const results = await Promise.allSettled(selected.map((id) => changeRole.mutateAsync({ id, role, custom_role_id })));
     reportFailures(results, "Change role");
     clearSelection();
   };
@@ -290,14 +325,12 @@ export default function UsersPage() {
               onChange={(e) => { setInviteEmail(e.target.value); setInviteSuccess(false); }}
             />
             <select
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as RoleName)}
+              value={inviteRoleValue}
+              onChange={(e) => setInviteRoleValue(e.target.value)}
               disabled={atLimit}
               className="h-10 rounded-lg border border-line bg-surface px-3 text-sm outline-none disabled:opacity-50"
             >
-              {roleOptions.map((r) => (
-                <option key={r} value={r}>{roleLabel[r]}</option>
-              ))}
+              <RoleOptions customRoles={customRoles} />
             </select>
             <select
               value={inviteTeamId}
@@ -374,13 +407,11 @@ export default function UsersPage() {
 
           <select
             value={bulkRole}
-            onChange={(e) => setBulkRole(e.target.value as RoleName)}
+            onChange={(e) => setBulkRole(e.target.value)}
             className="rounded-md border-none bg-white/10 px-2 py-1.5 text-xs text-white"
           >
             <option value="">Change role…</option>
-            {roleOptions.map((r) => (
-              <option key={r} value={r} className="text-ink">{roleLabel[r]}</option>
-            ))}
+            <RoleOptions customRoles={customRoles} />
           </select>
           <button onClick={applyBulkRole} disabled={!bulkRole} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:bg-white/10 disabled:text-white/40">
             Apply
@@ -468,20 +499,22 @@ export default function UsersPage() {
                     <td className="border-b border-line-soft px-5 py-3 text-ink-soft">{u.team_name ?? "—"}</td>
                     <td className="border-b border-line-soft px-5 py-3">
                       {(() => {
-                        const draftRole = roleDrafts[u.id] ?? u.role;
-                        const dirty = draftRole !== u.role;
+                        const currentEncoded = encodeRoleValue(u.role, u.custom_role_id);
+                        const draftRole = roleDrafts[u.id] ?? currentEncoded;
+                        const dirty = draftRole !== currentEncoded;
                         return (
                           <div className="flex flex-col gap-1">
                             <select
                               value={draftRole}
                               disabled={isSelf}
-                              onChange={(e) => setRoleDrafts((prev) => ({ ...prev, [u.id]: e.target.value as RoleName }))}
+                              onChange={(e) => setRoleDrafts((prev) => ({ ...prev, [u.id]: e.target.value }))}
                               className="rounded-md border border-line px-2 py-1 text-xs text-ink"
                             >
-                              {roleOptions.map((r) => (
-                                <option key={r} value={r}>{roleLabel[r]}</option>
-                              ))}
+                              <RoleOptions customRoles={customRoles} />
                             </select>
+                            {u.role === "custom" && !roleDrafts[u.id] && (
+                              <span className="text-[10.5px] text-ink-faint">{u.custom_role_name ?? "Custom role"}</span>
+                            )}
                             {dirty && (
                               <div className="flex items-center gap-2">
                                 <button
@@ -494,8 +527,9 @@ export default function UsersPage() {
                                 <button
                                   onClick={() => {
                                     setSavingRoleId(u.id);
+                                    const { role, custom_role_id } = decodeRoleValue(draftRole);
                                     changeRole.mutate(
-                                      { id: u.id, role: draftRole },
+                                      { id: u.id, role, custom_role_id },
                                       {
                                         onSuccess: () => setRoleDrafts((prev) => { const next = { ...prev }; delete next[u.id]; return next; }),
                                         onSettled: () => setSavingRoleId(null),

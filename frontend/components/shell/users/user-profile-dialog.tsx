@@ -8,17 +8,28 @@ import { useUser, useUpdateUserProfile } from "@/lib/hooks/use-users";
 import { useLoginAs } from "@/lib/hooks/use-auth";
 import { useUserCustomFields, useUpdateUserCustomFields } from "@/lib/hooks/use-profile-fields";
 import { useTeams } from "@/lib/hooks/use-teams";
+import { useCustomRoles } from "@/lib/hooks/use-custom-roles";
 import { ApiError } from "@/lib/api-client";
 import type { RoleName } from "@/lib/types";
 
 const roleOptions: RoleName[] = ["learner", "team_lead", "org_admin"];
-const roleLabel: Record<RoleName, string> = { super_admin: "Super Admin", org_admin: "Org Admin", team_lead: "Team Lead", learner: "Learner" };
+const roleLabel: Record<RoleName, string> = { super_admin: "Super Admin", org_admin: "Org Admin", team_lead: "Team Lead", learner: "Learner", custom: "Custom role" };
+
+// "custom" is encoded as "custom:<roleId>" in the <select> value, same
+// pattern as users/page.tsx — see encodeRoleValue/decodeRoleValue there.
+function encodeRoleValue(role: RoleName, customRoleId?: string | null): string {
+  return role === "custom" && customRoleId ? `custom:${customRoleId}` : role;
+}
+function decodeRoleValue(value: string): { role: RoleName; custom_role_id: string | null } {
+  if (value.startsWith("custom:")) return { role: "custom", custom_role_id: value.slice("custom:".length) };
+  return { role: value as RoleName, custom_role_id: null };
+}
 
 // Same restriction as the backend (_IMPERSONATABLE_ROLES in users.py) —
 // never let an Org Admin "become" another admin or platform staff from
 // here. Kept in sync manually since this is UI-only; the server enforces
 // the real rule regardless of what this button shows.
-const IMPERSONATABLE_ROLES: RoleName[] = ["team_lead", "learner"];
+const IMPERSONATABLE_ROLES: RoleName[] = ["team_lead", "learner", "custom"];
 
 /** The Org Admin's "view / edit profile" panel for one user, plus the
  * "Login as" switch. Team Leads can open it too (read-only — the save
@@ -33,6 +44,7 @@ export function UserProfileDialog({
 }) {
   const { data: user, isLoading } = useUser(userId);
   const { data: teams } = useTeams();
+  const { data: customRoles } = useCustomRoles();
   const { data: customFields } = useUserCustomFields(userId);
   const updateProfile = useUpdateUserProfile();
   const updateCustomFields = useUpdateUserCustomFields(userId);
@@ -40,7 +52,7 @@ export function UserProfileDialog({
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<RoleName>("learner");
+  const [roleValue, setRoleValue] = useState<string>("learner");
   const [teamId, setTeamId] = useState("");
   const [phone, setPhone] = useState("");
   const [jobTitle, setJobTitle] = useState("");
@@ -56,7 +68,7 @@ export function UserProfileDialog({
     if (!user) return;
     setName(user.full_name);
     setEmail(user.email);
-    setRole(user.role);
+    setRoleValue(encodeRoleValue(user.role, user.custom_role_id));
     setTeamId(user.team_id ?? "");
     setPhone(user.phone ?? "");
     setJobTitle(user.job_title ?? "");
@@ -76,9 +88,10 @@ export function UserProfileDialog({
   const handleSave = () => {
     if (!name.trim() || !email.trim()) return;
     setSaved(false);
+    const { role, custom_role_id } = decodeRoleValue(roleValue);
     updateProfile.mutate(
       {
-        id: userId, name: name.trim(), email: email.trim(), role, team_id: teamId || null,
+        id: userId, name: name.trim(), email: email.trim(), role, custom_role_id, team_id: teamId || null,
         phone: phone || null, job_title: jobTitle || null, location: location || null, bio: bio || null, country: country || null,
       },
       {
@@ -117,10 +130,11 @@ export function UserProfileDialog({
                 <label className="flex flex-col gap-1">
                   <span className="text-[11px] font-medium text-ink-faint">Role *</span>
                   <select
-                    value={role} disabled={!canEdit} onChange={(e) => setRole(e.target.value as RoleName)}
+                    value={roleValue} disabled={!canEdit} onChange={(e) => setRoleValue(e.target.value)}
                     className="h-10 rounded-lg border border-line bg-surface px-3 text-sm outline-none disabled:opacity-60"
                   >
                     {roleOptions.map((r) => <option key={r} value={r}>{roleLabel[r]}</option>)}
+                    {customRoles?.map((cr) => <option key={cr.id} value={`custom:${cr.id}`}>{cr.name}</option>)}
                   </select>
                 </label>
                 <label className="flex flex-col gap-1">

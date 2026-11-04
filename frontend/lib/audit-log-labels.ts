@@ -18,4 +18,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   "module.file_removed": "Module file removed",
   "module.scorm_uploaded": "SCORM package replaced",
   "user.role_changed": "Role changed",
+  "role.created": "Custom role created",
+  "role.updated": "Custom role updated",
+  "role.deleted": "Custom role deleted",
 };

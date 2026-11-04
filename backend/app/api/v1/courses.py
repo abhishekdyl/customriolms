@@ -6,7 +6,7 @@ from fastapi.responses import Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_optional_user_via_header_or_query, require_role
+from app.api.deps import get_current_user, get_optional_user_via_header_or_query, require_capability
 from app.core.database import get_db
 from app.models.category import Category
 from app.models.course import Course
@@ -160,7 +160,7 @@ async def submit_my_quiz(
     return result
 
 
-@router.post("", response_model=CourseOut, status_code=201, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.post("", response_model=CourseOut, status_code=201, dependencies=[Depends(require_capability("courses.manage"))])
 async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     if body.category_id:
         cat = await db.execute(select(Category).where(Category.id == body.category_id, Category.org_id == current_user.org_id))
@@ -186,7 +186,7 @@ async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db), 
     return await get_course_or_404(db, course.id, current_user.org_id)
 
 
-@router.post("/import", response_model=CourseImportResult, status_code=201, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.post("/import", response_model=CourseImportResult, status_code=201, dependencies=[Depends(require_capability("courses.manage"))])
 async def import_course(body: CourseImportRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Recreates a course from a file an earlier GET /{course_id}/export
     produced — in this org, as a new draft course. See
@@ -210,7 +210,7 @@ async def get_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), c
     return await get_course_or_404(db, course_id, current_user.org_id)
 
 
-@router.post("/{course_id}/duplicate", response_model=CourseOut, status_code=201, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.post("/{course_id}/duplicate", response_model=CourseOut, status_code=201, dependencies=[Depends(require_capability("courses.manage"))])
 async def duplicate_course_endpoint(
     course_id: uuid.UUID, body: CourseDuplicateRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
@@ -230,7 +230,7 @@ async def duplicate_course_endpoint(
     return new_course
 
 
-@router.get("/{course_id}/activity", response_model=list[AuditLogOut], dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.get("/{course_id}/activity", response_model=list[AuditLogOut], dependencies=[Depends(require_capability("courses.view"))])
 async def get_course_activity(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """This course's own change history — every edit to the course itself
     plus every module under it (content saves, file/SCORM replaces, quiz
@@ -241,7 +241,7 @@ async def get_course_activity(course_id: uuid.UUID, db: AsyncSession = Depends(g
     return await audit_log_service.list_course_activity(db, current_user.org_id, course_id)
 
 
-@router.get("/{course_id}/export", dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.get("/{course_id}/export", dependencies=[Depends(require_capability("courses.manage"))])
 async def export_course_endpoint(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """A downloadable JSON snapshot of this course's full configuration —
     for moving it to a different org/environment (e.g. staging) via
@@ -253,7 +253,7 @@ async def export_course_endpoint(course_id: uuid.UUID, db: AsyncSession = Depend
     return export_course_snapshot(course)
 
 
-@router.patch("/{course_id}", response_model=CourseOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.patch("/{course_id}", response_model=CourseOut, dependencies=[Depends(require_capability("courses.manage"))])
 async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     data = body.model_dump(exclude_unset=True)
@@ -305,7 +305,7 @@ async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSessi
     return await get_course_or_404(db, course_id, current_user.org_id)
 
 
-@router.post("/{course_id}/cover-image", response_model=CourseOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.post("/{course_id}/cover-image", response_model=CourseOut, dependencies=[Depends(require_capability("courses.manage"))])
 async def upload_course_cover_image(
     course_id: uuid.UUID, file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
@@ -328,7 +328,7 @@ async def upload_course_cover_image(
     return await get_course_or_404(db, course_id, current_user.org_id)
 
 
-@router.delete("/{course_id}/cover-image", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.delete("/{course_id}/cover-image", status_code=204, dependencies=[Depends(require_capability("courses.manage"))])
 async def delete_course_cover_image(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     had_cover = bool(course.cover_image_key)
@@ -339,7 +339,7 @@ async def delete_course_cover_image(course_id: uuid.UUID, db: AsyncSession = Dep
         await db.commit()
 
 
-@router.delete("/{course_id}", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.delete("/{course_id}", status_code=204, dependencies=[Depends(require_capability("courses.manage"))])
 async def delete_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     title = course.title
@@ -352,7 +352,7 @@ async def delete_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     )
 
 
-@router.post("/{course_id}/assign", response_model=CourseOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))])
+@router.post("/{course_id}/assign", response_model=CourseOut, dependencies=[Depends(require_capability("courses.assign"))])
 async def assign(course_id: uuid.UUID, body: CourseAssignRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     return await assign_course(db, course, body.team_ids, body.user_ids)
@@ -360,7 +360,7 @@ async def assign(course_id: uuid.UUID, body: CourseAssignRequest, db: AsyncSessi
 
 @router.get(
     "/{course_id}/enrolled", response_model=list[EnrolledLearnerOut],
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+    dependencies=[Depends(require_capability("courses.view"))],
 )
 async def get_enrolled(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Who's actually enrolled — team + individual assignment resolved into
@@ -372,7 +372,7 @@ async def get_enrolled(course_id: uuid.UUID, db: AsyncSession = Depends(get_db),
 
 @router.get(
     "/{course_id}/module-progress", response_model=CourseModuleProgressOut,
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+    dependencies=[Depends(require_capability("courses.view"))],
 )
 async def get_module_progress(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """The module-by-module completion matrix — every enrolled learner as a
@@ -385,7 +385,7 @@ async def get_module_progress(course_id: uuid.UUID, db: AsyncSession = Depends(g
 
 @router.get(
     "/{course_id}/gradebook", response_model=GradebookOut,
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+    dependencies=[Depends(require_capability("courses.view"))],
 )
 async def get_gradebook(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """The Moodle-style single weighted/aggregate course grade — every
@@ -398,7 +398,7 @@ async def get_gradebook(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 
 @router.get(
     "/{course_id}/quiz-attempts", response_model=list[QuizAttemptOut],
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+    dependencies=[Depends(require_capability("courses.view"))],
 )
 async def get_quiz_attempts(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Every submission of every quiz module on this course, pass or fail,
@@ -412,7 +412,7 @@ async def get_quiz_attempts(course_id: uuid.UUID, db: AsyncSession = Depends(get
 
 @router.get(
     "/{course_id}/attempt-overrides", response_model=list[AttemptOverrideOut],
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+    dependencies=[Depends(require_capability("courses.view"))],
 )
 async def get_attempt_overrides(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Every learner who's been granted extra attempts (on top of their
@@ -424,7 +424,7 @@ async def get_attempt_overrides(course_id: uuid.UUID, db: AsyncSession = Depends
 
 @router.put(
     "/{course_id}/modules/{module_id}/attempt-overrides/{user_id}", response_model=AttemptOverrideOut,
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+    dependencies=[Depends(require_capability("courses.grade"))],
 )
 async def put_attempt_override(
     course_id: uuid.UUID, module_id: uuid.UUID, user_id: uuid.UUID, body: AttemptOverrideSet,
@@ -442,7 +442,7 @@ async def put_attempt_override(
 
 @router.put(
     "/{course_id}/due-override/{user_id}", response_model=DueOverrideOut | None,
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+    dependencies=[Depends(require_capability("courses.grade"))],
 )
 async def put_due_override(
     course_id: uuid.UUID, user_id: uuid.UUID, body: DueOverrideSet,
@@ -465,7 +465,7 @@ async def put_due_override(
 
 @router.get(
     "/{course_id}/groups", response_model=list[CourseGroupOut],
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+    dependencies=[Depends(require_capability("courses.manage_content"))],
 )
 async def get_course_groups(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
@@ -474,7 +474,7 @@ async def get_course_groups(course_id: uuid.UUID, db: AsyncSession = Depends(get
 
 @router.post(
     "/{course_id}/groups", response_model=CourseGroupOut, status_code=201,
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+    dependencies=[Depends(require_capability("courses.manage_content"))],
 )
 async def post_course_group(course_id: uuid.UUID, body: CourseGroupIn, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
@@ -483,7 +483,7 @@ async def post_course_group(course_id: uuid.UUID, body: CourseGroupIn, db: Async
 
 @router.patch(
     "/{course_id}/groups/{group_id}", response_model=CourseGroupOut,
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+    dependencies=[Depends(require_capability("courses.manage_content"))],
 )
 async def patch_course_group(
     course_id: uuid.UUID, group_id: uuid.UUID, body: CourseGroupUpdate,
@@ -495,7 +495,7 @@ async def patch_course_group(
 
 @router.delete(
     "/{course_id}/groups/{group_id}", status_code=204,
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+    dependencies=[Depends(require_capability("courses.manage_content"))],
 )
 async def delete_course_group_endpoint(
     course_id: uuid.UUID, group_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
@@ -517,7 +517,7 @@ async def get_my_calendar(db: AsyncSession = Depends(get_db), current_user: User
 # ---------- Modules — nested under their course, not a flat /api/v1/modules,
 # so every module operation is naturally org-scoped through its parent ----------
 
-@router.post("/{course_id}/modules", response_model=ModuleOut, status_code=201, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.post("/{course_id}/modules", response_model=ModuleOut, status_code=201, dependencies=[Depends(require_capability("courses.manage_content"))])
 async def create_module(course_id: uuid.UUID, body: ModuleCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     module = await add_module(db, course, body)
@@ -529,7 +529,7 @@ async def create_module(course_id: uuid.UUID, body: ModuleCreate, db: AsyncSessi
     return module
 
 
-@router.patch("/{course_id}/modules/{module_id}", response_model=ModuleOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.patch("/{course_id}/modules/{module_id}", response_model=ModuleOut, dependencies=[Depends(require_capability("courses.manage_content"))])
 async def patch_module(course_id: uuid.UUID, module_id: uuid.UUID, body: ModuleUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)  # also doubles as the ownership check
     module = await _get_module_or_404(db, module_id, course_id)
@@ -554,7 +554,7 @@ async def patch_module(course_id: uuid.UUID, module_id: uuid.UUID, body: ModuleU
     return updated
 
 
-@router.delete("/{course_id}/modules/{module_id}", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.delete("/{course_id}/modules/{module_id}", status_code=204, dependencies=[Depends(require_capability("courses.manage_content"))])
 async def delete_module(course_id: uuid.UUID, module_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     module = await _get_module_or_404(db, module_id, course_id)
@@ -568,7 +568,7 @@ async def delete_module(course_id: uuid.UUID, module_id: uuid.UUID, db: AsyncSes
     )
 
 
-@router.post("/{course_id}/modules/reorder", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.post("/{course_id}/modules/reorder", status_code=204, dependencies=[Depends(require_capability("courses.manage_content"))])
 async def reorder(course_id: uuid.UUID, body: ModuleReorderRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     await reorder_modules(db, course, body.module_ids)
@@ -579,7 +579,7 @@ async def reorder(course_id: uuid.UUID, body: ModuleReorderRequest, db: AsyncSes
     )
 
 
-@router.post("/{course_id}/modules/{module_id}/upload", response_model=ModuleOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.post("/{course_id}/modules/{module_id}/upload", response_model=ModuleOut, dependencies=[Depends(require_capability("courses.manage_content"))])
 async def upload_module_file(
     course_id: uuid.UUID, module_id: uuid.UUID, file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
@@ -600,7 +600,7 @@ async def upload_module_file(
     return updated
 
 
-@router.delete("/{course_id}/modules/{module_id}/file", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.delete("/{course_id}/modules/{module_id}/file", status_code=204, dependencies=[Depends(require_capability("courses.manage_content"))])
 async def delete_module_file(
     course_id: uuid.UUID, module_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
@@ -614,7 +614,7 @@ async def delete_module_file(
     )
 
 
-@router.post("/{course_id}/modules/{module_id}/scorm-upload", response_model=ModuleOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.post("/{course_id}/modules/{module_id}/scorm-upload", response_model=ModuleOut, dependencies=[Depends(require_capability("courses.manage_content"))])
 async def upload_scorm(
     course_id: uuid.UUID, module_id: uuid.UUID, file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),

@@ -6,9 +6,9 @@ from io import BytesIO
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, require_capability
 from app.core.database import get_db
-from app.models.user import RoleName, User
+from app.models.user import User
 from app.schemas.question import ImageUploadOut, QuestionIn, QuestionOut
 from app.schemas.question_bank import (
     ImportQuestionsRequest, QuestionBankCreate, QuestionBankListItem, QuestionBankOut, QuestionBankUpdate,
@@ -28,7 +28,7 @@ _TEXT_EXTS = (".txt", ".aiken")
 
 router = APIRouter(
     prefix="/api/v1/question-banks", tags=["question-banks"],
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+    dependencies=[Depends(require_capability("question_banks.manage"))],
 )
 
 

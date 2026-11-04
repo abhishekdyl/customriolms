@@ -2,16 +2,16 @@ import uuid
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, require_capability
 from app.core.database import get_db
-from app.models.user import RoleName, User
+from app.models.user import User
 from app.schemas.profile_field import ProfileFieldCreate, ProfileFieldOut, ProfileFieldUpdate
 from app.services import profile_field_service as svc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(
     prefix="/api/v1/org-profile-fields", tags=["org-profile-fields"],
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+    dependencies=[Depends(require_capability("profile_fields.manage"))],
 )
 
 

@@ -10,4 +10,9 @@ export const ROLE_HOME: Record<RoleName, string> = {
   org_admin: "/dashboard",
   team_lead: "/dashboard",
   learner: "/learn",
+  // A custom role is always some slice of what Org Admin can see, so it
+  // lands on the same dashboard — the sidebar then only shows the nav
+  // items their capabilities actually unlock (see navItemsFor in
+  // components/shell/sidebar.tsx).
+  custom: "/dashboard",
 };

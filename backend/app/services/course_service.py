@@ -29,6 +29,7 @@ from app.schemas.question import QuestionLearnerOut
 # disagree about what "completed" means.
 from app.services import learn_service as progress_svc
 from app.services import scorm_service, storage_service
+from app.services.permission_service import is_team_scoped
 
 
 async def _validate_ids_belong_to_org(db: AsyncSession, model, ids: list[uuid.UUID], org_id: uuid.UUID, label: str) -> None:
@@ -543,7 +544,7 @@ async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[
     overrides = await _due_overrides_map(db, course.id)
     out: list[EnrolledLearnerOut] = []
     for user, team_name in rows.all():
-        if viewer.role == RoleName.TEAM_LEAD and user.team_id != viewer.team_id:
+        if is_team_scoped(viewer) and user.team_id != viewer.team_id:
             continue
         via_direct = user.id in (course.assigned_user_ids or [])
         via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
@@ -692,7 +693,7 @@ async def list_module_progress(db: AsyncSession, course: Course, viewer: User) -
     )
     learners: list[LearnerModuleProgressOut] = []
     for user, team_name in rows.all():
-        if viewer.role == RoleName.TEAM_LEAD and user.team_id != viewer.team_id:
+        if is_team_scoped(viewer) and user.team_id != viewer.team_id:
             continue
         via_direct = user.id in (course.assigned_user_ids or [])
         via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
@@ -780,7 +781,7 @@ async def list_gradebook(db: AsyncSession, course: Course, viewer: User) -> Grad
     )
     learners: list[GradebookRowOut] = []
     for user, team_name in rows.all():
-        if viewer.role == RoleName.TEAM_LEAD and user.team_id != viewer.team_id:
+        if is_team_scoped(viewer) and user.team_id != viewer.team_id:
             continue
         via_direct = user.id in (course.assigned_user_ids or [])
         via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
@@ -810,7 +811,7 @@ async def list_quiz_attempts(db: AsyncSession, course: Course, viewer: User) -> 
     )
     out: list[QuizAttemptOut] = []
     for attempt, user, module_title in rows.all():
-        if viewer.role == RoleName.TEAM_LEAD and user.team_id != viewer.team_id:
+        if is_team_scoped(viewer) and user.team_id != viewer.team_id:
             continue
         out.append(QuizAttemptOut(
             id=attempt.id, user_id=user.id, user_name=user.full_name, user_email=user.email,
@@ -837,7 +838,7 @@ async def list_attempt_overrides(db: AsyncSession, course: Course, viewer: User)
     )
     out = []
     for override, team_id in rows.all():
-        if viewer.role == RoleName.TEAM_LEAD and team_id != viewer.team_id:
+        if is_team_scoped(viewer) and team_id != viewer.team_id:
             continue
         out.append(AttemptOverrideOut(module_id=override.module_id, user_id=override.user_id, extra_attempts=override.extra_attempts))
     return out

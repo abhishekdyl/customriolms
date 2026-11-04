@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, require_capability, require_role
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.core.session import revoke_all_sessions
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
 # user_limit, delete) stays Super-Admin-only, changed from the platform's
 # Organizations page, not from inside the org itself.
 super_admin_only = [Depends(require_role(RoleName.SUPER_ADMIN))]
-org_admin_only = [Depends(require_role(RoleName.ORG_ADMIN))]
+org_admin_only = [Depends(require_capability("org_settings.manage"))]
 
 # Where seed_super_admin.py parks platform staff — never a real customer,
 # so it should never show up in, be suspended from, or be deletable via

@@ -67,6 +67,14 @@ class UserOut(BaseModel):
     username: str
     email: str
     role: str
+    custom_role_id: uuid.UUID | None = None
+    custom_role_name: str | None = None  # filled in by /auth/me via a lookup, not a column on User
+    # None = every capability (Super Admin / Org Admin); otherwise the
+    # exact set Team Lead or a custom role grants — see
+    # app.services.permission_service.user_capabilities and
+    # app.schemas.user.UserOut.capabilities (same field, this is the
+    # duplicate schema /auth/me uses instead of that one).
+    capabilities: list[str] | None = None
     org_id: uuid.UUID
     must_change_password: bool = False
     team_name: str | None = None  # filled in by /auth/me via a lookup, not a column on User

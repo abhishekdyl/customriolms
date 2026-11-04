@@ -9,6 +9,7 @@ from app.core.security import decode_token
 from app.core.session import is_session_active
 from app.models.org import Org, OrgStatus
 from app.models.user import RoleName, User, UserStatus
+from app.services import permission_service
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -158,12 +159,41 @@ def require_role(*allowed_roles: RoleName):
     This is the real enforcement point. The admin console hides buttons a
     Team Lead shouldn't see — this is what stops them calling the API
     directly and doing it anyway.
+
+    Kept (rather than converted to require_capability everywhere) for the
+    handful of gates that aren't really "capabilities" an org could hand
+    to a custom role: SUPER_ADMIN-only platform endpoints (out of any
+    org's reach), and learn.py's LEARNER-only gate (which deliberately
+    EXCLUDES admins, the opposite of granting a capability). Everything
+    an Org Admin can already delegate to a Team Lead or a custom role
+    goes through require_capability below instead.
     """
     async def checker(user: User = Depends(get_current_user)) -> User:
         if user.role not in allowed_roles and user.role != RoleName.SUPER_ADMIN:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Role '{user.role.value}' is not permitted to perform this action",
+            )
+        return user
+    return checker
+
+
+def require_capability(capability: str):
+    """
+    Usage: @router.delete(..., dependencies=[Depends(require_capability("courses.manage"))])
+
+    The capability-aware sibling of require_role above — this is what
+    makes a custom role (app.models.custom_role.CustomRole) actually do
+    something. Super Admin and Org Admin always pass (see
+    permission_service.has_capability); Team Lead and a custom role pass
+    only if `capability` is in their own fixed/configured set; Learner
+    never passes any capability check.
+    """
+    async def checker(user: User = Depends(get_current_user)) -> User:
+        if not permission_service.has_capability(user, capability):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You don't have the '{capability}' permission",
             )
         return user
     return checker

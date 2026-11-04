@@ -1,15 +1,15 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, require_capability
 from app.core.database import get_db
-from app.models.user import RoleName, User
+from app.models.user import User
 from app.schemas.audit_log import AuditLogOut
 from app.services import audit_log_service
 
 router = APIRouter(
     prefix="/api/v1/audit-log", tags=["audit-log"],
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+    dependencies=[Depends(require_capability("audit_log.view"))],
 )
 
 

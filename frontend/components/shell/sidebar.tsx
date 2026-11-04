@@ -2,32 +2,38 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3 } from "lucide-react";
+import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3, KeyRound } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { cn } from "@/lib/utils";
 import type { RoleName } from "@/lib/types";
 
+type NavItem = { href: string; label: string; icon: typeof Users; capability?: string | string[] };
+
 // Mirrors navByRole in the approved lms_screens.jsx prototype exactly:
 // each role gets its OWN nav, not a filtered subset of one big list.
 // Super Admin in particular does NOT see Teams/Courses/Users — those
-// are a customer org's own screens, not the platform's.
-const navByRole: Record<RoleName, { href: string; label: string; icon: typeof Users }[]> = {
+// are a customer org's own screens, not the platform's. `capability`
+// is only used for the "custom" role below — see navItemsFor — and is
+// ignored for every built-in role (they're fixed, per the user's own
+// call: built-in roles' nav/behavior never changes).
+const navByRole: Record<RoleName, NavItem[]> = {
   super_admin: [
     { href: "/organizations", label: "Organizations", icon: Building2 },
     { href: "/platform-settings", label: "Platform Settings", icon: Server },
   ],
   org_admin: [
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { href: "/teams", label: "Teams", icon: Users },
-    { href: "/courses", label: "Courses", icon: BookOpen },
-    { href: "/question-banks", label: "Question Banks", icon: Library },
-    { href: "/users", label: "Users & Access", icon: ShieldCheck },
-    { href: "/recognition", label: "Recognition", icon: Sparkles },
-    { href: "/reports", label: "Reports", icon: BarChart3 },
-    { href: "/notifications", label: "Notifications", icon: Bell },
-    { href: "/audit-log", label: "Audit Log", icon: History },
-    { href: "/settings", label: "Org Settings", icon: Building2 },
+    { href: "/teams", label: "Teams", icon: Users, capability: "teams.view" },
+    { href: "/courses", label: "Courses", icon: BookOpen, capability: "courses.view" },
+    { href: "/question-banks", label: "Question Banks", icon: Library, capability: "question_banks.manage" },
+    { href: "/users", label: "Users & Access", icon: ShieldCheck, capability: "users.view" },
+    { href: "/recognition", label: "Recognition", icon: Sparkles, capability: ["badges.view", "skills.view", "certificates.view"] },
+    { href: "/reports", label: "Reports", icon: BarChart3, capability: "reports.view" },
+    { href: "/notifications", label: "Notifications", icon: Bell, capability: "notifications.manage" },
+    { href: "/audit-log", label: "Audit Log", icon: History, capability: "audit_log.view" },
+    { href: "/roles", label: "Roles", icon: KeyRound }, // ORG_ADMIN-only, never shown to custom roles
+    { href: "/settings", label: "Org Settings", icon: Building2, capability: "org_settings.manage" },
   ],
   team_lead: [
     { href: "/dashboard", label: "My Team", icon: Users },
@@ -41,7 +47,29 @@ const navByRole: Record<RoleName, { href: string; label: string; icon: typeof Us
   // renders. The learner's REAL nav (Home/My Courses/Calendar/Progress/
   // Profile) lives in components/learner/learner-nav.tsx.
   learner: [],
+  // A custom role's nav is org_admin's list filtered down to whatever
+  // its capabilities actually unlock — see navItemsFor. This array is
+  // never read directly for "custom" (navItemsFor special-cases it),
+  // kept empty only so the Record<RoleName, ...> type stays total.
+  custom: [],
 };
+
+/** org_admin's nav, filtered to what `capabilities` actually grants.
+ * `capabilities === null` means "every capability" (shouldn't happen
+ * for a custom-role user, but treated as "show everything" just in
+ * case rather than hiding the whole sidebar). "Roles" is excluded
+ * outright — defining roles is ORG_ADMIN-only, never delegatable (see
+ * the custom_roles router's privilege-escalation guard). */
+function navItemsFor(role: RoleName, capabilities: string[] | null | undefined): NavItem[] {
+  if (role !== "custom") return navByRole[role];
+  return navByRole.org_admin.filter((item) => {
+    if (item.href === "/roles") return false;
+    if (!item.capability) return true;
+    if (!capabilities) return true;
+    const required = Array.isArray(item.capability) ? item.capability : [item.capability];
+    return required.some((cap) => capabilities.includes(cap));
+  });
+}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -55,7 +83,7 @@ export function Sidebar() {
   const { data: myOrg } = useMyOrg(user?.role !== "super_admin");
   const brandName = user?.role === "super_admin" ? "Riosmart LMS" : myOrg?.name || "Riosmart LMS";
 
-  const items = user?.role ? navByRole[user.role] : [];
+  const items = user?.role ? navItemsFor(user.role, user.capabilities) : [];
 
   return (
     <motion.div

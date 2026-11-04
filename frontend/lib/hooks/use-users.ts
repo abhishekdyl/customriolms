@@ -23,7 +23,7 @@ export function useUpdateUserProfile() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: {
-      id: string; name: string; email: string; role: RoleName; team_id: string | null;
+      id: string; name: string; email: string; role: RoleName; custom_role_id?: string | null; team_id: string | null;
       phone?: string | null; job_title?: string | null; location?: string | null; bio?: string | null; country?: string | null;
     }) => api.patch<AppUser>(`/api/v1/users/${id}/profile`, body),
     onSuccess: (updated) => {
@@ -36,7 +36,7 @@ export function useUpdateUserProfile() {
 export function useInviteUser() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; email: string; team_id: string | null; role: RoleName }) =>
+    mutationFn: (body: { name: string; email: string; team_id: string | null; role: RoleName; custom_role_id?: string | null }) =>
       api.post<AppUser>("/api/v1/users/invite", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
@@ -57,7 +57,8 @@ export function useBulkInvite() {
 export function useChangeRole() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, role }: { id: string; role: RoleName }) => api.patch(`/api/v1/users/${id}/role`, { role }),
+    mutationFn: ({ id, role, custom_role_id }: { id: string; role: RoleName; custom_role_id?: string | null }) =>
+      api.patch(`/api/v1/users/${id}/role`, { role, custom_role_id: custom_role_id ?? null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
 }

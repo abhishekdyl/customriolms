@@ -33,6 +33,7 @@ from app.models.user import RoleName, User, UserStatus
 from app.schemas.report import ActivityPointOut, CoursePerformanceOut, ReportOverviewOut, ReportsOut
 from app.services import course_service
 from app.services import learn_service as progress_svc
+from app.services.permission_service import is_team_scoped
 
 
 def _learner_scope(query, viewer: User):
@@ -40,7 +41,7 @@ def _learner_scope(query, viewer: User):
     narrows to just their own team, same restriction list_enrolled and
     list_gradebook already apply per-course."""
     query = query.where(User.org_id == viewer.org_id, User.role == RoleName.LEARNER)
-    if viewer.role == RoleName.TEAM_LEAD:
+    if is_team_scoped(viewer):
         query = query.where(User.team_id == viewer.team_id)
     return query
 
@@ -78,7 +79,7 @@ async def _overview(db: AsyncSession, viewer: User, courses: list[Course]) -> Re
     quiz_pass_q = select(func.count(QuizAttempt.id)).select_from(QuizAttempt).join(User, User.id == QuizAttempt.user_id).where(
         User.org_id == viewer.org_id, User.role == RoleName.LEARNER, QuizAttempt.passed == True,  # noqa: E712
     )
-    if viewer.role == RoleName.TEAM_LEAD:
+    if is_team_scoped(viewer):
         cert_q = cert_q.where(User.team_id == viewer.team_id)
         quiz_q = quiz_q.where(User.team_id == viewer.team_id)
         quiz_pass_q = quiz_pass_q.where(User.team_id == viewer.team_id)
@@ -111,7 +112,7 @@ async def _course_rows(db: AsyncSession, viewer: User, courses: list[Course]) ->
     out: list[CoursePerformanceOut] = []
     for course in courses:
         enrolled = await course_service.list_enrolled(db, course, viewer)
-        if viewer.role == RoleName.TEAM_LEAD and not enrolled:
+        if is_team_scoped(viewer) and not enrolled:
             continue  # nothing from this team is on this course — skip the empty row
         completed = sum(1 for r in enrolled if r.completed)
         gradebook = await course_service.list_gradebook(db, course, viewer)
@@ -146,7 +147,7 @@ async def _trend(db: AsyncSession, viewer: User, days: int) -> list[ActivityPoin
     cert_q = select(func.date(Certificate.issued_at), func.count(Certificate.id)).select_from(Certificate).join(
         User, User.id == Certificate.user_id
     ).where(User.org_id == viewer.org_id, User.role == RoleName.LEARNER, Certificate.issued_at >= since_naive)
-    if viewer.role == RoleName.TEAM_LEAD:
+    if is_team_scoped(viewer):
         mp_q = mp_q.where(User.team_id == viewer.team_id)
         qa_q = qa_q.where(User.team_id == viewer.team_id)
         cert_q = cert_q.where(User.team_id == viewer.team_id)

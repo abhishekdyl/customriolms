@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, require_capability
 from app.core.database import get_db
 from app.core.security import create_access_token, create_refresh_token, hash_password
 from app.core.session import create_session, revoke_all_sessions
@@ -24,16 +24,18 @@ from app.schemas.user import (
     UserOut,
 )
 from app.schemas.profile_field import ProfileFieldValueOut, ProfileFieldValuesUpdate
-from app.services import audit_log_service, dashboard_service
+from app.services import audit_log_service, custom_role_service, dashboard_service
+from app.services import permission_service
 from app.services import profile_field_service
 from app.services.invite_service import bulk_invite_from_csv, invite_user
+from app.services.permission_service import is_team_scoped
 
 # An Org Admin can impersonate a lower-privileged account to see exactly
 # what that person sees ("login as") — never another Org Admin and never
 # platform staff. Keeps the feature a support tool, not a way for one
 # admin account to quietly take over another admin's or a platform
 # account's session.
-_IMPERSONATABLE_ROLES = (RoleName.TEAM_LEAD, RoleName.LEARNER)
+_IMPERSONATABLE_ROLES = (RoleName.TEAM_LEAD, RoleName.LEARNER, RoleName.CUSTOM)
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
@@ -46,7 +48,33 @@ async def _get_org_or_404(db: AsyncSession, org_id: uuid.UUID) -> Org:
     return org
 
 
-@router.get("", response_model=list[UserOut], dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))])
+async def _check_custom_role_belongs_to_org(db: AsyncSession, custom_role_id: uuid.UUID | None, org_id: uuid.UUID) -> None:
+    """Every endpoint that accepts role=custom + custom_role_id validates
+    the id this way — the schema layer (see _require_custom_role_id)
+    only checks the two fields are paired, not that the id is real or
+    belongs to this org. 404s the same way _get_user_or_404 does for a
+    cross-org/nonexistent target, rather than letting one org assign a
+    role it doesn't own."""
+    if custom_role_id is not None:
+        await custom_role_service.get_custom_role_or_404(db, custom_role_id, org_id)
+
+
+def _user_out(user: User, team_name: str | None = None) -> UserOut:
+    """UserOut.model_validate plus the two fields it can't get from
+    from_attributes alone: team_name (needs a join the caller already
+    did) and custom_role_name (read straight off user.custom_role — the
+    relationship is lazy="selectin", so it's already loaded on every User
+    object without an extra query here)."""
+    row = UserOut.model_validate(user)
+    row.team_name = team_name
+    if user.custom_role is not None:
+        row.custom_role_name = user.custom_role.name
+    caps = permission_service.user_capabilities(user)
+    row.capabilities = sorted(caps) if caps is not None else None
+    return row
+
+
+@router.get("", response_model=list[UserOut], dependencies=[Depends(require_capability("users.view"))])
 async def list_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     # DEACTIVATED (i.e. "removed") users never show up again — that's the
     # whole point of Remove vs. Suspend. SUSPENDED users still show, with
@@ -56,15 +84,10 @@ async def list_users(db: AsyncSession = Depends(get_db), current_user: User = De
         .outerjoin(Team, Team.id == User.team_id)
         .where(User.org_id == current_user.org_id, User.status != UserStatus.DEACTIVATED)
     )
-    out = []
-    for user, team_name in result.all():
-        row = UserOut.model_validate(user)
-        row.team_name = team_name
-        out.append(row)
-    return out
+    return [_user_out(user, team_name) for user, team_name in result.all()]
 
 
-@router.get("/progress", response_model=list[LearnerProgressOut], dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))])
+@router.get("/progress", response_model=list[LearnerProgressOut], dependencies=[Depends(require_capability("users.view"))])
 async def get_learner_progress(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Every active/invited learner's own average progress, org-wide — the
     real numbers behind the Org Admin / Team Lead dashboards' completion
@@ -74,26 +97,34 @@ async def get_learner_progress(db: AsyncSession = Depends(get_db), current_user:
     return [LearnerProgressOut(user_id=uid, **data) for uid, data in progress.items()]
 
 
-@router.post("/invite", response_model=UserOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))])
+@router.post("/invite", response_model=UserOut, dependencies=[Depends(require_capability("users.invite"))])
 async def invite_single_user(body: InviteUserRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # A Team Lead can only invite into their own team — enforced here,
-    # not just assumed from the frontend not offering other teams.
-    if current_user.role == RoleName.TEAM_LEAD and body.team_id != current_user.team_id:
-        raise HTTPException(status_code=403, detail="Team Leads can only invite into their own team")
+    # A Team Lead — or a custom role scoped to "own team" — can only
+    # invite into their own team, enforced here, not just assumed from
+    # the frontend not offering other teams.
+    if is_team_scoped(current_user) and body.team_id != current_user.team_id:
+        raise HTTPException(status_code=403, detail="You can only invite into your own team")
 
+    await _check_custom_role_belongs_to_org(db, body.custom_role_id, current_user.org_id)
     org = await _get_org_or_404(db, current_user.org_id)
     try:
         user = await invite_user(
             db, org=org, email=body.email.lower(),
             name=(body.name or "").strip() or body.email.split("@")[0], role=body.role, team_id=body.team_id,
+            custom_role_id=body.custom_role_id,
         )
         await db.commit()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return user
+    # Not the `user` invite_user returned — it only flushed, so
+    # user.custom_role (lazy="selectin") was never actually loaded and
+    # _user_out reading it would issue a lazy load outside any awaited
+    # query. A plain re-fetch loads it properly in one awaited SELECT.
+    user = await _get_user_or_404(db, user.id, current_user.org_id)
+    return _user_out(user)
 
 
-@router.post("/bulk-invite", response_model=BulkInviteResult, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.post("/bulk-invite", response_model=BulkInviteResult, dependencies=[Depends(require_capability("users.bulk_invite"))])
 async def bulk_invite(file: UploadFile, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Upload a .csv file")
@@ -120,24 +151,30 @@ async def accept_invite(body: AcceptInviteRequest, db: AsyncSession = Depends(ge
     return user
 
 
-@router.patch("/{user_id}/role", response_model=UserOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.patch("/{user_id}/role", response_model=UserOut, dependencies=[Depends(require_capability("users.manage_role"))])
 async def change_role(user_id: uuid.UUID, body: UpdateRoleRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="You can't change your own role")
+    await _check_custom_role_belongs_to_org(db, body.custom_role_id, current_user.org_id)
     user = await _get_user_or_404(db, user_id, current_user.org_id)
     old_role = user.role
     user.role = body.role
+    user.custom_role_id = body.custom_role_id  # None whenever body.role != CUSTOM — schema already enforced that pairing
     await db.commit()
+    # Not db.refresh(user) — that doesn't reliably re-run the selectin
+    # loader for custom_role in an async session, and _user_out needs it
+    # freshly loaded (changed above). A plain re-fetch does.
+    user = await _get_user_or_404(db, user_id, current_user.org_id)
     if old_role != user.role:
         await audit_log_service.record(
             db, org_id=current_user.org_id, actor=current_user, action="user.role_changed",
             entity_type="user", entity_id=user.id, entity_label=user.full_name,
             detail=f"Changed role: {old_role.value} → {user.role.value}",
         )
-    return user
+    return _user_out(user)
 
 
-@router.patch("/{user_id}/team", response_model=UserOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.patch("/{user_id}/team", response_model=UserOut, dependencies=[Depends(require_capability("users.manage_team"))])
 async def change_team(user_id: uuid.UUID, body: UpdateTeamRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Moves a user to a different team (or to no team). Separate from
     /role — the Users & Access page's bulk 'Move to team' action and the
@@ -153,12 +190,10 @@ async def change_team(user_id: uuid.UUID, body: UpdateTeamRequest, db: AsyncSess
     if user.team_id is not None:
         team_row = await db.execute(select(Team.name).where(Team.id == user.team_id))
         team_name = team_row.scalar_one_or_none()
-    row = UserOut.model_validate(user)
-    row.team_name = team_name
-    return row
+    return _user_out(user, team_name)
 
 
-@router.patch("/{user_id}/status", response_model=UserOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.patch("/{user_id}/status", response_model=UserOut, dependencies=[Depends(require_capability("users.manage_status"))])
 async def update_user_status(user_id: uuid.UUID, body: UpdateUserStatusRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Suspend or reactivate. Not the same endpoint as DELETE below —
     suspension is reversible and the user stays visible in the list with
@@ -178,12 +213,12 @@ async def update_user_status(user_id: uuid.UUID, body: UpdateUserStatusRequest, 
     if body.status == UserStatus.SUSPENDED:
         await revoke_all_sessions(str(user.id))
 
-    return user
+    return _user_out(user)
 
 
 @router.get(
     "/{user_id}", response_model=UserOut,
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+    dependencies=[Depends(require_capability("users.view"))],
 )
 async def get_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """One user's full profile — the Org Admin / Team Lead "view profile"
@@ -193,12 +228,10 @@ async def get_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), curre
     team_name = None
     if user.team_id is not None:
         team_name = (await db.execute(select(Team.name).where(Team.id == user.team_id))).scalar_one_or_none()
-    row = UserOut.model_validate(user)
-    row.team_name = team_name
-    return row
+    return _user_out(user, team_name)
 
 
-@router.patch("/{user_id}/profile", response_model=UserOut, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.patch("/{user_id}/profile", response_model=UserOut, dependencies=[Depends(require_capability("users.manage_profile"))])
 async def update_user_profile(
     user_id: uuid.UUID, body: AdminUpdateUserRequest,
     db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
@@ -212,6 +245,7 @@ async def update_user_profile(
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Edit your own profile from your account settings instead")
 
+    await _check_custom_role_belongs_to_org(db, body.custom_role_id, current_user.org_id)
     user = await _get_user_or_404(db, user_id, current_user.org_id)
 
     email = body.email.lower()
@@ -234,6 +268,7 @@ async def update_user_profile(
     old_role = user.role
     user.firstname, user.lastname = split_full_name(body.name)
     user.role = body.role
+    user.custom_role_id = body.custom_role_id  # None whenever body.role != CUSTOM — schema already enforced that pairing
     user.team_id = body.team_id
     user.phone = body.phone
     user.job_title = body.job_title
@@ -242,7 +277,9 @@ async def update_user_profile(
     user.country = body.country
 
     await db.commit()
-    await db.refresh(user)
+    # Not db.refresh(user) — see change_role's identical note on why a
+    # plain re-fetch is used instead when custom_role_id may have changed.
+    user = await _get_user_or_404(db, user_id, current_user.org_id)
     if old_role != user.role:
         await audit_log_service.record(
             db, org_id=current_user.org_id, actor=current_user, action="user.role_changed",
@@ -252,12 +289,10 @@ async def update_user_profile(
     team_name = None
     if user.team_id is not None:
         team_name = (await db.execute(select(Team.name).where(Team.id == user.team_id))).scalar_one_or_none()
-    row = UserOut.model_validate(user)
-    row.team_name = team_name
-    return row
+    return _user_out(user, team_name)
 
 
-@router.post("/{user_id}/login-as", response_model=TokenResponse, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.post("/{user_id}/login-as", response_model=TokenResponse, dependencies=[Depends(require_capability("users.login_as"))])
 async def login_as_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """"Login as" — issues the target user a real access/refresh token
     pair exactly like a normal login, so the Org Admin sees the product
@@ -290,7 +325,7 @@ async def login_as_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), 
     )
 
 
-@router.delete("/{user_id}", status_code=204, dependencies=[Depends(require_role(RoleName.ORG_ADMIN))])
+@router.delete("/{user_id}", status_code=204, dependencies=[Depends(require_capability("users.delete"))])
 async def remove_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="You can't remove your own account")
@@ -313,7 +348,7 @@ async def _get_user_or_404(db: AsyncSession, user_id: uuid.UUID, org_id: uuid.UU
 
 @router.get(
     "/{user_id}/custom-fields", response_model=list[ProfileFieldValueOut],
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN, RoleName.TEAM_LEAD))],
+    dependencies=[Depends(require_capability("users.view"))],
 )
 async def get_user_custom_fields(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """An admin viewing one user's custom-field answers — same shape as
@@ -324,7 +359,7 @@ async def get_user_custom_fields(user_id: uuid.UUID, db: AsyncSession = Depends(
 
 @router.patch(
     "/{user_id}/custom-fields", response_model=list[ProfileFieldValueOut],
-    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+    dependencies=[Depends(require_capability("users.manage_profile"))],
 )
 async def update_user_custom_fields(
     user_id: uuid.UUID, body: ProfileFieldValuesUpdate,
