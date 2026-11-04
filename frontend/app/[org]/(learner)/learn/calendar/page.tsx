@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
 import { Topbar } from "@/components/shell/topbar";
 import { useMyCalendar } from "@/lib/hooks/use-courses";
@@ -73,11 +73,12 @@ const TONE_CLASSES: Record<string, string> = {
  * open dates, and current progress. */
 function EventCard({ item, now }: { item: CalendarItem; now: Date }) {
   const router = useRouter();
+  const { org } = useParams<{ org: string }>();
   const status = dueStatus(item, now);
   return (
     <button
       type="button"
-      onClick={() => router.push(`/learn/courses/${item.course_id}`)}
+      onClick={() => router.push(`/${org}/learn/courses/${item.course_id}`)}
       className="flex w-full flex-col gap-2 rounded-lg border border-line bg-surface px-3 py-3 text-left hover:bg-paper"
     >
       <div className="flex items-start justify-between gap-2">
@@ -123,9 +124,9 @@ function EventCard({ item, now }: { item: CalendarItem; now: Date }) {
 /** The learner's own Calendar — a real month grid (not just lists):
  * every date with something due gets a colored dot (red = overdue,
  * amber = today, primary = upcoming), and clicking a date shows exactly
- * what's due that day below the grid. Lives under (learner)/learn/*
+ * what's due that day below the grid. Lives under [org]/(learner)/learn/*
  * like every other learner page — a learner never reaches the
- * (dashboard) route group (AuthGuard bounces them to ROLE_HOME). */
+ * [org]/(dashboard) route group (AuthGuard bounces them via roleHome()). */
 export default function CalendarPage() {
   const { data, isLoading } = useMyCalendar();
   const now = new Date();

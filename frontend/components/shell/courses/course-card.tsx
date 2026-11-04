@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Link2, Pencil, Trash2, Check, Square, CheckSquare, Copy, Download, Loader2 } from "lucide-react";
 import { useUpdateCourse, useDeleteCourse, useDuplicateCourse, useExportCourse } from "@/lib/hooks/use-courses";
 import { ApiError } from "@/lib/api-client";
@@ -33,6 +33,7 @@ export function CourseCard({
   onAssign: (id: string) => void;
 }) {
   const router = useRouter();
+  const { org } = useParams<{ org: string }>();
   const updateCourse = useUpdateCourse(c.id);
   const deleteCourse = useDeleteCourse();
   const duplicateCourse = useDuplicateCourse();
@@ -49,7 +50,7 @@ export function CourseCard({
   // useDuplicateCourse) then takes the admin straight to the copy's
   // Settings tab to rename/re-category it if they want.
   const duplicate = () => {
-    duplicateCourse.mutate({ courseId: c.id }, { onSuccess: (newCourse) => router.push(`/courses/${newCourse.id}`) });
+    duplicateCourse.mutate({ courseId: c.id }, { onSuccess: (newCourse) => router.push(`/${org}/courses/${newCourse.id}`) });
   };
 
   // Downloads the course's structural config as a .json file the admin
@@ -136,7 +137,7 @@ export function CourseCard({
   // management page — only the select checkbox, edit/delete icons, the
   // copy-link button, and "Assign" are separate actions, so each of
   // those stops the click from bubbling up to this handler.
-  const goToManage = () => router.push(`/courses/${c.id}`);
+  const goToManage = () => router.push(`/${org}/courses/${c.id}`);
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return (

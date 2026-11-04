@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { Award, BookOpen, CalendarDays, Home, LogOut, Search, Bell, User as UserIcon } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
@@ -88,9 +88,10 @@ export function MobileTabBar() {
 
 export function BellButton() {
   const router = useRouter();
+  const { org } = useParams<{ org: string }>();
   const { data } = useLearnSummary();
   return (
-    <button type="button" aria-label="Notifications" onClick={() => router.push("/learn/notifications")} className="relative active:opacity-60">
+    <button type="button" aria-label="Notifications" onClick={() => router.push(`/${org}/learn/notifications`)} className="relative active:opacity-60">
       <Bell size={19} className="text-ink" />
       {data?.has_unread && <span className="absolute -top-px -right-px h-[7px] w-[7px] rounded-full bg-danger border-[1.5px] border-paper" />}
     </button>

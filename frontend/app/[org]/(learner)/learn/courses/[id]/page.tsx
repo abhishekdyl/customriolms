@@ -122,8 +122,9 @@ const TABS = [
 type TabId = (typeof TABS)[number]["id"];
 
 function BackLink({ label }: { label: string }) {
+  const { org } = useParams<{ org: string }>();
   return (
-    <Link href="/learn/courses" className="flex items-center gap-1.5">
+    <Link href={`/${org}/learn/courses`} className="flex items-center gap-1.5">
       <ArrowLeft size={14} color="var(--color-ink-soft)" />
       <span className="text-[12.5px] text-ink-soft">{label}</span>
     </Link>

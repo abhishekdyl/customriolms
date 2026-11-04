@@ -249,7 +249,7 @@ function TeamLeadDashboard() {
         <div className="mb-2 flex items-center justify-between">
           <span className="font-head text-[14.5px] text-ink">Your team</span>
           <button
-            onClick={() => router.push("/courses")}
+            onClick={() => router.push(currentUser?.org_slug ? `/${currentUser.org_slug}/courses` : "/courses")}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-primary rounded-md"
           >
             <Plus size={12} className="text-white" />

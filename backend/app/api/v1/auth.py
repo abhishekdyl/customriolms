@@ -77,6 +77,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         access_token=access_token,
         refresh_token=create_refresh_token(str(user.id)),
         role=user.role.value,
+        org_slug=org.slug,
     )
 
 
@@ -144,7 +145,10 @@ async def google_register(body: GoogleRegisterRequest, db: AsyncSession = Depend
 
     access_token, jti, ttl_seconds = create_access_token(str(user.id), str(org.id), user.role.value)
     await create_session(str(user.id), jti, ttl_seconds)
-    return TokenResponse(access_token=access_token, refresh_token=create_refresh_token(str(user.id)), role=user.role.value)
+    return TokenResponse(
+        access_token=access_token, refresh_token=create_refresh_token(str(user.id)),
+        role=user.role.value, org_slug=org.slug,
+    )
 
 
 @router.post("/google", response_model=TokenResponse)
@@ -182,11 +186,15 @@ async def google_login(body: GoogleLoginRequest, db: AsyncSession = Depends(get_
         user.google_sub = payload["sub"]
         await db.commit()
 
+    org_slug = None
+    if user.role != RoleName.SUPER_ADMIN:
+        org_slug = (await db.execute(select(Org.slug).where(Org.id == user.org_id))).scalar_one_or_none()
+
     access_token, jti, ttl_seconds = create_access_token(str(user.id), str(user.org_id), user.role.value)
     await create_session(str(user.id), jti, ttl_seconds)
     return TokenResponse(
         access_token=access_token, refresh_token=create_refresh_token(str(user.id)),
-        must_change_password=user.must_change_password, role=user.role.value,
+        must_change_password=user.must_change_password, role=user.role.value, org_slug=org_slug,
     )
 
 
@@ -218,13 +226,17 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     # later API call 403s. get_current_user enforces this same rule on
     # every subsequent request too, so this is a friendlier first check,
     # not the only one.
+    org_slug = None
     if user.role != RoleName.SUPER_ADMIN:
-        org_result = await db.execute(select(Org.status).where(Org.id == user.org_id))
-        if org_result.scalar_one_or_none() == OrgStatus.SUSPENDED:
-            raise HTTPException(
-                status_code=403,
-                detail="Your organization has been suspended. Contact your Riosmart representative.",
-            )
+        org_result = await db.execute(select(Org.status, Org.slug).where(Org.id == user.org_id))
+        org_row = org_result.first()
+        if org_row is not None:
+            org_status, org_slug = org_row
+            if org_status == OrgStatus.SUSPENDED:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Your organization has been suspended. Contact your Riosmart representative.",
+                )
 
     access_token, jti, ttl_seconds = create_access_token(str(user.id), str(user.org_id), user.role.value)
     # Registers this login as a new active session. If the user is now
@@ -238,6 +250,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         refresh_token=create_refresh_token(str(user.id)),
         must_change_password=user.must_change_password,
         role=user.role.value,
+        org_slug=org_slug,
     )
 
 
@@ -354,6 +367,8 @@ async def _user_out(db: AsyncSession, user: User) -> UserOut:
         out.custom_role_name = user.custom_role.name
     caps = permission_service.user_capabilities(user)
     out.capabilities = sorted(caps) if caps is not None else None
+    if user.role != RoleName.SUPER_ADMIN:
+        out.org_slug = (await db.execute(select(Org.slug).where(Org.id == user.org_id))).scalar_one_or_none()
     if user.avatar_key:
         out.profile_image_url = storage_service.presigned_get_url(user.avatar_key)
     return out

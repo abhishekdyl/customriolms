@@ -28,6 +28,10 @@ class TokenResponse(BaseModel):
     # Lets the frontend send each role to its own home right after login
     # without a second /auth/me round trip.
     role: str | None = None
+    # The URL prefix every org-scoped page lives under (e.g. "tech-learning"
+    # for /tech-learning/users) — see the [org] route segment. Always null
+    # for Super Admin, who isn't a member of any customer org.
+    org_slug: str | None = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -76,6 +80,9 @@ class UserOut(BaseModel):
     # duplicate schema /auth/me uses instead of that one).
     capabilities: list[str] | None = None
     org_id: uuid.UUID
+    # Same meaning as TokenResponse.org_slug — filled in by /auth/me via a
+    # lookup, not a column on User (null for Super Admin).
+    org_slug: str | None = None
     must_change_password: bool = False
     team_name: str | None = None  # filled in by /auth/me via a lookup, not a column on User
     profile_image_url: str | None = None  # built from avatar_key, not a column (see _user_out)

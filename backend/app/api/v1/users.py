@@ -330,6 +330,7 @@ async def login_as_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), 
         raise HTTPException(status_code=400, detail=f"{user.full_name}'s account isn't active ({user.status.value})")
 
     # TODO(audit log module): AuditLog.record(actor=current_user, action="login_as", target=user)
+    org_slug = (await db.execute(select(Org.slug).where(Org.id == user.org_id))).scalar_one_or_none()
     access_token, jti, ttl_seconds = create_access_token(str(user.id), str(user.org_id), user.role.value)
     await create_session(str(user.id), jti, ttl_seconds)
 
@@ -338,6 +339,7 @@ async def login_as_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), 
         refresh_token=create_refresh_token(str(user.id)),
         must_change_password=user.must_change_password,
         role=user.role.value,
+        org_slug=org_slug,
     )
 
 

@@ -62,8 +62,8 @@ type TabId = (typeof TABS)[number]["id"];
 
 const isClosed = (closesAt: string | null) => !!closesAt && new Date(closesAt) < new Date();
 
-export default function CourseManagePage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function CourseManagePage({ params }: { params: Promise<{ org: string; id: string }> }) {
+  const { id, org } = use(params);
   const router = useRouter();
   const { data: course, isLoading } = useCourse(id);
   const updateCourse = useUpdateCourse(id);
@@ -330,7 +330,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
 
   return (
     <div className="p-8 max-w-3xl">
-      <Link href="/courses" className="mb-5 inline-flex items-center gap-1.5 text-xs text-ink-soft">
+      <Link href={`/${org}/courses`} className="mb-5 inline-flex items-center gap-1.5 text-xs text-ink-soft">
         <ArrowLeft className="h-3.5 w-3.5" /> Courses
       </Link>
 
@@ -881,7 +881,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
             <div className="flex gap-2">
               <Button
                 variant="secondary" disabled={duplicateCourse.isPending}
-                onClick={() => duplicateCourse.mutate({ courseId: id }, { onSuccess: (nc) => router.push(`/courses/${nc.id}`) })}
+                onClick={() => duplicateCourse.mutate({ courseId: id }, { onSuccess: (nc) => router.push(`/${org}/courses/${nc.id}`) })}
               >
                 {duplicateCourse.isPending ? "Duplicating…" : "Duplicate"}
               </Button>
@@ -915,7 +915,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ id: str
               variant="secondary"
               onClick={() => {
                 if (!confirm(`Delete "${course.title}" permanently? This can't be undone.`)) return;
-                deleteCourse.mutate(course.id, { onSuccess: () => router.push("/courses") });
+                deleteCourse.mutate(course.id, { onSuccess: () => router.push(`/${org}/courses`) });
               }}
               disabled={deleteCourse.isPending}
               className="border-danger/40 text-danger hover:bg-danger-soft"

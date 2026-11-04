@@ -1,17 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useParams, useRouter } from "next/navigation";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { useMyCustomFields } from "@/lib/hooks/use-profile-fields";
-import { ROLE_HOME } from "@/lib/role-home";
+import { profilePath, roleHome } from "@/lib/role-home";
 import type { RoleName } from "@/lib/types";
-
-/** Where a role fills in its own org-required custom profile fields — a
- * learner already has a profile page under /learn; every other role gets
- * the new self-service one at /profile (see app/(dashboard)/profile). */
-function completeProfilePath(role: RoleName): string {
-  return role === "learner" ? "/learn/profile" : "/profile";
-}
 
 /**
  * Stops someone from just typing /teams or /learn into the address bar
@@ -35,6 +28,10 @@ export function AuthGuard({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  // Present only for pages under app/[org]/... (the dashboard/learner
+  // shells) — absent for org-less pages like /organizations or the
+  // unprefixed /profile, which never run this check.
+  const params = useParams<{ org?: string }>();
   const [hasToken, setHasToken] = useState(false);
   const { data: user, isError } = useCurrentUser();
   // Only actually needed once a password-change isn't already pending —
@@ -60,8 +57,25 @@ export function AuthGuard({
   const wrongRole = !!user && !!allowedRoles && !allowedRoles.includes(user.role);
 
   useEffect(() => {
-    if (wrongRole && user) router.replace(ROLE_HOME[user.role]);
+    if (wrongRole && user) router.replace(roleHome(user.role, user.org_slug));
   }, [wrongRole, user, router]);
+
+  // Someone editing the URL's org segment by hand (typing another org's
+  // slug, or a stale link from before they were moved to a new org)
+  // lands here with params.org not matching their own — this is a UX
+  // nicety only (every API call is still scoped server-side by the
+  // token's own org_id, never by this URL segment), but it keeps the
+  // address bar honest rather than silently showing their real org's
+  // data under someone else's slug. Super Admin has no org_slug of
+  // their own and never opens an [org] page (allowedRoles below keeps
+  // them out), so this never fires for them.
+  const wrongOrg = !!user && !wrongRole && !!params.org && !!user.org_slug && params.org !== user.org_slug;
+
+  useEffect(() => {
+    if (wrongOrg && user.org_slug && params.org) {
+      router.replace(pathname.replace(`/${params.org}`, `/${user.org_slug}`));
+    }
+  }, [wrongOrg, user, params.org, pathname, router]);
 
   // An Org Admin can mark a custom profile field mandatory — same idea as
   // must_change_password: a required field with no value yet blocks
@@ -71,19 +85,20 @@ export function AuthGuard({
   const missingRequiredField = !!user && !user.must_change_password && !!customFields?.some(
     (f) => f.required && !(f.value ?? "").trim()
   );
-  const profilePath = user ? completeProfilePath(user.role) : null;
+  const ownProfilePath = user ? profilePath(user.role, user.org_slug) : null;
 
   useEffect(() => {
-    if (missingRequiredField && profilePath && pathname !== profilePath) {
-      router.replace(profilePath);
+    if (missingRequiredField && ownProfilePath && pathname !== ownProfilePath) {
+      router.replace(ownProfilePath);
     }
-  }, [missingRequiredField, profilePath, pathname, router]);
+  }, [missingRequiredField, ownProfilePath, pathname, router]);
 
   if (!hasToken || isError) return null;
   if (user?.must_change_password) return null;
   // When roles are restricted, wait until we actually know the role
   // (and render nothing while redirecting a wrong-role visitor).
   if (allowedRoles && (!user || wrongRole)) return null;
-  if (missingRequiredField && pathname !== profilePath) return null;
+  if (wrongOrg) return null;
+  if (missingRequiredField && pathname !== ownProfilePath) return null;
   return <>{children}</>;
 }

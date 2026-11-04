@@ -7,7 +7,7 @@ import { CertPreview } from "@/components/shell/recognition/cert-preview";
 import { useLearnCertificate } from "@/lib/hooks/use-learn";
 
 export default function LearnerCertificatePage() {
-  const { id } = useParams<{ id: string }>();
+  const { id, org } = useParams<{ id: string; org: string }>();
   const { data: c, isError } = useLearnCertificate(id);
   const date = c ? new Date(c.issued_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
   const sample = c && { learnerName: c.learner_name, courseTitle: c.course_title, date, duration: c.duration, issuerName: c.issuer_name, code: c.code };
@@ -15,7 +15,7 @@ export default function LearnerCertificatePage() {
 
   return (
     <LearnerPage>
-      <Link href="/learn/progress" className="inline-flex items-center gap-1.5 py-1 mb-3 print:hidden">
+      <Link href={`/${org}/learn/progress`} className="inline-flex items-center gap-1.5 py-1 mb-3 print:hidden">
         <ArrowLeft size={14} className="text-ink-soft" /><span className="text-[12.5px] text-ink-soft">Certificate</span>
       </Link>
       {isError && <div className="text-[13px] text-ink-faint">Certificate not found.</div>}

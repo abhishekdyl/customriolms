@@ -2,7 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api-client";
-import { ROLE_HOME } from "@/lib/role-home";
+import { roleHome } from "@/lib/role-home";
 import type { RoleName, TokenResponse, User } from "@/lib/types";
 
 export function useLogin() {
@@ -24,7 +24,7 @@ export function useLogin() {
         router.push("/change-password");
       } else {
         // Each role has its own home: learner -> /learn, super admin -> /organizations, ...
-        router.push(data.role ? ROLE_HOME[data.role] : "/dashboard");
+        router.push(data.role ? roleHome(data.role, data.org_slug) : "/dashboard");
       }
     },
   });
@@ -40,7 +40,9 @@ export function useRegister() {
       localStorage.setItem("access_token", data.access_token);
       localStorage.setItem("refresh_token", data.refresh_token);
       qc.clear();
-      router.push("/teams"); // register always creates an Org Admin
+      // register always creates an Org Admin, fresh org — go straight to
+      // that org's own Teams page rather than /dashboard.
+      router.push(data.org_slug ? `/${data.org_slug}/teams` : "/teams");
     },
   });
 }
@@ -62,7 +64,7 @@ export function useGoogleLogin() {
       localStorage.setItem("refresh_token", data.refresh_token);
       qc.clear();
       if (data.must_change_password) router.push("/change-password");
-      else router.push(data.role ? ROLE_HOME[data.role] : "/dashboard");
+      else router.push(data.role ? roleHome(data.role, data.org_slug) : "/dashboard");
     },
   });
 }
@@ -81,7 +83,7 @@ export function useGoogleRegister() {
       localStorage.setItem("access_token", data.access_token);
       localStorage.setItem("refresh_token", data.refresh_token);
       qc.clear();
-      router.push("/teams");
+      router.push(data.org_slug ? `/${data.org_slug}/teams` : "/teams");
     },
   });
 }
@@ -136,7 +138,7 @@ export function useChangePassword({ redirectAfter = true }: { redirectAfter?: bo
       // use its role to land on the right home instead of assuming Org Admin.
       const me = await api.get<User>("/api/v1/auth/me");
       qc.setQueryData(["me"], me);
-      if (redirectAfter) router.push(ROLE_HOME[me.role]);
+      if (redirectAfter) router.push(roleHome(me.role, me.org_slug));
     },
   });
 }
@@ -198,12 +200,17 @@ export function useLoginAs() {
     onSuccess: (data) => {
       const adminToken = localStorage.getItem("access_token");
       const adminRefresh = localStorage.getItem("refresh_token");
+      // The admin's own org slug, so "Return to admin" can send them back
+      // to their org's /users page instead of the unprefixed one — read
+      // from cache before qc.clear() wipes it below.
+      const adminOrgSlug = qc.getQueryData<User>(["me"])?.org_slug;
       if (adminToken) localStorage.setItem("impersonator_access_token", adminToken);
       if (adminRefresh) localStorage.setItem("impersonator_refresh_token", adminRefresh);
+      if (adminOrgSlug) localStorage.setItem("impersonator_org_slug", adminOrgSlug);
       localStorage.setItem("access_token", data.access_token);
       localStorage.setItem("refresh_token", data.refresh_token);
       qc.clear();
-      router.push(data.role ? ROLE_HOME[data.role as RoleName] : "/dashboard");
+      router.push(data.role ? roleHome(data.role as RoleName, data.org_slug) : "/dashboard");
     },
   });
 }
@@ -218,14 +225,16 @@ export function useReturnToAdmin() {
   return () => {
     const adminToken = localStorage.getItem("impersonator_access_token");
     const adminRefresh = localStorage.getItem("impersonator_refresh_token");
+    const adminOrgSlug = localStorage.getItem("impersonator_org_slug");
     if (!adminToken) return;
     api.post("/api/v1/auth/logout").catch(() => {});
     localStorage.setItem("access_token", adminToken);
     if (adminRefresh) localStorage.setItem("refresh_token", adminRefresh);
     localStorage.removeItem("impersonator_access_token");
     localStorage.removeItem("impersonator_refresh_token");
+    localStorage.removeItem("impersonator_org_slug");
     qc.clear();
-    router.push("/users");
+    router.push(adminOrgSlug ? `/${adminOrgSlug}/users` : "/users");
   };
 }
 

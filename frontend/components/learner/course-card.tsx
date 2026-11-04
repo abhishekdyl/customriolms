@@ -1,4 +1,6 @@
+"use client";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { Lock } from "lucide-react";
 import { ProgressRing } from "@/components/learner/progress-ring";
 import { cn } from "@/lib/utils";
@@ -23,9 +25,10 @@ export function CourseCard({
   subtitle: string;
   mobileSubtitle?: string;
 }) {
+  const { org } = useParams<{ org: string }>();
   const cover = COVER_BG[index % COVER_BG.length];
   const ringColor = course.progress_pct >= 100 ? "var(--color-success)" : "var(--color-primary)";
-  const href = `/learn/courses/${course.id}`;
+  const href = `/${org}/learn/courses/${course.id}`;
   const locked = course.locked;
 
   // Locked is visible but inert — same philosophy as a locked module: the

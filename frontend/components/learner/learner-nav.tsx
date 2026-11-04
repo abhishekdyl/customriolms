@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 
 // Same destinations as navByRole.learner in the prototype, plus Calendar
 // (Phase 2 roadmap: "what's due this week" across every assigned course).
-const NAV = [
+// Every learner route lives under their own org slug — see navFor below.
+const NAV_ITEMS = [
   { href: "/learn", label: "Home", icon: Home },
   { href: "/learn/courses", label: "My Courses", icon: BookOpen },
   { href: "/learn/calendar", label: "Calendar", icon: CalendarDays },
@@ -16,9 +17,14 @@ const NAV = [
   { href: "/learn/profile", label: "Profile", icon: UserIcon },
 ];
 
-// "/learn" is a prefix of every other learner route, so Home must match exactly.
-function isActive(pathname: string, href: string) {
-  return href === "/learn" ? pathname === "/learn" : pathname.startsWith(href);
+function navFor(orgSlug?: string | null) {
+  const prefix = orgSlug ? `/${orgSlug}` : "";
+  return NAV_ITEMS.map((item) => ({ ...item, href: `${prefix}${item.href}` }));
+}
+
+// The Home item is a prefix of every other learner route, so it must match exactly.
+function isActive(pathname: string, href: string, homeHref: string) {
+  return href === homeHref ? pathname === homeHref : pathname.startsWith(href);
 }
 
 /** Desktop / tablet: dark left rail, collapses to icons below `lg`. */
@@ -29,6 +35,7 @@ export function LearnerSidebar() {
   const logout = useLogout();
   const brandName = myOrg?.name || "Riosmart LMS";
   const initials = user?.full_name?.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "…";
+  const NAV = navFor(user?.org_slug);
 
   return (
     <aside className="hidden h-full w-[72px] shrink-0 flex-col bg-rail md:flex lg:w-[232px]">
@@ -43,7 +50,7 @@ export function LearnerSidebar() {
 
       <nav className="flex-1 px-2 py-4 lg:px-3">
         {NAV.map((item) => {
-          const active = isActive(pathname, item.href);
+          const active = isActive(pathname, item.href, NAV[0].href);
           return (
             <Link
               key={item.href}
@@ -90,10 +97,12 @@ export function LearnerSidebar() {
 /** Phones: bottom tab bar instead of the rail. */
 export function LearnerTabBar() {
   const pathname = usePathname();
+  const { data: user } = useCurrentUser();
+  const NAV = navFor(user?.org_slug);
   return (
     <nav className="flex shrink-0 border-t border-line bg-surface md:hidden">
       {NAV.map((item) => {
-        const active = isActive(pathname, item.href);
+        const active = isActive(pathname, item.href, NAV[0].href);
         return (
           <Link key={item.href} href={item.href} className="flex flex-1 flex-col items-center gap-1 py-2.5">
             <item.icon

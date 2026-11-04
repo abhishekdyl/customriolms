@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Plus, Trash2, Tag, X, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ import type { CourseExportFile } from "@/lib/types";
 
 function ImportCourseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const router = useRouter();
+  const { org } = useParams<{ org: string }>();
   const importCourse = useImportCourse();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -70,7 +71,7 @@ function ImportCourseDialog({ open, onOpenChange }: { open: boolean; onOpenChang
                 </div>
               )}
               <div className="flex gap-2">
-                <Button onClick={() => router.push(`/courses/${importCourse.data.course.id}`)}>Open course</Button>
+                <Button onClick={() => router.push(`/${org}/courses/${importCourse.data.course.id}`)}>Open course</Button>
                 <Button variant="secondary" onClick={() => { reset(); onOpenChange(false); }}>Close</Button>
               </div>
             </>

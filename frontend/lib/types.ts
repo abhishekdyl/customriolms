@@ -55,6 +55,10 @@ export interface User {
   // AppUser.capabilities's docstring, same field.
   capabilities?: string[] | null;
   org_id: string;
+  // The URL prefix every org-scoped page lives under (e.g. "tech-learning"
+  // for /tech-learning/users) — see the [org] route segment. Null for
+  // Super Admin, who isn't a member of any customer org.
+  org_slug?: string | null;
   must_change_password?: boolean;
   team_name?: string | null;
   profile_image_url?: string | null;
@@ -86,6 +90,7 @@ export interface TokenResponse {
   token_type: string;
   must_change_password: boolean;
   role?: RoleName;
+  org_slug?: string | null;
 }
 
 export interface Team {

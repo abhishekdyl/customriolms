@@ -41,11 +41,11 @@ const navByRole: Record<RoleName, NavItem[]> = {
     { href: "/reports", label: "Reports", icon: BarChart3 },
   ],
   // Dead weight, kept only so the Record<RoleName, ...> type stays
-  // total: a learner never reaches this (dashboard) layout at all — its
-  // own AuthGuard only allows super_admin/org_admin/team_lead, and
-  // bounces a learner to ROLE_HOME ("/learn") before this nav ever
-  // renders. The learner's REAL nav (Home/My Courses/Calendar/Progress/
-  // Profile) lives in components/learner/learner-nav.tsx.
+  // total: a learner never reaches this [org]/(dashboard) layout at all —
+  // its own AuthGuard only allows org_admin/team_lead/custom, and
+  // bounces a learner to roleHome() ("/{org}/learn") before this nav
+  // ever renders. The learner's REAL nav (Home/My Courses/Calendar/
+  // Progress/Profile) lives in components/learner/learner-nav.tsx.
   learner: [],
   // A custom role's nav is org_admin's list filtered down to whatever
   // its capabilities actually unlock — see navItemsFor. This array is
@@ -83,7 +83,12 @@ export function Sidebar() {
   const { data: myOrg } = useMyOrg(user?.role !== "super_admin");
   const brandName = user?.role === "super_admin" ? "Riosmart LMS" : myOrg?.name || "Riosmart LMS";
 
-  const items = user?.role ? navItemsFor(user.role, user.capabilities) : [];
+  // Every org-scoped role's nav lives under its own org slug (/tech-learning/users,
+  // ...) — Super Admin's two items (Organizations, Platform Settings) stay
+  // unprefixed, since they aren't a member of any customer org.
+  const prefix = user && user.role !== "super_admin" && user.org_slug ? `/${user.org_slug}` : "";
+  const items = user?.role ? navItemsFor(user.role, user.capabilities).map((item) => ({ ...item, href: `${prefix}${item.href}` })) : [];
+  const profileHref = `${prefix}/profile`;
 
   return (
     <motion.div
@@ -124,7 +129,7 @@ export function Sidebar() {
         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-amber font-head text-[11px] font-bold text-white">
           {user?.full_name?.split(" ").map((n) => n[0]).join("") || "…"}
         </div>
-        <Link href="/profile" className="min-w-0 flex-1" title="Your profile">
+        <Link href={profileHref} className="min-w-0 flex-1" title="Your profile">
           <div className="truncate text-xs text-white">{user?.full_name || "Loading…"}</div>
           <div className="text-[11px] text-white/50">{user?.role?.replace("_", " ") || ""}</div>
         </Link>

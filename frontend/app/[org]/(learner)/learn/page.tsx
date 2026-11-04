@@ -105,6 +105,7 @@ function StatCard({ assigned, inProgress }: { assigned: number; inProgress: numb
 export default function LearnerHomePage() {
   const { data: user } = useCurrentUser();
   const { data: courses, isLoading, isError } = useMyCourses();
+  const prefix = user?.org_slug ? `/${user.org_slug}` : "";
 
   const assigned = courses ?? [];
   const inProgress = assigned.filter((c) => c.progress_pct < 100);
@@ -120,7 +121,7 @@ export default function LearnerHomePage() {
           <div className="text-[12.5px] text-ink-faint">{greeting()}</div>
           <div className="font-head text-[20px] text-ink md:text-[24px]">{user?.full_name ?? "\u00A0"}</div>
         </div>
-        <Link href="/learn/notifications" className="relative active:opacity-60" aria-label="Notifications">
+        <Link href={`${prefix}/learn/notifications`} className="relative active:opacity-60" aria-label="Notifications">
           <Bell size={20} color="var(--color-ink)" />
           <div className="absolute -right-px -top-px h-[7px] w-[7px] rounded-full border-[1.5px] border-paper bg-danger" />
         </Link>
@@ -173,7 +174,7 @@ export default function LearnerHomePage() {
 
       {/* floating "Ask AI" — page for it comes with the AI tutor backend */}
       <Link
-        href="/learn/chat"
+        href={`${prefix}/learn/chat`}
         className="fixed bottom-[84px] right-6 z-10 flex items-center gap-2 rounded-3xl bg-ink px-4 py-3 shadow-[0_8px_20px_rgba(20,20,43,0.3)] transition-transform active:scale-95 md:bottom-6"
       >
         <MessageCircleQuestion size={16} color="#fff" />
