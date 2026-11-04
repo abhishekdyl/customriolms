@@ -15,14 +15,19 @@ function slugFilename(title: string): string {
 export function CourseCard({
   course: c,
   categories,
-  canAuthor,
+  canManage,
+  canAssign,
   selected,
   onToggleSelect,
   onAssign,
 }: {
   course: CourseListItem;
   categories: Category[];
-  canAuthor: boolean;
+  // courses.manage (duplicate/export/edit/delete) and courses.assign
+  // (the Assign action) are separate server-side capabilities, so a
+  // custom role can be granted either one independently.
+  canManage: boolean;
+  canAssign: boolean;
   selected: boolean;
   onToggleSelect: ((id: string) => void) | null;
   onAssign: (id: string) => void;
@@ -172,7 +177,7 @@ export function CourseCard({
             <button onClick={(e) => { stop(e); copyShareLink(); }} title="Copy shareable course link" className="rounded p-1 hover:bg-paper">
               {linkCopied ? <Check className="h-3.5 w-3.5 text-success" /> : <Link2 className="h-3.5 w-3.5 text-ink-faint" />}
             </button>
-            {canAuthor && (
+            {canManage && (
               <>
                 <button
                   onClick={(e) => { stop(e); duplicate(); }} disabled={duplicateCourse.isPending}
@@ -205,7 +210,7 @@ export function CourseCard({
         {exportError && <p onClick={stop} className="mb-2 text-[10.5px] text-danger">{exportError}</p>}
         <div className="flex items-center gap-3">
           <span className="text-[12.5px] font-medium text-ink-soft">Manage</span>
-          {canAuthor && (
+          {canAssign && (
             <button onClick={(e) => { stop(e); onAssign(c.id); }} className="text-[12.5px] font-medium text-ink-soft">Assign</button>
           )}
         </div>

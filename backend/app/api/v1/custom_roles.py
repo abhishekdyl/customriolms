@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, require_capability, require_role
 from app.core.database import get_db
 from app.models.user import RoleName, User
 from app.schemas.custom_role import (
@@ -20,13 +20,18 @@ from app.models.custom_role import RoleScope
 # built-in roles (including who can define new ones) fixed. Same
 # reasoning as Moodle restricting "Define roles" to a site-level
 # capability rather than letting it be delegated arbitrarily.
-router = APIRouter(
-    prefix="/api/v1/custom-roles", tags=["custom-roles"],
+#
+# No router-level dependency here (unlike the first cut of this file):
+# list_roles below deliberately needs a looser gate than the rest, so
+# each route now states its own requirement instead of inheriting one
+# blanket ORG_ADMIN-only check that would also lock out list_roles.
+router = APIRouter(prefix="/api/v1/custom-roles", tags=["custom-roles"])
+
+
+@router.get(
+    "/capabilities", response_model=list[CapabilityGroupOut],
     dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
 )
-
-
-@router.get("/capabilities", response_model=list[CapabilityGroupOut])
 async def get_capability_catalog():
     """The full, fixed catalog a custom role's capabilities are picked
     from — backs the "Define role" checkbox list. Doesn't change per org."""
@@ -36,7 +41,10 @@ async def get_capability_catalog():
     ]
 
 
-@router.get("/archetypes", response_model=list[RoleArchetypeOut])
+@router.get(
+    "/archetypes", response_model=list[RoleArchetypeOut],
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
 async def get_archetypes():
     """Starting points for the "New role" form — pick one and its
     capabilities + scope pre-fill the form, then customize freely from
@@ -63,12 +71,23 @@ async def get_archetypes():
     ]
 
 
-@router.get("", response_model=list[CustomRoleOut])
+@router.get("", response_model=list[CustomRoleOut], dependencies=[Depends(require_capability("users.view"))])
 async def list_roles(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Deliberately looser than the rest of this router: this just reads
+    the org's custom role names/capabilities (to label people's roles and
+    populate role pickers), not define them, so anyone who can see the
+    Users page — Team Lead, or a custom role with users.view — needs this
+    to not 403, or every "Role" column/dropdown involving a custom role
+    breaks for them even though they're only viewing, never managing
+    roles. Org Admin/Super Admin still always pass (has_capability's
+    built-in bypass)."""
     return await custom_role_service.list_custom_roles(db, current_user.org_id)
 
 
-@router.post("", response_model=CustomRoleOut, status_code=201)
+@router.post(
+    "", response_model=CustomRoleOut, status_code=201,
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
 async def create_role(body: CustomRoleIn, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     role = await custom_role_service.create_custom_role(db, current_user.org_id, body)
     await audit_log_service.record(
@@ -79,7 +98,10 @@ async def create_role(body: CustomRoleIn, db: AsyncSession = Depends(get_db), cu
     return role
 
 
-@router.patch("/{role_id}", response_model=CustomRoleOut)
+@router.patch(
+    "/{role_id}", response_model=CustomRoleOut,
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
 async def update_role(
     role_id: uuid.UUID, body: CustomRoleUpdate,
     db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
@@ -95,7 +117,10 @@ async def update_role(
     return updated
 
 
-@router.delete("/{role_id}", status_code=204)
+@router.delete(
+    "/{role_id}", status_code=204,
+    dependencies=[Depends(require_role(RoleName.ORG_ADMIN))],
+)
 async def delete_role(role_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     role = await custom_role_service.get_custom_role_or_404(db, role_id, current_user.org_id)
     name = role.name

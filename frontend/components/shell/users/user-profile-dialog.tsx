@@ -31,15 +31,18 @@ function decodeRoleValue(value: string): { role: RoleName; custom_role_id: strin
 // the real rule regardless of what this button shows.
 const IMPERSONATABLE_ROLES: RoleName[] = ["team_lead", "learner", "custom"];
 
-/** The Org Admin's "view / edit profile" panel for one user, plus the
- * "Login as" switch. Team Leads can open it too (read-only — the save
- * and login-as actions aren't offered to them since the backend
- * endpoints are Org-Admin-only). */
+/** The "view / edit profile" panel for one user, plus the "Login as"
+ * switch. `canEdit` gates the form fields + Save (backed by the
+ * users.manage_profile capability) and `canLoginAs` gates the "Login as"
+ * button (users.login_as) — separately, since a role can be granted one
+ * without the other. Whoever opens this without either capability (e.g.
+ * a Team Lead) gets a read-only view. */
 export function UserProfileDialog({
-  userId, canEdit, onClose,
+  userId, canEdit, canLoginAs, onClose,
 }: {
   userId: string | null;
   canEdit: boolean;
+  canLoginAs: boolean;
   onClose: () => void;
 }) {
   const { data: user, isLoading } = useUser(userId);
@@ -201,7 +204,7 @@ export function UserProfileDialog({
               {saved && !error && <p className="text-[11.5px] text-success">Saved.</p>}
 
               <div className="flex items-center justify-between gap-3 border-t border-line-soft pt-4">
-                {canEdit && IMPERSONATABLE_ROLES.includes(user.role) && user.status === "active" ? (
+                {canLoginAs && IMPERSONATABLE_ROLES.includes(user.role) && user.status === "active" ? (
                   <Button
                     type="button" variant="secondary"
                     onClick={() => loginAs.mutate(user.id)}

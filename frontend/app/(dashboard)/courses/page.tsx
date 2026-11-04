@@ -11,6 +11,7 @@ import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { CategoryManager } from "@/components/shell/courses/category-manager";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
 import { CourseCard } from "@/components/shell/courses/course-card";
+import { hasCapability } from "@/lib/capabilities";
 import { ApiError } from "@/lib/api-client";
 import { localToIso, nowLocal } from "@/lib/utils";
 import type { CourseExportFile } from "@/lib/types";
@@ -205,7 +206,13 @@ export default function CoursesPage() {
   const { data: currentUser } = useCurrentUser();
   const del = useDeleteCourse();
 
-  const canAuthor = currentUser?.role === "org_admin" || currentUser?.role === "super_admin";
+  // Each backed by its own require_capability gate on the server
+  // (courses.manage / categories.manage / courses.assign) — a custom role
+  // granted one of these should see exactly that control, not all-or-
+  // nothing based on being Org Admin/Super Admin.
+  const canManageCourses = hasCapability(currentUser, "courses.manage");
+  const canManageCategories = hasCapability(currentUser, "categories.manage");
+  const canAssignCourses = hasCapability(currentUser, "courses.assign");
 
   const [filter, setFilter] = useState("All");
   const [managingCats, setManagingCats] = useState(false);
@@ -252,17 +259,17 @@ export default function CoursesPage() {
           >
             {selectMode ? "Cancel" : "Select"}
           </Button>
-          {canAuthor && (
+          {canManageCategories && (
             <Button variant="secondary" size="sm" onClick={() => setManagingCats(!managingCats)}>
               <Tag className="h-3.5 w-3.5" /> {managingCats ? "Done" : "Categories"}
             </Button>
           )}
-          {canAuthor && (
+          {canManageCourses && (
             <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
               <Upload className="h-3.5 w-3.5" /> Import
             </Button>
           )}
-          {canAuthor && (
+          {canManageCourses && (
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <Plus className="h-3.5 w-3.5" /> New course
             </Button>
@@ -273,12 +280,16 @@ export default function CoursesPage() {
       {selectMode && selected.length > 0 && (
         <div className="mb-4 flex items-center gap-3 rounded-lg bg-ink px-4 py-2.5">
           <span className="text-xs text-white">{selected.length} selected</span>
-          <button onClick={() => setBulkAssignIds(selected)} className="rounded-md bg-white/15 px-2.5 py-1 text-xs text-white">
-            Assign to team(s)
-          </button>
-          <button onClick={bulkDelete} className="flex items-center gap-1 rounded-md px-2.5 py-1 text-xs text-danger-soft">
-            <Trash2 className="h-3 w-3" /> Delete selected
-          </button>
+          {canAssignCourses && (
+            <button onClick={() => setBulkAssignIds(selected)} className="rounded-md bg-white/15 px-2.5 py-1 text-xs text-white">
+              Assign to team(s)
+            </button>
+          )}
+          {canManageCourses && (
+            <button onClick={bulkDelete} className="flex items-center gap-1 rounded-md px-2.5 py-1 text-xs text-danger-soft">
+              <Trash2 className="h-3 w-3" /> Delete selected
+            </button>
+          )}
           <button onClick={clearSelection} className="ml-auto">
             <X className="h-3.5 w-3.5 text-white/60" />
           </button>
@@ -296,7 +307,8 @@ export default function CoursesPage() {
             key={c.id}
             course={c}
             categories={categories ?? []}
-            canAuthor={canAuthor}
+            canManage={canManageCourses}
+            canAssign={canAssignCourses}
             selected={selected.includes(c.id)}
             onToggleSelect={selectMode ? toggleSelect : null}
             onAssign={setAssigningCourseId}

@@ -15,6 +15,7 @@ import {
   useUsers, useInviteUser, useBulkInvite, useChangeRole, useChangeTeam, useUpdateUserStatus, useRemoveUser,
 } from "@/lib/hooks/use-users";
 import { useCustomRoles } from "@/lib/hooks/use-custom-roles";
+import { hasCapability } from "@/lib/capabilities";
 import { ApiError } from "@/lib/api-client";
 import type { AppUser, BulkInviteResult, CustomRole, ProfileField, RoleName } from "@/lib/types";
 
@@ -102,9 +103,14 @@ export default function UsersPage() {
   const { data: profileFields, isLoading: fieldsLoading, refetch: refetchProfileFields } = useProfileFields();
   const requiredFields = profileFields?.filter((f) => f.required) ?? [];
   const { data: me } = useCurrentUser();
-  // Edit + "Login as" are Org-Admin-only on the backend; Team Leads who
-  // can also open this page get a read-only view of the same dialog.
-  const canEditProfiles = me?.role === "org_admin" || me?.role === "super_admin";
+  // Each backed by its own require_capability gate on the server
+  // (users.manage_profile / users.login_as) — anyone with that capability,
+  // not just Org Admin/Super Admin, should see the matching control. A
+  // custom role that was granted one but not the other (or neither) only
+  // gets exactly what it was granted; a Team Lead who can open this page
+  // but lacks both still gets a read-only view of the same dialog.
+  const canEditProfile = hasCapability(me, "users.manage_profile");
+  const canLoginAs = hasCapability(me, "users.login_as");
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
 
   const invite = useInviteUser();
@@ -487,7 +493,7 @@ export default function UsersPage() {
                         <button
                           onClick={() => setProfileUserId(u.id)}
                           className="font-medium text-ink underline-offset-2 hover:text-primary hover:underline"
-                          title={canEditProfiles ? "View / edit profile" : "View profile"}
+                          title={canEditProfile ? "View / edit profile" : "View profile"}
                         >
                           {u.full_name}
                         </button>
@@ -580,7 +586,7 @@ export default function UsersPage() {
         )}
       </div>
 
-      <UserProfileDialog userId={profileUserId} canEdit={canEditProfiles} onClose={() => setProfileUserId(null)} />
+      <UserProfileDialog userId={profileUserId} canEdit={canEditProfile} canLoginAs={canLoginAs} onClose={() => setProfileUserId(null)} />
     </div>
   );
 }
