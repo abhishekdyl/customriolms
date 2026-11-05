@@ -16,14 +16,20 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <link
           href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body>
+      {/* suppressHydrationWarning here too — some browser extensions
+         (antivirus web-protection add-ons, password managers) inject a
+         marker attribute straight onto <body> before React hydrates.
+         This only silences an *attribute* mismatch on this one element;
+         it does NOT hide a real mismatch in anything rendered below it,
+         so an actual bug in our own components still surfaces normally. */}
+      <body suppressHydrationWarning>
         <Providers>
           <DebugBar />
           <ImpersonationBanner />
