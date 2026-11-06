@@ -90,6 +90,13 @@ class UserOut(BaseModel):
     country: str | None = None
     timezone: str | None = None
     companyname: str | None = None
+    # Filled in by _user_out via a lookup, not columns on User — lets
+    # AuthGuard tell "trial ended, show the upgrade screen" (org_status
+    # SUSPENDED + org_suspension_reason "trial_expired") apart from a
+    # manual suspension, same spirit as org_slug above. Both None for
+    # Super Admin (no org) and for a normal ACTIVE org.
+    org_status: str | None = None
+    org_suspension_reason: str | None = None
 
     class Config:
         from_attributes = True

@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3, KeyRound } from "lucide-react";
+import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3, KeyRound, Rocket } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,7 @@ type NavItem = { href: string; label: string; icon: typeof Users; capability?: s
 const navByRole: Record<RoleName, NavItem[]> = {
   super_admin: [
     { href: "/organizations", label: "Organizations", icon: Building2 },
+    { href: "/pilots", label: "Pilots", icon: Rocket },
     { href: "/platform-settings", label: "Platform Settings", icon: Server },
   ],
   org_admin: [
@@ -84,8 +85,8 @@ export function Sidebar() {
   const brandName = user?.role === "super_admin" ? "Riosmart LMS" : myOrg?.name || "Riosmart LMS";
 
   // Every org-scoped role's nav lives under its own org slug (/tech-learning/users,
-  // ...) — Super Admin's two items (Organizations, Platform Settings) stay
-  // unprefixed, since they aren't a member of any customer org.
+  // ...) — Super Admin's items (Organizations, Pilots, Platform Settings)
+  // stay unprefixed, since they aren't a member of any customer org.
   const prefix = user && user.role !== "super_admin" && user.org_slug ? `/${user.org_slug}` : "";
   const items = user?.role ? navItemsFor(user.role, user.capabilities).map((item) => ({ ...item, href: `${prefix}${item.href}` })) : [];
   const profileHref = `${prefix}/profile`;

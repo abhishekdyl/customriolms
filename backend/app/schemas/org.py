@@ -27,6 +27,13 @@ class OrgOut(BaseModel):
     admin_id: uuid.UUID | None = None
     admin_name: str | None = None
     admin_email: str | None = None
+    # Licensing (see models/org.py) — null for an org Super Admin created
+    # directly (no trial at all). The Pilots page and the trial-ended
+    # upgrade screen both derive their "N days left" / "expired" display
+    # from trial_ends_at client-side, rather than this schema precomputing
+    # it, so it stays accurate to the second without another round trip.
+    trial_ends_at: datetime | None = None
+    suspension_reason: str | None = None
 
     class Config:
         from_attributes = True
@@ -93,6 +100,17 @@ class PlatformSettingsOut(BaseModel):
     allow_self_serve_signup: bool
     maintenance_mode: bool
     debug_mode: bool
+    trial_days: int
+    price_starter_monthly: int
+    price_growth_monthly: int
+    price_enterprise_monthly: int
+    razorpay_key_id: str | None = None
+    # Secrets themselves never round-trip back to the browser — only
+    # whether one is currently set, same spirit as an SMTP password field
+    # that shows a filled/empty dot rather than the value. Computed by the
+    # endpoint from the row, not stored as its own column.
+    razorpay_key_secret_set: bool = False
+    razorpay_webhook_secret_set: bool = False
 
     class Config:
         from_attributes = True
@@ -100,12 +118,18 @@ class PlatformSettingsOut(BaseModel):
 
 class PlatformSettingsUpdateRequest(BaseModel):
     # All optional and merged server-side (only a field that's actually
-    # present gets written) — the Registration tab's save and the
-    # System tab's save each touch only their own field(s), so one
-    # doesn't clobber whatever the other last set.
+    # present gets written) — each tab's save only touches its own
+    # field(s), so one doesn't clobber whatever another tab last set.
     allow_self_serve_signup: bool | None = None
     maintenance_mode: bool | None = None
     debug_mode: bool | None = None
+    trial_days: int | None = Field(default=None, ge=1)
+    price_starter_monthly: int | None = Field(default=None, ge=0)
+    price_growth_monthly: int | None = Field(default=None, ge=0)
+    price_enterprise_monthly: int | None = Field(default=None, ge=0)
+    razorpay_key_id: str | None = None
+    razorpay_key_secret: str | None = None
+    razorpay_webhook_secret: str | None = None
 
 
 class PlatformStatusOut(BaseModel):
@@ -117,6 +141,16 @@ class PlatformStatusOut(BaseModel):
     (allow_self_serve_signup, say) belongs in it."""
     maintenance_mode: bool
     debug_mode: bool
+
+
+class ActivateLicenseRequest(BaseModel):
+    """Super Admin's manual override on the Pilots tab — activates a
+    trial/expired org without a Razorpay payment. See orgs.py's
+    activate_license; deliberately writes no OrgPayment row, which is how
+    the Pilots tab tells "Super Admin activated this" apart from "this org
+    paid via Razorpay"."""
+    plan: OrgPlan = OrgPlan.STARTER
+    user_limit: int | None = Field(default=None, ge=1)
 
 
 class SuperAdminOut(BaseModel):

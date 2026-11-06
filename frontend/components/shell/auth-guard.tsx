@@ -5,6 +5,7 @@ import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { useMyCustomFields } from "@/lib/hooks/use-profile-fields";
 import { usePlatformStatus } from "@/lib/hooks/use-orgs";
 import { MaintenancePage } from "@/components/shell/maintenance-page";
+import { TrialEndedPage } from "@/components/shell/trial-ended-page";
 import { profilePath, roleHome } from "@/lib/role-home";
 import type { RoleName } from "@/lib/types";
 
@@ -44,6 +45,12 @@ export function AuthGuard({
   // now" (show the maintenance page instead).
   const { data: platformStatus } = usePlatformStatus();
   const inMaintenance = !!platformStatus?.maintenance_mode && user?.role !== "super_admin";
+  // /auth/me uses the trial-suspension-lenient dependency (unlike
+  // maintenance, which 503s it outright) specifically so this can read
+  // the org's own status — see deps.get_current_user_allow_trial_suspended.
+  // A manually-suspended org still 403s /auth/me (isError below), same as
+  // always; only trial_expired reaches this far.
+  const trialEnded = user?.org_status === "suspended" && user?.org_suspension_reason === "trial_expired";
   // Only actually needed once a password-change isn't already pending —
   // see the enabled flag below — so this never fires an extra request
   // for someone who's about to be bounced to /change-password anyway.
@@ -105,6 +112,7 @@ export function AuthGuard({
 
   if (!hasToken) return null;
   if (inMaintenance) return <MaintenancePage />;
+  if (trialEnded) return <TrialEndedPage />;
   if (isError) return null;
   if (user?.must_change_password) return null;
   // When roles are restricted, wait until we actually know the role

@@ -10,6 +10,7 @@ from app.models.org import PLAN_USER_LIMITS, Org, OrgStatus
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.user import RoleName, User, split_full_name
 from app.schemas.org import (
+    ActivateLicenseRequest,
     OrgAdminUpdateRequest,
     OrgCreateRequest,
     OrgOut,
@@ -90,6 +91,7 @@ async def deactivate_my_org(db: AsyncSession = Depends(get_db), current_user: Us
     there's deliberately no self-service undo button for this."""
     org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
     org.status = OrgStatus.SUSPENDED
+    org.suspension_reason = "manual"
     await db.commit()
 
     member_ids = await db.execute(select(User.id).where(User.org_id == org.id))
@@ -145,7 +147,11 @@ async def create_org(body: OrgCreateRequest, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=400, detail="Email already registered")
 
     slug = body.org_name.lower().replace(" ", "-")
-    org = Org(name=body.org_name, slug=slug, plan=body.plan, user_limit=PLAN_USER_LIMITS[body.plan])
+    # ACTIVE, not the model's TRIAL default, and no trial_ends_at — a
+    # real customer onboarded by hand here never starts a trial clock
+    # (that's list_pilots above's whole basis for telling these apart
+    # from self-serve signups: trial_ends_at IS NULL).
+    org = Org(name=body.org_name, slug=slug, plan=body.plan, status=OrgStatus.ACTIVE, user_limit=PLAN_USER_LIMITS[body.plan])
     db.add(org)
     await db.flush()
 
@@ -173,6 +179,24 @@ async def create_org(body: OrgCreateRequest, db: AsyncSession = Depends(get_db))
 # this file's own platform-settings handler ever saw it. (This is exactly
 # what happened before this comment existed — PATCH /platform-settings
 # silently 500'd trying to parse "platform-settings" as a UUID.)
+def _settings_out(row: PlatformSettings) -> PlatformSettingsOut:
+    """Builds the response explicitly rather than letting from_attributes
+    read the row directly — razorpay_key_secret_set/razorpay_webhook_secret_set
+    are computed (is it non-empty?), never the secret values themselves."""
+    return PlatformSettingsOut(
+        allow_self_serve_signup=row.allow_self_serve_signup,
+        maintenance_mode=row.maintenance_mode,
+        debug_mode=row.debug_mode,
+        trial_days=row.trial_days,
+        price_starter_monthly=row.price_starter_monthly,
+        price_growth_monthly=row.price_growth_monthly,
+        price_enterprise_monthly=row.price_enterprise_monthly,
+        razorpay_key_id=row.razorpay_key_id,
+        razorpay_key_secret_set=bool(row.razorpay_key_secret),
+        razorpay_webhook_secret_set=bool(row.razorpay_webhook_secret),
+    )
+
+
 @router.get("/platform-settings", response_model=PlatformSettingsOut, dependencies=super_admin_only)
 async def get_platform_settings(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(PlatformSettings).where(PlatformSettings.id == SINGLETON_ID))
@@ -183,7 +207,7 @@ async def get_platform_settings(db: AsyncSession = Depends(get_db)):
         db.add(settings_row)
         await db.commit()
         await db.refresh(settings_row)
-    return settings_row
+    return _settings_out(settings_row)
 
 
 @router.patch("/platform-settings", response_model=PlatformSettingsOut, dependencies=super_admin_only)
@@ -200,9 +224,23 @@ async def update_platform_settings(body: PlatformSettingsUpdateRequest, db: Asyn
         settings_row.maintenance_mode = body.maintenance_mode
     if body.debug_mode is not None:
         settings_row.debug_mode = body.debug_mode
+    if body.trial_days is not None:
+        settings_row.trial_days = body.trial_days
+    if body.price_starter_monthly is not None:
+        settings_row.price_starter_monthly = body.price_starter_monthly
+    if body.price_growth_monthly is not None:
+        settings_row.price_growth_monthly = body.price_growth_monthly
+    if body.price_enterprise_monthly is not None:
+        settings_row.price_enterprise_monthly = body.price_enterprise_monthly
+    if body.razorpay_key_id is not None:
+        settings_row.razorpay_key_id = body.razorpay_key_id
+    if body.razorpay_key_secret is not None:
+        settings_row.razorpay_key_secret = body.razorpay_key_secret
+    if body.razorpay_webhook_secret is not None:
+        settings_row.razorpay_webhook_secret = body.razorpay_webhook_secret
     await db.commit()
     await db.refresh(settings_row)
-    return settings_row
+    return _settings_out(settings_row)
 
 
 @router.get("/platform-status", response_model=PlatformStatusOut)
@@ -220,6 +258,79 @@ async def get_platform_status(db: AsyncSession = Depends(get_db)):
     return PlatformStatusOut(maintenance_mode=settings_row.maintenance_mode, debug_mode=settings_row.debug_mode)
 
 
+# Also kept above the /{org_id}... routes for the same route-ordering
+# reason as platform-settings/platform-status above — "/pilots" would
+# otherwise be swallowed by /{org_id} as org_id="pilots".
+@router.get("/pilots", response_model=list[OrgOut], dependencies=super_admin_only)
+async def list_pilots(db: AsyncSession = Depends(get_db)):
+    """Every org that ever started on the 15-day free trial (trial_ends_at
+    IS NOT NULL) — i.e. every org born through self-serve /auth/register,
+    whatever its status now (still trialing, auto-suspended once the
+    trial ran out, or since licensed). An org Super Admin created directly
+    from the Organizations page (create_org above) never gets a
+    trial_ends_at and so never shows up here — that's deliberate, those
+    are real customers onboarded by hand, not self-serve pilots. The
+    Pilots tab derives each row's "N days left" / "Expired" badge from
+    trial_ends_at + status client-side; see OrgOut's docstring."""
+    result = await db.execute(
+        select(Org).where(Org.trial_ends_at.is_not(None)).order_by(Org.created_at.desc())
+    )
+    orgs = result.scalars().all()
+
+    counts_result = await db.execute(select(User.org_id, func.count(User.id)).group_by(User.org_id))
+    counts = dict(counts_result.all())
+
+    admins_result = await db.execute(select(User).where(User.role == RoleName.ORG_ADMIN).order_by(User.id))
+    admins_by_org: dict = {}
+    for admin in admins_result.scalars().all():
+        admins_by_org.setdefault(admin.org_id, admin)
+
+    return [
+        OrgOut.model_validate({
+            **org.__dict__, "user_count": counts.get(org.id, 0),
+            "admin_id": (a := admins_by_org.get(org.id)) and a.id,
+            "admin_name": a and a.full_name,
+            "admin_email": a and a.email,
+        })
+        for org in orgs
+    ]
+
+
+@router.post("/{org_id}/activate-license", response_model=OrgOut, dependencies=super_admin_only)
+async def activate_license(org_id: str, body: ActivateLicenseRequest, db: AsyncSession = Depends(get_db)):
+    """The Pilots tab's manual override — activates a trial/expired org
+    without a Razorpay payment (e.g. an offline/negotiated deal). Writes
+    no OrgPayment row on purpose: billing.py's verify_payment and this are
+    the only two ways an org ever leaves TRIAL/SUSPENDED for ACTIVE, and
+    "is there a payment row for this org" is how the Pilots tab tells them
+    apart afterward.
+
+    Deliberately does NOT null out trial_ends_at: list_pilots keys off
+    "trial_ends_at IS NOT NULL" to find every org that ever came through
+    self-serve registration, whatever its status now — clearing it here
+    would make a licensed pilot vanish from its own Pilots tab instead of
+    showing up as "Licensed". This is safe because deps.py's lazy
+    expiry-check only ever acts on an org whose status is still TRIAL; a
+    stale, past trial_ends_at on an ACTIVE org is simply inert history."""
+    result = await db.execute(select(Org).where(Org.id == org_id))
+    org = result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Org not found")
+
+    org.status = OrgStatus.ACTIVE
+    org.plan = body.plan
+    org.user_limit = body.user_limit if body.user_limit is not None else PLAN_USER_LIMITS[body.plan]
+    org.suspension_reason = None
+    await db.commit()
+    await db.refresh(org)
+
+    # No session-revoke needed here (unlike update_org_status's suspend
+    # path) — a formerly-suspended org's members hold no live session to
+    # kick; the next login just succeeds now that status isn't SUSPENDED.
+    count_result = await db.execute(select(func.count(User.id)).where(User.org_id == org.id))
+    return OrgOut.model_validate({**org.__dict__, "user_count": count_result.scalar_one()})
+
+
 @router.patch("/{org_id}/status", response_model=OrgOut, dependencies=super_admin_only)
 async def update_org_status(org_id: str, body: OrgUpdateStatusRequest, db: AsyncSession = Depends(get_db)):
     """Suspend pauses learner access without deleting any data (matches
@@ -232,6 +343,18 @@ async def update_org_status(org_id: str, body: OrgUpdateStatusRequest, db: Async
 
     was_suspended = org.status == OrgStatus.SUSPENDED
     org.status = body.status
+    # A Super Admin choosing to suspend/reactivate here is always a manual
+    # action — distinct from deps.py's lazy trial-expiry auto-suspend,
+    # which stamps "trial_expired" instead so the frontend shows the
+    # upgrade screen rather than a generic "contact your admin" block (see
+    # Org.suspension_reason's docstring). Reactivating through here leaves
+    # trial_ends_at exactly as it was (same reasoning as activate_license's
+    # docstring above) — a once-trial org that gets reactivated by hand
+    # still shows up as "Licensed" on the Pilots tab instead of vanishing.
+    if body.status == OrgStatus.SUSPENDED:
+        org.suspension_reason = "manual"
+    elif body.status == OrgStatus.ACTIVE:
+        org.suspension_reason = None
     await db.commit()
     await db.refresh(org)
 

@@ -33,6 +33,22 @@ class Org(Base):
     plan: Mapped[OrgPlan] = mapped_column(Enum(OrgPlan, name="orgplan"), default=OrgPlan.STARTER, nullable=False)
     status: Mapped[OrgStatus] = mapped_column(Enum(OrgStatus, name="orgstatus"), default=OrgStatus.TRIAL, nullable=False)
     user_limit: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    # Self-serve signup starts every org on a clock: trial_ends_at is set
+    # once at creation (now + PlatformSettings.trial_days) and never moved
+    # except by a fresh license (billing.py's verify_payment /
+    # orgs.py's activate_license clear it back to None). A lazy check in
+    # deps.py/auth.py flips status to SUSPENDED the moment anyone touches
+    # an expired trial — no scheduler needed. An org Super Admin created
+    # directly (orgs.py's create_org) has no trial at all: trial_ends_at
+    # stays None and status starts ACTIVE there, not TRIAL.
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set alongside status=SUSPENDED so the frontend can tell "trial ran
+    # out, show the upgrade screen" (login still works, see deps.py) apart
+    # from "Super Admin suspended this org" (login blocked outright,
+    # unchanged). None for an org that was never suspended, or that was
+    # reactivated (cleared on both manual un-suspend and on license
+    # activation).
+    suspension_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # Empty = any email domain can join/be invited. Non-empty = invites,
     # bulk-CSV rows, and the public QR/link join flow all reject any email
     # whose domain isn't in this list. Enforced in invite_service, not here.

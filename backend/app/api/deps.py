@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
@@ -20,6 +22,20 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     return await _validate_token(token, db)
+
+
+async def get_current_user_allow_trial_suspended(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Same as get_current_user, except an org suspended for
+    suspension_reason="trial_expired" is let through instead of 403ing —
+    used only by /auth/me (so the trial-ended upgrade screen can read the
+    org's own status) and billing.py's endpoints (so a suspended org can
+    actually pay its way back to ACTIVE). A MANUALLY suspended org is
+    still blocked here exactly like every other endpoint — this never
+    widens that case, only the trial one."""
+    return await _validate_token(token, db, allow_trial_suspended=True)
 
 
 async def get_current_user_via_header_or_query(
@@ -81,7 +97,7 @@ async def get_optional_user_via_header_or_query(
     return await _validate_token(resolved, db)
 
 
-async def _validate_token(token: str, db: AsyncSession) -> User:
+async def _validate_token(token: str, db: AsyncSession, allow_trial_suspended: bool = False) -> User:
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -130,13 +146,33 @@ async def _validate_token(token: str, db: AsyncSession) -> User:
     # (SUPER_ADMIN) are parked in an internal org that customers never see
     # and is never suspended, but they're excluded here too, defensively.
     if user.role != RoleName.SUPER_ADMIN:
-        org_result = await db.execute(select(Org.status).where(Org.id == user.org_id))
-        org_status = org_result.scalar_one_or_none()
-        if org_status == OrgStatus.SUSPENDED:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your organization has been suspended. Contact your Riosmart representative.",
-            )
+        org_result = await db.execute(
+            select(Org.status, Org.trial_ends_at, Org.suspension_reason).where(Org.id == user.org_id)
+        )
+        org_row = org_result.first()
+        if org_row is not None:
+            org_status, trial_ends_at, suspension_reason = org_row
+
+            # Lazy trial-expiry: no scheduler — the moment anyone touches
+            # an org whose free trial ran out, flip it to SUSPENDED right
+            # here, same spirit as the maintenance-mode check below. See
+            # Org.trial_ends_at / suspension_reason's docstrings.
+            if org_status == OrgStatus.TRIAL and trial_ends_at is not None and trial_ends_at < datetime.now(timezone.utc):
+                org_row_obj = (await db.execute(select(Org).where(Org.id == user.org_id))).scalar_one()
+                org_row_obj.status = OrgStatus.SUSPENDED
+                org_row_obj.suspension_reason = "trial_expired"
+                await db.commit()
+                org_status, suspension_reason = OrgStatus.SUSPENDED, "trial_expired"
+
+            if org_status == OrgStatus.SUSPENDED and not (allow_trial_suspended and suspension_reason == "trial_expired"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "Your 15-day free trial has ended. Upgrade to a paid plan to keep using Riosmart LMS."
+                        if suspension_reason == "trial_expired"
+                        else "Your organization has been suspended. Contact your Riosmart representative."
+                    ),
+                )
 
     # Platform-wide maintenance mode (see PlatformSettings.maintenance_mode)
     # locks everyone except Super Admin out of every authenticated

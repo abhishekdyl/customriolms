@@ -107,6 +107,29 @@ export function useSuperAdmins() {
   return useQuery({ queryKey: ["super-admins"], queryFn: () => api.get<SuperAdmin[]>("/api/v1/orgs/super-admins") });
 }
 
+/** The Pilots tab's listing — every org that ever started the 15-day
+ * free trial (see orgs.py's list_pilots), whatever its status now. An
+ * org Super Admin created directly from Organizations never shows up
+ * here (no trial_ends_at). */
+export function usePilots() {
+  return useQuery({ queryKey: ["pilots"], queryFn: () => api.get<Org[]>("/api/v1/orgs/pilots") });
+}
+
+/** Pilots tab's manual override — activates a trial/expired org without
+ * a Razorpay payment (e.g. an offline deal). Invalidates both lists
+ * since the org also still shows on Organizations once active. */
+export function useActivateLicense() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; plan: OrgPlan; user_limit?: number }) =>
+      api.post<Org>(`/api/v1/orgs/${id}/activate-license`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["pilots"] });
+      qc.invalidateQueries({ queryKey: ["orgs"] });
+    },
+  });
+}
+
 /** Public, unauthenticated — safe to call before login (MaintenanceGate
  * uses it to decide whether to show the maintenance page at all) and on
  * every page while logged in (DebugBar uses it to decide whether to show

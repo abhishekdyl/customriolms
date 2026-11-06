@@ -10,7 +10,7 @@ from google.oauth2 import id_token as google_id_token
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_current_user_and_jti
+from app.api.deps import get_current_user, get_current_user_allow_trial_suspended, get_current_user_and_jti
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
@@ -52,8 +52,14 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    # Self-serve signup starts the free-trial clock right here —
+    # trial_days from Platform Settings (default 15, see that model's
+    # docstring). status stays the model's own TRIAL default. deps.py's
+    # lazy check is what actually suspends it once trial_ends_at passes;
+    # list_pilots (orgs.py) is what the Super Admin's Pilots tab shows.
+    trial_days = settings_row.trial_days if settings_row is not None else 15
     slug = body.org_name.lower().replace(" ", "-")
-    org = Org(name=body.org_name, slug=slug)
+    org = Org(name=body.org_name, slug=slug, trial_ends_at=datetime.now(timezone.utc) + timedelta(days=trial_days))
     db.add(org)
     await db.flush()  # get org.id before creating the user
 
@@ -130,8 +136,9 @@ async def google_register(body: GoogleRegisterRequest, db: AsyncSession = Depend
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered — log in instead.")
 
+    trial_days = settings_row.trial_days if settings_row is not None else 15
     slug = body.org_name.lower().replace(" ", "-")
-    org = Org(name=body.org_name, slug=slug)
+    org = Org(name=body.org_name, slug=slug, trial_ends_at=datetime.now(timezone.utc) + timedelta(days=trial_days))
     db.add(org)
     await db.flush()
 
@@ -175,8 +182,10 @@ async def google_login(body: GoogleLoginRequest, db: AsyncSession = Depends(get_
     if user.status == UserStatus.SUSPENDED:
         raise HTTPException(status_code=403, detail="Your account has been suspended. Contact your administrator.")
     if user.role != RoleName.SUPER_ADMIN:
-        org_result = await db.execute(select(Org.status).where(Org.id == user.org_id))
-        if org_result.scalar_one_or_none() == OrgStatus.SUSPENDED:
+        org_result = await db.execute(select(Org.status, Org.suspension_reason).where(Org.id == user.org_id))
+        org_row = org_result.first()
+        # Same trial_expired exemption as /auth/login above.
+        if org_row is not None and org_row[0] == OrgStatus.SUSPENDED and org_row[1] != "trial_expired":
             raise HTTPException(
                 status_code=403,
                 detail="Your organization has been suspended. Contact your Riosmart representative.",
@@ -228,11 +237,19 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     # not the only one.
     org_slug = None
     if user.role != RoleName.SUPER_ADMIN:
-        org_result = await db.execute(select(Org.status, Org.slug).where(Org.id == user.org_id))
+        org_result = await db.execute(
+            select(Org.status, Org.slug, Org.suspension_reason).where(Org.id == user.org_id)
+        )
         org_row = org_result.first()
         if org_row is not None:
-            org_status, org_slug = org_row
-            if org_status == OrgStatus.SUSPENDED:
+            org_status, org_slug, suspension_reason = org_row
+            # A trial_expired org is deliberately let through — it has to
+            # log in to ever reach the "Your trial has ended — Upgrade
+            # now" screen and pay. deps.py's get_current_user_allow_trial_suspended
+            # keeps enforcing everywhere else; only /auth/me and billing.py's
+            # endpoints are exempted there. A MANUALLY suspended org still
+            # can't even get this far, unchanged.
+            if org_status == OrgStatus.SUSPENDED and suspension_reason != "trial_expired":
                 raise HTTPException(
                     status_code=403,
                     detail="Your organization has been suspended. Contact your Riosmart representative.",
@@ -368,14 +385,23 @@ async def _user_out(db: AsyncSession, user: User) -> UserOut:
     caps = permission_service.user_capabilities(user)
     out.capabilities = sorted(caps) if caps is not None else None
     if user.role != RoleName.SUPER_ADMIN:
-        out.org_slug = (await db.execute(select(Org.slug).where(Org.id == user.org_id))).scalar_one_or_none()
+        org_row = (await db.execute(select(Org.slug, Org.status, Org.suspension_reason).where(Org.id == user.org_id))).first()
+        if org_row is not None:
+            out.org_slug, org_status, out.org_suspension_reason = org_row
+            out.org_status = org_status.value if org_status is not None else None
     if user.avatar_key:
         out.profile_image_url = storage_service.presigned_get_url(user.avatar_key)
     return out
 
 
 @router.get("/me", response_model=UserOut)
-async def me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def me(current_user: User = Depends(get_current_user_allow_trial_suspended), db: AsyncSession = Depends(get_db)):
+    """Uses the trial-suspension-lenient dependency (not plain
+    get_current_user) so a trial_expired org's admin can still fetch
+    their own org_status/org_suspension_reason here — that's what
+    AuthGuard reads to show the trial-ended upgrade screen instead of the
+    normal dashboard. A manually-suspended org is still blocked exactly
+    like every other endpoint; see that dependency's docstring."""
     return await _user_out(db, current_user)
 
 

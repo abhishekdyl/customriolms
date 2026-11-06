@@ -66,6 +66,11 @@ export interface User {
   country?: string | null;
   timezone?: string | null;
   companyname?: string | null;
+  // Set only for non-Super-Admin — lets AuthGuard tell "trial ended, show
+  // the upgrade screen" (org_status "suspended" + org_suspension_reason
+  // "trial_expired") apart from a manual suspension.
+  org_status?: string | null;
+  org_suspension_reason?: string | null;
 }
 
 /** GET/PATCH /api/v1/learn/profile — the learner's own extended profile
@@ -502,12 +507,51 @@ export interface Org {
   admin_id: string | null;
   admin_name: string | null;
   admin_email: string | null;
+  // Licensing — null for an org Super Admin created directly (no trial).
+  // See backend's Org model docstring; the Pilots page and the
+  // trial-ended screen derive "N days left"/"Expired" from this
+  // client-side rather than the backend precomputing it.
+  trial_ends_at: string | null;
+  suspension_reason: string | null;
 }
 
 export interface PlatformSettings {
   allow_self_serve_signup: boolean;
   maintenance_mode: boolean;
   debug_mode: boolean;
+  trial_days: number;
+  price_starter_monthly: number;
+  price_growth_monthly: number;
+  price_enterprise_monthly: number;
+  razorpay_key_id: string | null;
+  razorpay_key_secret_set: boolean;
+  razorpay_webhook_secret_set: boolean;
+}
+
+// ---------- Billing (self-serve trial -> paid license) ----------
+export interface PlanPrice {
+  plan: OrgPlan;
+  monthly_price: number; // paise
+  user_limit: number;
+}
+
+export interface Pricing {
+  trial_days: number;
+  razorpay_key_id: string | null;
+  plans: PlanPrice[];
+}
+
+export interface CheckoutOut {
+  razorpay_order_id: string;
+  razorpay_key_id: string;
+  amount: number;
+  currency: string;
+  plan: OrgPlan;
+}
+
+export interface VerifyPaymentOut {
+  activated: boolean;
+  plan: OrgPlan;
 }
 
 /** What the public, unauthenticated GET /api/v1/orgs/platform-status

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Server, ShieldQuestion, Wand2, UserCog, Send, Loader2, CheckCircle2, AlertCircle, Building2, Clock, Check, X, Wrench, Bug, AlertTriangle } from "lucide-react";
+import { Server, ShieldQuestion, Wand2, UserCog, Send, Loader2, CheckCircle2, AlertCircle, Building2, Clock, Check, X, Wrench, Bug, AlertTriangle, Rocket, KeyRound } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,15 +14,27 @@ import { SaveBar } from "@/components/ui/save-bar";
 
 const PORT_ENCRYPTION_HINTS: Record<string, "TLS" | "SSL"> = { "465": "SSL", "587": "TLS", "25": "TLS", "2525": "TLS" };
 
-type TabId = "email" | "registration" | "ai" | "superadmins" | "system";
+type TabId = "email" | "registration" | "licensing" | "ai" | "superadmins" | "system";
 
 const tabs: { id: TabId; label: string; icon: typeof Server }[] = [
   { id: "email", label: "Email & Notifications", icon: Server },
   { id: "registration", label: "Registration", icon: ShieldQuestion },
+  { id: "licensing", label: "Licensing", icon: Rocket },
   { id: "ai", label: "AI Configuration", icon: Wand2 },
   { id: "superadmins", label: "Super Admins", icon: UserCog },
   { id: "system", label: "System", icon: Wrench },
 ];
+
+/** Rupees shown in the form <-> paise stored on PlatformSettings (see
+ * org_payment.py's docstring on why amounts are paise everywhere). Empty
+ * input reads as 0 rather than NaN so a cleared field still saves. */
+function rupeesToPaise(rupees: string): number {
+  const n = Math.round(Number(rupees || "0") * 100);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+function paiseToRupees(paise: number): string {
+  return paise === 0 ? "" : String(paise / 100);
+}
 
 // ---------------------------------------------------------------------------
 // Email & Notifications — the platform's own shared SMTP (Tier 1) plus the
@@ -399,6 +411,174 @@ function SystemTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Licensing — the self-serve trial -> paid flow's knobs: how long a new
+// org's free trial lasts, what each plan costs (shown here in rupees,
+// stored on PlatformSettings in paise), and the Razorpay credentials the
+// checkout/webhook endpoints need (billing.py's _razorpay_client 503s
+// until key_id + key_secret are both set). The two secrets never come
+// back from the API in plain text — PlatformSettingsOut only exposes
+// `razorpay_key_secret_set`/`razorpay_webhook_secret_set` booleans, so
+// this form shows "configured" and leaves the field blank; typing a new
+// value replaces it, leaving it blank on save keeps whatever's already
+// stored (merge-only PATCH, same pattern as the SMTP password above).
+// ---------------------------------------------------------------------------
+function LicensingTab() {
+  const { data: settings, isLoading } = usePlatformSettings();
+  const updateSettings = useUpdatePlatformSettings();
+  const serverValue = settings
+    ? {
+        trial_days: settings.trial_days,
+        price_starter_monthly: settings.price_starter_monthly,
+        price_growth_monthly: settings.price_growth_monthly,
+        price_enterprise_monthly: settings.price_enterprise_monthly,
+        razorpay_key_id: settings.razorpay_key_id ?? "",
+      }
+    : undefined;
+  const { draft, setDraft, dirty: pricingDirty, cancel: cancelPricing } = useDraft(serverValue);
+
+  const [razorpayKeySecret, setRazorpayKeySecret] = useState("");
+  const [razorpayWebhookSecret, setRazorpayWebhookSecret] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const secretsDirty = razorpayKeySecret !== "" || razorpayWebhookSecret !== "";
+  const dirty = pricingDirty || secretsDirty;
+
+  const doSave = () => {
+    updateSettings.mutate(
+      {
+        ...draft!,
+        ...(razorpayKeySecret ? { razorpay_key_secret: razorpayKeySecret } : {}),
+        ...(razorpayWebhookSecret ? { razorpay_webhook_secret: razorpayWebhookSecret } : {}),
+      },
+      {
+        onSuccess: () => {
+          setRazorpayKeySecret("");
+          setRazorpayWebhookSecret("");
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        },
+      }
+    );
+  };
+  const doCancel = () => {
+    cancelPricing();
+    setRazorpayKeySecret("");
+    setRazorpayWebhookSecret("");
+  };
+
+  return (
+    <div className="max-w-2xl">
+      <div className="mb-5 flex items-start gap-3 rounded-lg border-l-[3px] border-primary bg-primary-soft px-4 py-3.5">
+        <Rocket className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
+        <p className="text-[13px] text-ink">
+          Every org that self-registers gets a free trial of this length before it&apos;s suspended pending payment
+          — see it in action on the Pilots tab. An org you create yourself from Organizations starts ACTIVE and
+          never goes through a trial.
+        </p>
+      </div>
+
+      <section className="mb-5 rounded-xl border border-line bg-surface p-5">
+        {isLoading || !draft ? (
+          <p className="text-sm text-ink-faint">Loading…</p>
+        ) : (
+          <>
+            <h2 className="mb-3.5 font-head text-sm text-ink">Free trial</h2>
+            <div className="max-w-[220px]">
+              <Label className="mb-1.5 block">Trial length (days)</Label>
+              <Input
+                type="number" min={1} value={draft.trial_days}
+                onChange={(e) => setDraft((d) => ({ ...d, trial_days: Math.max(1, Number(e.target.value) || 1) }))}
+              />
+            </div>
+
+            <h2 className="mb-3.5 mt-6 font-head text-sm text-ink">Plan pricing (₹ / month)</h2>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label className="mb-1.5 block">Starter</Label>
+                <Input
+                  type="number" min={0} placeholder="0" value={paiseToRupees(draft.price_starter_monthly)}
+                  onChange={(e) => setDraft((d) => ({ ...d, price_starter_monthly: rupeesToPaise(e.target.value) }))}
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Growth</Label>
+                <Input
+                  type="number" min={0} placeholder="0" value={paiseToRupees(draft.price_growth_monthly)}
+                  onChange={(e) => setDraft((d) => ({ ...d, price_growth_monthly: rupeesToPaise(e.target.value) }))}
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Enterprise</Label>
+                <Input
+                  type="number" min={0} placeholder="0" value={paiseToRupees(draft.price_enterprise_monthly)}
+                  onChange={(e) => setDraft((d) => ({ ...d, price_enterprise_monthly: rupeesToPaise(e.target.value) }))}
+                />
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-ink-faint">
+              A plan priced at ₹0 is hidden from the trial-ended upgrade screen — set a real price before pointing
+              pilots at self-checkout.
+            </p>
+          </>
+        )}
+      </section>
+
+      <section className="mb-5 rounded-xl border border-line bg-surface p-5">
+        <h2 className="mb-1 font-head text-sm text-ink">Razorpay</h2>
+        <p className="mb-3.5 text-xs text-ink-faint">
+          Needed for self-checkout on the trial-ended screen. Without this, a trial-expired org can only be
+          activated manually from the Pilots tab.
+        </p>
+        {isLoading || !draft ? (
+          <p className="text-sm text-ink-faint">Loading…</p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div>
+              <Label className="mb-1.5 block">Key ID</Label>
+              <Input
+                value={draft.razorpay_key_id} placeholder="rzp_test_…"
+                onChange={(e) => setDraft((d) => ({ ...d, razorpay_key_id: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="mb-1.5 block">Key secret</Label>
+                <Input
+                  type="password" value={razorpayKeySecret} onChange={(e) => setRazorpayKeySecret(e.target.value)}
+                  placeholder={settings?.razorpay_key_secret_set ? "•••••••• (configured)" : "Not configured"}
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Webhook secret</Label>
+                <Input
+                  type="password" value={razorpayWebhookSecret} onChange={(e) => setRazorpayWebhookSecret(e.target.value)}
+                  placeholder={settings?.razorpay_webhook_secret_set ? "•••••••• (configured)" : "Not configured"}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-ink-faint">
+              <KeyRound className="h-3 w-3" />
+              {settings?.razorpay_key_secret_set && settings?.razorpay_webhook_secret_set
+                ? "Both secrets are configured. Leave a field blank to keep what's already saved."
+                : "Checkout stays disabled until both secrets are set."}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <SaveBar
+        dirty={dirty}
+        saving={updateSettings.isPending}
+        savedFlash={saved}
+        onCancel={doCancel}
+        onSave={doSave}
+        className="rounded-xl border-t-0"
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // AI Configuration — LAYOUT ONLY, same reasoning as Email & Notifications:
 // no AiSettings model/endpoint on the backend yet (the actual Claude API
 // key is currently read from backend env vars, not editable per platform
@@ -580,6 +760,7 @@ export default function PlatformSettingsPage() {
 
       {tab === "email" && <EmailNotificationsTab />}
       {tab === "registration" && <RegistrationTab />}
+      {tab === "licensing" && <LicensingTab />}
       {tab === "ai" && <AiConfigurationTab />}
       {tab === "superadmins" && <SuperAdminsTab />}
       {tab === "system" && <SystemTab />}
