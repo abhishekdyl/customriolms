@@ -1,6 +1,30 @@
+import uuid
+from datetime import datetime
+
 from pydantic import BaseModel
 
 from app.models.org import OrgPlan
+from app.models.org_payment import OrgPaymentStatus
+
+
+class OrgPaymentOut(BaseModel):
+    """One row of an org's billing history, for the Super Admin's
+    Organizations detail view — see org_payment.py's docstring on why
+    this table exists and what "no rows at all" tells you (the org was
+    never through self-checkout; either it's still on its original trial
+    or a Super Admin activated it manually)."""
+    id: uuid.UUID
+    plan: OrgPlan
+    amount: int  # paise
+    currency: str
+    razorpay_order_id: str
+    razorpay_payment_id: str | None = None
+    status: OrgPaymentStatus
+    created_at: datetime
+    paid_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
 
 
 class PlanPrice(BaseModel):

@@ -4,9 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Rocket, Check } from "lucide-react";
 import { useLogout } from "@/lib/hooks/use-auth";
 import { usePricing, useCheckout, useVerifyPayment } from "@/lib/hooks/use-billing";
+import { planLabel as PLAN_LABEL } from "@/lib/org-display";
 import type { OrgPlan } from "@/lib/types";
-
-const PLAN_LABEL: Record<OrgPlan, string> = { starter: "Starter", growth: "Growth", enterprise: "Enterprise" };
 
 function formatRupees(paise: number): string {
   return `₹${(paise / 100).toLocaleString("en-IN")}`;

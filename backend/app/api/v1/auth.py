@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
 from app.core.session import create_session, revoke_all_sessions, revoke_all_sessions_except, revoke_session
-from app.models.org import Org, OrgStatus
+from app.models.org import PLAN_USER_LIMITS, Org, OrgPlan, OrgStatus
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.team import Team
 from app.models.user import RoleName, User, UserStatus, split_full_name
@@ -59,7 +59,15 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # list_pilots (orgs.py) is what the Super Admin's Pilots tab shows.
     trial_days = settings_row.trial_days if settings_row is not None else 15
     slug = body.org_name.lower().replace(" ", "-")
-    org = Org(name=body.org_name, slug=slug, trial_ends_at=datetime.now(timezone.utc) + timedelta(days=trial_days))
+    # plan=FREE (not the model's STARTER default) so a trial org reads as
+    # "Free" on the Organizations/Subscriptions pages from the moment it
+    # signs up, not just once its trial expires — see OrgPlan.FREE's
+    # docstring. user_limit matches that plan's own cap, not the
+    # column's unrelated default of 20.
+    org = Org(
+        name=body.org_name, slug=slug, plan=OrgPlan.FREE, user_limit=PLAN_USER_LIMITS[OrgPlan.FREE],
+        trial_ends_at=datetime.now(timezone.utc) + timedelta(days=trial_days),
+    )
     db.add(org)
     await db.flush()  # get org.id before creating the user
 
@@ -138,7 +146,15 @@ async def google_register(body: GoogleRegisterRequest, db: AsyncSession = Depend
 
     trial_days = settings_row.trial_days if settings_row is not None else 15
     slug = body.org_name.lower().replace(" ", "-")
-    org = Org(name=body.org_name, slug=slug, trial_ends_at=datetime.now(timezone.utc) + timedelta(days=trial_days))
+    # plan=FREE (not the model's STARTER default) so a trial org reads as
+    # "Free" on the Organizations/Subscriptions pages from the moment it
+    # signs up, not just once its trial expires — see OrgPlan.FREE's
+    # docstring. user_limit matches that plan's own cap, not the
+    # column's unrelated default of 20.
+    org = Org(
+        name=body.org_name, slug=slug, plan=OrgPlan.FREE, user_limit=PLAN_USER_LIMITS[OrgPlan.FREE],
+        trial_ends_at=datetime.now(timezone.utc) + timedelta(days=trial_days),
+    )
     db.add(org)
     await db.flush()
 

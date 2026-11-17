@@ -1,20 +1,16 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Plus, Building2, Users as UsersIcon, Search, Bell, Pencil, Lock, Unlock } from "lucide-react";
+import { Plus, Building2, Users as UsersIcon, Search, Bell, Pencil, Lock, Unlock, Eye, CalendarClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { OrgDetailDrawer } from "@/components/shell/org-detail-drawer";
 import { useOrgs, useCreateOrg, useUpdateOrg, useUpdateOrgAdmin, useUpdateOrgStatus } from "@/lib/hooks/use-orgs";
 import { ApiError } from "@/lib/api-client";
+import { planLabel, statusStyle, formatDate, daysLeft } from "@/lib/org-display";
 import type { Org, OrgPlan, OrgStatus } from "@/lib/types";
 
-const planLabel: Record<OrgPlan, string> = { starter: "Starter", growth: "Growth", enterprise: "Enterprise" };
-const statusStyle: Record<OrgStatus, string> = {
-  active: "bg-success-soft text-success",
-  trial: "bg-amber-soft text-amber",
-  suspended: "bg-danger-soft text-danger",
-};
 const statusFilters: { id: "all" | OrgStatus; label: string }[] = [
   { id: "all", label: "All" },
   { id: "active", label: "Active" },
@@ -59,6 +55,7 @@ function CreateOrgDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
               onChange={(e) => setForm({ ...form, plan: e.target.value as OrgPlan })}
               className="h-10 w-full rounded-lg border border-line bg-surface px-3 text-sm outline-none focus-visible:border-primary"
             >
+              <option value="free">Free (up to 10 users)</option>
               <option value="starter">Starter (up to 20 users)</option>
               <option value="growth">Growth (up to 100 users)</option>
               <option value="enterprise">Enterprise (up to 500 users)</option>
@@ -166,6 +163,7 @@ function EditOrgDialog({ org, onOpenChange }: { org: Org | null; onOpenChange: (
               onChange={(e) => setForm({ ...form, plan: e.target.value as OrgPlan })}
               className="h-10 w-full rounded-lg border border-line bg-surface px-3 text-sm outline-none focus-visible:border-primary"
             >
+              <option value="free">Free</option>
               <option value="starter">Starter</option>
               <option value="growth">Growth</option>
               <option value="enterprise">Enterprise</option>
@@ -248,6 +246,7 @@ export default function OrganizationsPage() {
   const updateStatus = useUpdateOrgStatus();
   const [createOpen, setCreateOpen] = useState(false);
   const [editingOrg, setEditingOrg] = useState<Org | null>(null);
+  const [viewingOrg, setViewingOrg] = useState<Org | null>(null);
   const [filter, setFilter] = useState<"all" | OrgStatus>("all");
   const [search, setSearch] = useState("");
 
@@ -317,49 +316,68 @@ export default function OrganizationsPage() {
       {isError && <p className="text-sm text-danger">Couldn&apos;t load organizations — is the backend running?</p>}
 
       <div className="flex flex-col gap-2">
-        {shown.map((org) => (
-          <div key={org.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface p-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-soft">
-              <Building2 className="h-4 w-4 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-ink">{org.name}</span>
-                <span className="text-[11px] text-ink-faint">({org.slug})</span>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${statusStyle[org.status]}`}>{org.status}</span>
-              </div>
-              <div className="mt-0.5 flex items-center gap-3 text-xs text-ink-faint">
-                <span>{org.admin_name ? `${org.admin_name} · ${org.admin_email}` : "No Org Admin"}</span>
-                <span>{planLabel[org.plan]}</span>
-                <span className="flex items-center gap-1"><UsersIcon className="h-3 w-3" /> {org.user_count}/{org.user_limit} seats</span>
-                <span>since {new Date(org.created_at).toLocaleDateString(undefined, { month: "short", year: "numeric" })}</span>
-              </div>
-            </div>
-
-            <select
-              value={org.status}
-              onChange={(e) => {
-                const next = e.target.value as OrgStatus;
-                if (next === "suspended" && !confirm(`Suspend "${org.name}"? Every active session in this org is ended immediately; no data is deleted.`)) return;
-                updateStatus.mutate({ id: org.id, status: next });
-              }}
-              className="h-9 rounded-lg border border-line bg-surface px-2.5 text-xs capitalize outline-none focus-visible:border-primary"
+        {shown.map((org) => {
+          const trialing = org.status === "trial" && !!org.trial_ends_at;
+          const left = trialing ? daysLeft(org.trial_ends_at!) : null;
+          return (
+            <div
+              key={org.id}
+              onClick={() => setViewingOrg(org)}
+              className="flex cursor-pointer items-center gap-3 rounded-lg border border-line bg-surface p-4 hover:border-line-strong"
             >
-              <option value="active">Active</option>
-              <option value="trial">Trial</option>
-              <option value="suspended">Suspended</option>
-            </select>
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-soft">
+                <Building2 className="h-4 w-4 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-ink">{org.name}</span>
+                  <span className="text-[11px] text-ink-faint">({org.slug})</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${statusStyle[org.status]}`}>{org.status}</span>
+                  <span className="rounded-full bg-line-soft px-2 py-0.5 text-[11px] font-medium text-ink-soft">{planLabel[org.plan]}</span>
+                </div>
+                <div className="mt-0.5 flex items-center gap-3 text-xs text-ink-faint">
+                  <span>{org.admin_name ? `${org.admin_name} · ${org.admin_email}` : "No Org Admin"}</span>
+                  <span className="flex items-center gap-1"><UsersIcon className="h-3 w-3" /> {org.user_count}/{org.user_limit} seats</span>
+                  {trialing && (
+                    <span className="flex items-center gap-1 text-amber">
+                      <CalendarClock className="h-3 w-3" />
+                      {left! > 0 ? `${left} day${left === 1 ? "" : "s"} left` : "Trial ended"} · valid till {formatDate(org.trial_ends_at!)}
+                    </span>
+                  )}
+                  {!trialing && <span>since {formatDate(org.created_at)}</span>}
+                </div>
+              </div>
 
-            <Button size="icon" variant="ghost" title="Edit" onClick={() => setEditingOrg(org)}>
-              <Pencil className="h-3.5 w-3.5 text-ink-soft" />
-            </Button>
-          </div>
-        ))}
+              <select
+                value={org.status}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  const next = e.target.value as OrgStatus;
+                  if (next === "suspended" && !confirm(`Suspend "${org.name}"? Every active session in this org is ended immediately; no data is deleted.`)) return;
+                  updateStatus.mutate({ id: org.id, status: next });
+                }}
+                className="h-9 rounded-lg border border-line bg-surface px-2.5 text-xs capitalize outline-none focus-visible:border-primary"
+              >
+                <option value="active">Active</option>
+                <option value="trial">Trial</option>
+                <option value="suspended">Suspended</option>
+              </select>
+
+              <Button size="icon" variant="ghost" title="View details" onClick={(e) => { e.stopPropagation(); setViewingOrg(org); }}>
+                <Eye className="h-3.5 w-3.5 text-ink-soft" />
+              </Button>
+              <Button size="icon" variant="ghost" title="Edit" onClick={(e) => { e.stopPropagation(); setEditingOrg(org); }}>
+                <Pencil className="h-3.5 w-3.5 text-ink-soft" />
+              </Button>
+            </div>
+          );
+        })}
         {shown.length === 0 && !isLoading && <p className="text-sm text-ink-faint">No organizations match this view.</p>}
       </div>
 
       <CreateOrgDialog open={createOpen} onOpenChange={setCreateOpen} />
       <EditOrgDialog org={editingOrg} onOpenChange={(v) => !v && setEditingOrg(null)} />
+      <OrgDetailDrawer key={viewingOrg?.id ?? "none"} org={viewingOrg} defaultTab="overview" onClose={() => setViewingOrg(null)} />
     </div>
   );
 }

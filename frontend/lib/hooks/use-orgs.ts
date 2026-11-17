@@ -1,10 +1,21 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { Org, OrgPlan, OrgStatus, PlatformSettings, PlatformStatus, SuperAdmin } from "@/lib/types";
+import type { Org, OrgPayment, OrgPlan, OrgStatus, PlatformSettings, PlatformStatus, SuperAdmin } from "@/lib/types";
 
 export function useOrgs() {
   return useQuery({ queryKey: ["orgs"], queryFn: () => api.get<Org[]>("/api/v1/orgs") });
+}
+
+/** Billing & Payments history for one org — powers the org-detail
+ * drawer shared by the Organizations and Subscriptions pages. `enabled`
+ * so it only fires once a drawer is actually open for a real org. */
+export function useOrgPayments(orgId: string | null) {
+  return useQuery({
+    queryKey: ["orgs", orgId, "payments"],
+    queryFn: () => api.get<OrgPayment[]>(`/api/v1/orgs/${orgId}/payments`),
+    enabled: !!orgId,
+  });
 }
 
 export function useMyOrg(enabled: boolean = true) {

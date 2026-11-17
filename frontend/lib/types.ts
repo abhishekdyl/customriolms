@@ -486,7 +486,12 @@ export interface Reports {
   trend: ActivityPoint[];
 }
 
-export type OrgPlan = "starter" | "growth" | "enterprise";
+// "free" is what a self-registered org's plan reads as while it's on its
+// trial (set at registration — see auth.py) — not purchasable, never
+// shown on the pricing/checkout screen (PlanPrice below only ever lists
+// starter/growth/enterprise). A Super Admin can also set it by hand for
+// an org created directly.
+export type OrgPlan = "free" | "starter" | "growth" | "enterprise";
 export type OrgStatus = "active" | "trial" | "suspended";
 
 export interface Org {
@@ -552,6 +557,25 @@ export interface CheckoutOut {
 export interface VerifyPaymentOut {
   activated: boolean;
   plan: OrgPlan;
+}
+
+export type OrgPaymentStatus = "created" | "paid" | "failed";
+
+/** One row of an org's billing history — GET /api/v1/orgs/{id}/payments.
+ * An empty list means this org has never been through self-checkout:
+ * either it's still on its original free trial, or a Super Admin
+ * activated it manually (activate-license writes no row here on
+ * purpose — see the backend's OrgPayment model docstring). */
+export interface OrgPayment {
+  id: string;
+  plan: OrgPlan;
+  amount: number; // paise
+  currency: string;
+  razorpay_order_id: string;
+  razorpay_payment_id: string | null;
+  status: OrgPaymentStatus;
+  created_at: string;
+  paid_at: string | null;
 }
 
 /** What the public, unauthenticated GET /api/v1/orgs/platform-status

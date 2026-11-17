@@ -10,6 +10,14 @@ from app.core.database import Base
 
 
 class OrgPlan(str, enum.Enum):
+    # Not purchasable, not shown on the pricing/checkout screen — this is
+    # what every self-registered org's plan reads as while it's on its
+    # free trial (see auth.py's register/google_register), so the
+    # Organizations and Subscriptions pages can show "which orgs are on
+    # the free tier" at a glance instead of everyone showing STARTER. A
+    # Super Admin can also set it by hand on an org created directly
+    # (e.g. a permanent partner/nonprofit account).
+    FREE = "free"
     STARTER = "starter"
     GROWTH = "growth"
     ENTERPRISE = "enterprise"
@@ -21,7 +29,7 @@ class OrgStatus(str, enum.Enum):
     SUSPENDED = "suspended"
 
 
-PLAN_USER_LIMITS = {OrgPlan.STARTER: 20, OrgPlan.GROWTH: 100, OrgPlan.ENTERPRISE: 500}
+PLAN_USER_LIMITS = {OrgPlan.FREE: 10, OrgPlan.STARTER: 20, OrgPlan.GROWTH: 100, OrgPlan.ENTERPRISE: 500}
 
 
 class Org(Base):
@@ -34,13 +42,20 @@ class Org(Base):
     status: Mapped[OrgStatus] = mapped_column(Enum(OrgStatus, name="orgstatus"), default=OrgStatus.TRIAL, nullable=False)
     user_limit: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     # Self-serve signup starts every org on a clock: trial_ends_at is set
-    # once at creation (now + PlatformSettings.trial_days) and never moved
-    # except by a fresh license (billing.py's verify_payment /
-    # orgs.py's activate_license clear it back to None). A lazy check in
-    # deps.py/auth.py flips status to SUSPENDED the moment anyone touches
-    # an expired trial — no scheduler needed. An org Super Admin created
-    # directly (orgs.py's create_org) has no trial at all: trial_ends_at
-    # stays None and status starts ACTIVE there, not TRIAL.
+    # once at creation (now + PlatformSettings.trial_days) and never
+    # moved again, even past a license activation (billing.py's
+    # verify_payment / orgs.py's activate_license both leave it exactly
+    # as it was — see their docstrings). A lazy check in deps.py/auth.py
+    # flips status to SUSPENDED the moment anyone touches an expired
+    # trial — no scheduler needed. An org Super Admin created directly
+    # (orgs.py's create_org) has no trial at all: trial_ends_at stays
+    # None and status starts ACTIVE there, not TRIAL. This is also how
+    # the Subscriptions page (formerly "Pilots") finds every org that
+    # ever came through self-serve registration, whatever its plan or
+    # status is now. Note this is a one-time activation, not a recurring
+    # subscription: there's no separate "current billing period" column,
+    # so a licensed org's own OrgPayment rows (paid_at) are the source of
+    # truth for "when they actually paid", not this frozen trial date.
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Set alongside status=SUSPENDED so the frontend can tell "trial ran
     # out, show the upgrade screen" (login still works, see deps.py) apart

@@ -7,8 +7,10 @@ from app.core.database import get_db
 from app.core.security import hash_password
 from app.core.session import revoke_all_sessions
 from app.models.org import PLAN_USER_LIMITS, Org, OrgStatus
+from app.models.org_payment import OrgPayment
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.user import RoleName, User, split_full_name
+from app.schemas.billing import OrgPaymentOut
 from app.schemas.org import (
     ActivateLicenseRequest,
     OrgAdminUpdateRequest,
@@ -294,6 +296,22 @@ async def list_pilots(db: AsyncSession = Depends(get_db)):
         })
         for org in orgs
     ]
+
+
+@router.get("/{org_id}/payments", response_model=list[OrgPaymentOut], dependencies=super_admin_only)
+async def list_org_payments(org_id: str, db: AsyncSession = Depends(get_db)):
+    """Billing & Payments history for one org — every checkout attempt
+    this org has ever made (CREATED/PAID/FAILED, see org_payment.py),
+    newest first. Powers the Billing & Payments tab of the org-detail
+    drawer on both the Organizations and Subscriptions pages. An empty
+    list means this org has never gone through self-checkout — it's
+    either still on its original free trial, or every activation it's
+    had was a manual one from activate_license below, which deliberately
+    writes no row here."""
+    result = await db.execute(
+        select(OrgPayment).where(OrgPayment.org_id == org_id).order_by(OrgPayment.created_at.desc())
+    )
+    return result.scalars().all()
 
 
 @router.post("/{org_id}/activate-license", response_model=OrgOut, dependencies=super_admin_only)
