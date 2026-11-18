@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from google.auth import exceptions as google_auth_exceptions
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_user_allow_trial_suspended, get_current_user_and_jti
@@ -25,7 +25,7 @@ from app.services import profile_field_service
 from app.services import permission_service
 from app.schemas.auth import (
     ChangePasswordRequest, ForgotPasswordRequest, GoogleLoginRequest, GoogleRegisterRequest, LoginRequest, RegisterRequest,
-    ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserOut,
+    ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserOut, UserRegisterRequest,
 )
 from app.schemas.profile_field import ProfileFieldValueOut, ProfileFieldValuesUpdate
 
@@ -93,6 +93,85 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         role=user.role.value,
         org_slug=org.slug,
     )
+
+
+@router.post("/register-user", status_code=status.HTTP_201_CREATED)
+async def register_user(body: UserRegisterRequest, db: AsyncSession = Depends(get_db)):
+    """The registration page's other tab — join an *existing* org as a
+    Learner, instead of /register's "create a brand-new org" flow. The
+    visitor types the org's slug/code (no public org-listing endpoint
+    exists, see orgs.py's lookup_org, which the frontend calls first to
+    show "You're joining <name>" as a confirmation).
+
+    Unlike /register, this never logs the new account in — it's created
+    status=INVITED and sits there until an Org Admin approves it from
+    the Users page (PATCH /users/{id}/status -> active; rejecting is the
+    existing DELETE /users/{id}, a soft-delete to DEACTIVATED). This is
+    the only thing that currently produces status=INVITED, so login.py's
+    handling of it always means "pending approval", not "admin sent an
+    invite link" (that flow exists in the schema but nothing wires it
+    up yet).
+    """
+    settings_row = (await db.execute(select(PlatformSettings).where(PlatformSettings.id == SINGLETON_ID))).scalar_one_or_none()
+    if settings_row is not None and not settings_row.allow_self_serve_signup:
+        raise HTTPException(
+            status_code=403,
+            detail="Self-serve sign-up is currently disabled. Contact your Riosmart representative for access.",
+        )
+
+    org_result = await db.execute(select(Org).where(Org.slug == body.org_slug))
+    org = org_result.scalar_one_or_none()
+    if org is None or org.status == OrgStatus.SUSPENDED:
+        raise HTTPException(status_code=404, detail="Organisation not found. Check the organisation code with your admin.")
+
+    existing = await db.execute(select(User).where(User.email == body.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Same allowlist invite_service.invite_user enforces on an
+    # admin-invited user — a visitor can't self-register around an org's
+    # domain restriction just because this is a different endpoint.
+    if org.allowed_domains:
+        domain = body.email.rsplit("@", 1)[-1].lower()
+        if domain not in [d.lower() for d in org.allowed_domains]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This organisation only accepts email addresses from: {', '.join('@' + d for d in org.allowed_domains)}",
+            )
+
+    # Same seat-cap check invite_service.invite_user uses (every status
+    # except DEACTIVATED counts) — a pending signup still claims a seat,
+    # so it can't be used to sneak past a full org either.
+    if org.user_limit:
+        count_result = await db.execute(
+            select(func.count(User.id)).where(User.org_id == org.id, User.status != UserStatus.DEACTIVATED)
+        )
+        if count_result.scalar_one() >= org.user_limit:
+            raise HTTPException(status_code=400, detail="This organisation has reached its seat limit. Contact the organisation admin.")
+
+    firstname, lastname = split_full_name(body.name)
+    user = User(
+        org_id=org.id,
+        firstname=firstname,
+        lastname=lastname,
+        email=body.email,
+        username=body.email,  # default — see Org.allow_custom_username
+        hashed_password=hash_password(body.password),
+        role=RoleName.LEARNER,
+        status=UserStatus.INVITED,
+        phone=body.phone,
+        job_title=body.job_title,
+        location=body.location,
+        bio=body.bio,
+        country=body.country,
+        city=body.city,
+        timezone=body.timezone,
+        companyname=body.companyname,
+    )
+    db.add(user)
+    await db.commit()
+
+    return {"detail": "Registration submitted. An organisation admin needs to approve your account before you can log in."}
 
 
 async def _verify_google_credential(credential: str) -> dict:
@@ -245,6 +324,13 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
     if user.status == UserStatus.SUSPENDED:
         raise HTTPException(status_code=403, detail="Your account has been suspended. Contact your administrator.")
+    # Only register_user above produces this today — a self-registered
+    # account waiting for its Org Admin to approve it from the Users
+    # page. Reachable here at all only because it already has a real
+    # hashed_password (unlike an admin-invited user still waiting to set
+    # one, which the hashed_password check above already stops earlier).
+    if user.status == UserStatus.INVITED:
+        raise HTTPException(status_code=403, detail="Your registration is pending approval from your organisation admin.")
 
     # Stop a suspended org's users at the door with a clear reason, rather
     # than letting them log in and only find out something's wrong when a

@@ -15,6 +15,7 @@ from app.schemas.org import (
     ActivateLicenseRequest,
     OrgAdminUpdateRequest,
     OrgCreateRequest,
+    OrgLookupOut,
     OrgOut,
     OrgProfileUpdateRequest,
     OrgUpdateRequest,
@@ -258,6 +259,22 @@ async def get_platform_status(db: AsyncSession = Depends(get_db)):
     if settings_row is None:
         return PlatformStatusOut(maintenance_mode=False, debug_mode=False)
     return PlatformStatusOut(maintenance_mode=settings_row.maintenance_mode, debug_mode=settings_row.debug_mode)
+
+
+@router.get("/lookup/{slug}", response_model=OrgLookupOut)
+async def lookup_org(slug: str, db: AsyncSession = Depends(get_db)):
+    """Public, unauthenticated — the user-registration form (join an
+    existing org as a Learner, see auth.py's register_user) calls this
+    as the visitor types an org slug/code, to confirm which org it is
+    and show its name before they fill in the rest of the form. 404s
+    for a slug that doesn't exist or whose org is suspended, same as
+    register_user itself would reject it — no point confirming a name
+    for an org that can't actually be joined right now."""
+    result = await db.execute(select(Org).where(Org.slug == slug))
+    org = result.scalar_one_or_none()
+    if org is None or org.status == OrgStatus.SUSPENDED:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+    return OrgLookupOut(name=org.name, slug=org.slug)
 
 
 # Also kept above the /{org_id}... routes for the same route-ordering

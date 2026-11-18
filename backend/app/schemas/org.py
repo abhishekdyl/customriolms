@@ -6,6 +6,18 @@ from pydantic import BaseModel, EmailStr, Field
 from app.models.org import OrgPlan, OrgStatus
 
 
+class OrgLookupOut(BaseModel):
+    """What the public user-registration form gets back after a visitor
+    types an org's slug/code — just enough to show "You're joining
+    <name>" before they fill in the rest. Nothing else about the org
+    (plan, seats, admin, domains) is exposed here."""
+    name: str
+    slug: str
+
+    class Config:
+        from_attributes = True
+
+
 class OrgOut(BaseModel):
     id: uuid.UUID
     name: str

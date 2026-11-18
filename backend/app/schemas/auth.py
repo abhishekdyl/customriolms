@@ -10,6 +10,35 @@ class RegisterRequest(BaseModel):
     password: str
 
 
+class UserRegisterRequest(BaseModel):
+    """The public "join an existing org" registration form — the
+    toggle's second tab, next to the org-registration form above. Unlike
+    RegisterRequest, this never creates an Org; org_slug must name one
+    that already exists (see auth.register_user). The account it creates
+    starts status=INVITED (pending an Org Admin's approval, not an admin
+    sent them an invite link — see register_user's docstring), role
+    always LEARNER. The rest mirror User's own optional profile columns
+    (see models/user.py) so a visitor can fill in as much or as little
+    as they want beyond the four mandatory fields."""
+    org_slug: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=200)
+    email: EmailStr
+    password: str = Field(min_length=8)
+    phone: str | None = Field(default=None, max_length=30)
+    job_title: str | None = Field(default=None, max_length=120)
+    location: str | None = Field(default=None, max_length=120)
+    bio: str | None = Field(default=None, max_length=500)
+    country: str | None = Field(default=None, max_length=100)
+    city: str | None = Field(default=None, max_length=100)
+    timezone: str | None = Field(default=None, max_length=50)
+    companyname: str | None = Field(default=None, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v: str) -> str:
+        return " ".join(v.split())  # trim + collapse stray whitespace
+
+
 class LoginRequest(BaseModel):
     # Historically always an email; now the login *identifier* — matched
     # against both User.email and User.username (see auth.login), so it's

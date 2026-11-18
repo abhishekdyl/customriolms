@@ -522,6 +522,12 @@ export default function UsersPage() {
             <tbody>
               {users?.map((u: AppUser) => {
                 const suspended = u.status === "suspended";
+                // A user who self-registered via the public user-registration
+                // form (org picked by slug) lands here, not status=active —
+                // see auth.py's register_user. Nothing else creates this
+                // status today, so "invited" here always means "pending
+                // approval", not "admin sent an invite link".
+                const pending = u.status === "invited";
                 const isSelf = false; // backend enforces the real check; this just avoids an obviously-broken row for now
                 return (
                   <tr key={u.id} className={selected.includes(u.id) ? "bg-primary-soft" : ""} style={{ opacity: suspended ? 0.6 : 1 }}>
@@ -543,7 +549,7 @@ export default function UsersPage() {
                           {u.full_name}
                         </button>
                         {suspended && <span className="rounded-full bg-amber-soft px-2 py-0.5 text-[10px] text-amber">Suspended</span>}
-                        {u.status === "invited" && <span className="rounded-full bg-primary-soft px-2 py-0.5 text-[10px] text-primary">Invited</span>}
+                        {pending && <span className="rounded-full bg-primary-soft px-2 py-0.5 text-[10px] text-primary">Pending approval</span>}
                       </div>
                       <div className="text-[11.5px] text-ink-faint">{u.email}</div>
                     </td>
@@ -602,7 +608,7 @@ export default function UsersPage() {
                     <td className="border-b border-line-soft px-5 py-3">
                       {confirmDeleteId === u.id ? (
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-ink-soft">Remove?</span>
+                          <span className="text-xs text-ink-soft">{pending ? "Reject?" : "Remove?"}</span>
                           <button onClick={() => { remove.mutate(u.id); setConfirmDeleteId(null); }} className="text-danger"><Check className="h-3.5 w-3.5" /></button>
                           <button onClick={() => setConfirmDeleteId(null)} className="text-ink-faint"><X className="h-3.5 w-3.5" /></button>
                         </div>
@@ -611,13 +617,19 @@ export default function UsersPage() {
                           <button title="View / edit profile" onClick={() => setProfileUserId(u.id)}>
                             <UserCog className="h-3.5 w-3.5 text-ink-soft" />
                           </button>
-                          <button
-                            title={suspended ? "Reactivate" : "Suspend"}
-                            onClick={() => updateStatus.mutate({ id: u.id, status: suspended ? "active" : "suspended" })}
-                          >
-                            <ShieldQuestion className="h-3.5 w-3.5 text-amber" />
-                          </button>
-                          <button title="Remove" onClick={() => setConfirmDeleteId(u.id)}>
+                          {pending ? (
+                            <button title="Approve — let them log in" onClick={() => updateStatus.mutate({ id: u.id, status: "active" })}>
+                              <ShieldCheck className="h-3.5 w-3.5 text-success" />
+                            </button>
+                          ) : (
+                            <button
+                              title={suspended ? "Reactivate" : "Suspend"}
+                              onClick={() => updateStatus.mutate({ id: u.id, status: suspended ? "active" : "suspended" })}
+                            >
+                              <ShieldQuestion className="h-3.5 w-3.5 text-amber" />
+                            </button>
+                          )}
+                          <button title={pending ? "Reject" : "Remove"} onClick={() => setConfirmDeleteId(u.id)}>
                             <UserMinus className="h-3.5 w-3.5 text-danger" />
                           </button>
                         </div>
