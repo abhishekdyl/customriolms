@@ -133,13 +133,12 @@ function UserRegisterForm() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   // Field order below matches what's actually asked for on the form —
-  // phone, job title, location, city, country, then this org's own
-  // custom fields (if any), then password last. companyname/bio/
-  // timezone were dropped entirely (see UserRegisterRequest's
-  // docstring for why) rather than hidden behind a toggle — every field
-  // here is shown at once, same visual weight, no "optional" styling.
+  // phone, location, city, country, then this org's own custom fields
+  // (if any), then password last. Job title/companyname/bio/timezone
+  // were dropped entirely (see UserRegisterRequest's docstring for why)
+  // rather than hidden behind a toggle — every field here is shown at
+  // once, same visual weight, no "optional" styling.
   const [phone, setPhone] = useState("");
-  const [jobTitle, setJobTitle] = useState("");
   const [location, setLocation] = useState("");
   const [city, setCity] = useState("");
   const [country, setCountry] = useState("");
@@ -171,7 +170,7 @@ function UserRegisterForm() {
     if (Object.keys(e2).length) return;
     registerUser.mutate({
       org_slug: orgSlug.trim(), name, email,
-      phone: phone || undefined, job_title: jobTitle || undefined, location: location || undefined,
+      phone: phone || undefined, location: location || undefined,
       city: city || undefined, country: country || undefined,
       custom_fields: customValues, password,
     });
@@ -232,10 +231,6 @@ function UserRegisterForm() {
       <div className="mb-3.5">
         <Label className="mb-1.5 block">Phone</Label>
         <Input placeholder="+91 98765 43210" value={phone} onChange={(e) => setPhone(e.target.value)} />
-      </div>
-      <div className="mb-3.5">
-        <Label className="mb-1.5 block">Job title</Label>
-        <Input placeholder="e.g. Software Engineer" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
       </div>
       <div className="mb-3.5">
         <Label className="mb-1.5 block">Location</Label>
