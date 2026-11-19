@@ -134,15 +134,19 @@ function UserRegisterForm() {
   const [email, setEmail] = useState("");
   // Field order below matches what's actually asked for on the form —
   // phone, location, city, country, then this org's own custom fields
-  // (if any), then password last. Job title/companyname/bio/timezone
-  // were dropped entirely (see UserRegisterRequest's docstring for why)
-  // rather than hidden behind a toggle — every field here is shown at
-  // once, same visual weight, no "optional" styling.
+  // (if any), then password + confirm password last. Job
+  // title/companyname/bio/timezone were dropped entirely (see
+  // UserRegisterRequest's docstring for why) rather than hidden behind
+  // a toggle — every field here is shown at once, same visual weight,
+  // no "optional" styling. confirmPassword is a client-only check
+  // (never sent to the backend — only `password` is in the request
+  // body) that the two password fields match.
   const [phone, setPhone] = useState("");
   const [location, setLocation] = useState("");
   const [city, setCity] = useState("");
   const [country, setCountry] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   // This org's own custom fields (set by its admin, e.g. a required
   // "Pincode") — keyed by shortname, only known once the org slug
   // resolves, see useLookupOrg.
@@ -166,6 +170,7 @@ function UserRegisterForm() {
     const missingField = requiredFields.find((f) => !(customValues[f.shortname] ?? "").trim());
     if (missingField) e2.customFields = `"${missingField.name}" is required by this organisation`;
     if (password.length < 8) e2.password = "At least 8 characters";
+    if (confirmPassword !== password) e2.confirmPassword = "Passwords don't match";
     setErrors(e2);
     if (Object.keys(e2).length) return;
     registerUser.mutate({
@@ -270,11 +275,17 @@ function UserRegisterForm() {
       ))}
       {errors.customFields && <p className="mb-3.5 -mt-2 text-xs text-danger">{errors.customFields}</p>}
 
-      <div className="mb-6">
+      <div className="mb-3.5">
         <Label className="mb-1.5 block">Password <span className="text-danger">*</span></Label>
         <div className="relative"><Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <Input className="pl-9" type="password" placeholder="At least 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         {errors.password && <p className="mt-1 text-xs text-danger">{errors.password}</p>}
+      </div>
+      <div className="mb-6">
+        <Label className="mb-1.5 block">Confirm password <span className="text-danger">*</span></Label>
+        <div className="relative"><Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+          <Input className="pl-9" type="password" placeholder="Re-enter your password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} /></div>
+        {errors.confirmPassword && <p className="mt-1 text-xs text-danger">{errors.confirmPassword}</p>}
       </div>
 
       <Button type="submit" className="w-full h-12" disabled={registerUser.isPending}>
