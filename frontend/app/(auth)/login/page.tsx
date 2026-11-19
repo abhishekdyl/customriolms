@@ -11,6 +11,7 @@ import { useLogin } from "@/lib/hooks/use-auth";
 import { usePlatformStatus } from "@/lib/hooks/use-orgs";
 import { ApiError } from "@/lib/api-client";
 import { GoogleSignInButton } from "@/components/shell/auth/google-sign-in-button";
+import { GuestGuard } from "@/components/shell/guest-guard";
 
 /** Lets someone trying to log in during maintenance know it's not a
  * login failure on their end — login itself still works for everyone
@@ -50,6 +51,16 @@ function ResetSuccessBanner() {
  * detection step once /auth/login-method or equivalent exists.
  */
 export default function LoginPage() {
+  return (
+    <GuestGuard>
+      <LoginForm />
+    </GuestGuard>
+  );
+}
+
+/** Already logged in-aware wrapper lives in GuestGuard above — this is
+ * the actual form, unchanged otherwise. */
+function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);

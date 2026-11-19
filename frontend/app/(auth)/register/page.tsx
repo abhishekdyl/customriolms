@@ -10,10 +10,21 @@ import { usePlatformStatus } from "@/lib/hooks/use-orgs";
 import { ApiError } from "@/lib/api-client";
 import { GoogleSignInButton } from "@/components/shell/auth/google-sign-in-button";
 import { CustomFieldInput } from "@/components/shell/custom-field-input";
+import { GuestGuard } from "@/components/shell/guest-guard";
 
 type Mode = "org" | "user";
 
 export default function RegisterPage() {
+  return (
+    <GuestGuard>
+      <RegisterForm />
+    </GuestGuard>
+  );
+}
+
+/** Already logged in-aware wrapper lives in GuestGuard above — this is
+ * the actual toggle + form, unchanged otherwise. */
+function RegisterForm() {
   const [mode, setMode] = useState<Mode>("org");
 
   return (
