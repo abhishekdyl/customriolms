@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { useRegister, useLookupOrg, useRegisterUser } from "@/lib/hooks/use-auth";
 import { ApiError } from "@/lib/api-client";
 import { GoogleSignInButton } from "@/components/shell/auth/google-sign-in-button";
+import { CustomFieldInput } from "@/components/shell/custom-field-input";
 
 type Mode = "org" | "user";
 
@@ -132,18 +133,29 @@ function UserRegisterForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showOptional, setShowOptional] = useState(false);
+  // Order and set match what the org-registration form's optional
+  // fields actually get used for elsewhere in the app (see
+  // UserRegisterRequest's docstring): companyname is deliberately not
+  // here — nothing besides a learner's own profile page ever reads it
+  // back, unlike job_title (can gate module access) and bio (both are
+  // shown to an Org Admin/Team Lead in the user-profile dialog).
   const [phone, setPhone] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [location, setLocation] = useState("");
-  const [bio, setBio] = useState("");
-  const [country, setCountry] = useState("");
   const [city, setCity] = useState("");
+  const [country, setCountry] = useState("");
   const [timezone, setTimezone] = useState("");
-  const [companyname, setCompanyname] = useState("");
+  const [bio, setBio] = useState("");
+  // This org's own custom fields (set by its admin, e.g. a required
+  // "Pincode") — keyed by shortname, only known once the org slug
+  // resolves, see useLookupOrg.
+  const [customValues, setCustomValues] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const lookup = useLookupOrg(orgSlug.trim());
   const registerUser = useRegisterUser();
+  const profileFields = lookup.data?.profile_fields ?? [];
+  const requiredFields = profileFields.filter((f) => f.required);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -153,13 +165,15 @@ function UserRegisterForm() {
     if (!name.trim()) e2.name = "Your name is required";
     if (!/\S+@\S+\.\S+/.test(email)) e2.email = "Enter a valid email address";
     if (password.length < 8) e2.password = "At least 8 characters";
+    const missingField = requiredFields.find((f) => !(customValues[f.shortname] ?? "").trim());
+    if (missingField) e2.customFields = `"${missingField.name}" is required by this organisation`;
     setErrors(e2);
     if (Object.keys(e2).length) return;
     registerUser.mutate({
       org_slug: orgSlug.trim(), name, email, password,
       phone: phone || undefined, job_title: jobTitle || undefined, location: location || undefined,
-      bio: bio || undefined, country: country || undefined, city: city || undefined,
-      timezone: timezone || undefined, companyname: companyname || undefined,
+      city: city || undefined, country: country || undefined, timezone: timezone || undefined,
+      bio: bio || undefined, custom_fields: customValues,
     });
   };
 
@@ -203,6 +217,25 @@ function UserRegisterForm() {
           ) : null
         )}
       </div>
+
+      {/* This organisation's own required/optional fields (set by its
+       * admin) — only shows up once the code above resolves to a real
+       * org, same fields the admin's own "Invite a user" dialog has. */}
+      {profileFields.length > 0 && (
+        <div className="mb-3.5 flex flex-col gap-2.5 rounded-lg border border-line-soft bg-paper p-3.5">
+          {profileFields.map((f) => (
+            <div key={f.id} className="flex flex-col gap-1">
+              <Label className="block">{f.name} {f.required && <span className="text-danger">*</span>}</Label>
+              <CustomFieldInput
+                field={f}
+                value={customValues[f.shortname] ?? ""}
+                onChange={(v) => setCustomValues((prev) => ({ ...prev, [f.shortname]: v }))}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      {errors.customFields && <p className="mb-3.5 -mt-2 text-xs text-danger">{errors.customFields}</p>}
       <div className="mb-3.5">
         <Label className="mb-1.5 block">Your name</Label>
         <div className="relative"><UserIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
@@ -227,44 +260,40 @@ function UserRegisterForm() {
         onClick={() => setShowOptional((v) => !v)}
         className="mb-3.5 text-xs font-medium text-primary"
       >
-        {showOptional ? "Hide optional details" : "Add optional details (job title, location, etc.)"}
+        {showOptional ? "Hide optional details" : "Add optional details (phone, job title, location, etc.)"}
       </button>
 
       {showOptional && (
         <div className="mb-3.5 flex flex-col gap-3 rounded-lg border border-line-soft bg-paper p-3.5">
           <div>
             <Label className="mb-1.5 block">Phone</Label>
-            <Input placeholder="Optional" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <Input placeholder="+91 98765 43210" value={phone} onChange={(e) => setPhone(e.target.value)} />
           </div>
           <div>
             <Label className="mb-1.5 block">Job title</Label>
-            <Input placeholder="Optional" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+            <Input placeholder="e.g. Software Engineer" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
           </div>
           <div>
-            <Label className="mb-1.5 block">Company name</Label>
-            <Input placeholder="Optional" value={companyname} onChange={(e) => setCompanyname(e.target.value)} />
+            <Label className="mb-1.5 block">Location</Label>
+            <Input placeholder="e.g. Head Office, Sector 5" value={location} onChange={(e) => setLocation(e.target.value)} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="mb-1.5 block">City</Label>
-              <Input placeholder="Optional" value={city} onChange={(e) => setCity(e.target.value)} />
+              <Input placeholder="e.g. Bengaluru" value={city} onChange={(e) => setCity(e.target.value)} />
             </div>
             <div>
               <Label className="mb-1.5 block">Country</Label>
-              <Input placeholder="Optional" value={country} onChange={(e) => setCountry(e.target.value)} />
+              <Input placeholder="e.g. India" value={country} onChange={(e) => setCountry(e.target.value)} />
             </div>
           </div>
           <div>
-            <Label className="mb-1.5 block">Location</Label>
-            <Input placeholder="Optional — e.g. a department or office" value={location} onChange={(e) => setLocation(e.target.value)} />
-          </div>
-          <div>
             <Label className="mb-1.5 block">Timezone</Label>
-            <Input placeholder="Optional — e.g. Asia/Kolkata" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
+            <Input placeholder="e.g. Asia/Kolkata" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
           </div>
           <div>
             <Label className="mb-1.5 block">Bio</Label>
-            <Input placeholder="Optional" value={bio} onChange={(e) => setBio(e.target.value)} />
+            <Input placeholder="A short line about yourself" value={bio} onChange={(e) => setBio(e.target.value)} />
           </div>
         </div>
       )}

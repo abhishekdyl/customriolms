@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api-client";
 import { roleHome } from "@/lib/role-home";
-import type { RoleName, TokenResponse, User } from "@/lib/types";
+import type { ProfileField, RoleName, TokenResponse, User } from "@/lib/types";
 
 export function useLogin() {
   const router = useRouter();
@@ -34,11 +34,17 @@ export function useLogin() {
  * organisation" field, so the form can show "You're joining <name>"
  * before the visitor fills in the rest — see orgs.py's lookup_org. No
  * public org-listing endpoint exists; this only resolves one exact slug
- * at a time, so it can't be used to browse/enumerate every org. */
+ * at a time, so it can't be used to browse/enumerate every org.
+ *
+ * Also returns this org's custom profile field definitions (empty if
+ * its admin hasn't defined any), so the form can render them the same
+ * way the admin "Invite a user" dialog does. */
 export function useLookupOrg(slug: string) {
   return useQuery({
     queryKey: ["org-lookup", slug],
-    queryFn: () => api.get<{ name: string; slug: string }>(`/api/v1/orgs/lookup/${encodeURIComponent(slug)}`),
+    queryFn: () => api.get<{ name: string; slug: string; profile_fields: ProfileField[] }>(
+      `/api/v1/orgs/lookup/${encodeURIComponent(slug)}`
+    ),
     enabled: slug.trim().length > 1,
     retry: false,
   });
@@ -48,13 +54,18 @@ export function useLookupOrg(slug: string) {
  * Learner (see auth.py's register_user). Unlike useRegister, this
  * never logs the person in: the account is created pending an Org
  * Admin's approval, so there's no token response and nowhere to
- * redirect yet. The caller shows a "submitted" message instead. */
+ * redirect yet. The caller shows a "submitted" message instead.
+ *
+ * custom_fields is keyed by shortname, matching useLookupOrg's
+ * profile_fields — companyname was deliberately dropped from this
+ * form, see UserRegisterRequest's docstring for why. */
 export function useRegisterUser() {
   return useMutation({
     mutationFn: (body: {
       org_slug: string; name: string; email: string; password: string;
-      phone?: string; job_title?: string; location?: string; bio?: string;
-      country?: string; city?: string; timezone?: string; companyname?: string;
+      phone?: string; job_title?: string; location?: string; city?: string;
+      country?: string; timezone?: string; bio?: string;
+      custom_fields?: Record<string, string | null>;
     }) => api.post<{ detail: string }>("/api/v1/auth/register-user", body),
   });
 }

@@ -4,15 +4,19 @@ from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
 
 from app.models.org import OrgPlan, OrgStatus
+from app.schemas.profile_field import ProfileFieldOut
 
 
 class OrgLookupOut(BaseModel):
     """What the public user-registration form gets back after a visitor
     types an org's slug/code — just enough to show "You're joining
-    <name>" before they fill in the rest. Nothing else about the org
+    <name>" and, if this org's admin has defined any custom profile
+    fields (see profile_field_service), which of them are required —
+    before the visitor fills in the rest. Nothing else about the org
     (plan, seats, admin, domains) is exposed here."""
     name: str
     slug: str
+    profile_fields: list[ProfileFieldOut] = []
 
     class Config:
         from_attributes = True

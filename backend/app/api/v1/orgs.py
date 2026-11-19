@@ -11,6 +11,7 @@ from app.models.org_payment import OrgPayment
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.user import RoleName, User, split_full_name
 from app.schemas.billing import OrgPaymentOut
+from app.services import profile_field_service
 from app.schemas.org import (
     ActivateLicenseRequest,
     OrgAdminUpdateRequest,
@@ -269,12 +270,19 @@ async def lookup_org(slug: str, db: AsyncSession = Depends(get_db)):
     and show its name before they fill in the rest of the form. 404s
     for a slug that doesn't exist or whose org is suspended, same as
     register_user itself would reject it — no point confirming a name
-    for an org that can't actually be joined right now."""
+    for an org that can't actually be joined right now.
+
+    Also returns this org's custom profile field definitions (if its
+    admin has defined any via org-profile-fields) so the registration
+    form can render them — and flag the required ones — the same way
+    the admin "Invite a user" dialog does. Only each field's own
+    definition is exposed; no other user's submitted values."""
     result = await db.execute(select(Org).where(Org.slug == slug))
     org = result.scalar_one_or_none()
     if org is None or org.status == OrgStatus.SUSPENDED:
         raise HTTPException(status_code=404, detail="Organisation not found")
-    return OrgLookupOut(name=org.name, slug=org.slug)
+    fields = await profile_field_service.list_fields(db, org.id)
+    return OrgLookupOut(name=org.name, slug=org.slug, profile_fields=fields)
 
 
 # Also kept above the /{org_id}... routes for the same route-ordering

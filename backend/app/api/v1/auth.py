@@ -149,6 +149,14 @@ async def register_user(body: UserRegisterRequest, db: AsyncSession = Depends(ge
         if count_result.scalar_one() >= org.user_limit:
             raise HTTPException(status_code=400, detail="This organisation has reached its seat limit. Contact the organisation admin.")
 
+    # Same required-field enforcement users.invite_single_user uses — an
+    # Org Admin's custom field marked required (e.g. "Pincode") has to
+    # be filled in here too, not just on the admin-invite form.
+    fields = await profile_field_service.list_fields(db, org.id)
+    missing = [f.name for f in fields if f.required and not (body.custom_fields.get(f.shortname) or "").strip()]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required field(s): {', '.join(missing)}")
+
     firstname, lastname = split_full_name(body.name)
     user = User(
         org_id=org.id,
@@ -166,9 +174,10 @@ async def register_user(body: UserRegisterRequest, db: AsyncSession = Depends(ge
         country=body.country,
         city=body.city,
         timezone=body.timezone,
-        companyname=body.companyname,
     )
     db.add(user)
+    await db.flush()  # need user.id before writing its custom field values
+    await profile_field_service.set_values_for_user(db, org.id, user.id, body.custom_fields, commit=False)
     await db.commit()
 
     return {"detail": "Registration submitted. An organisation admin needs to approve your account before you can log in."}
