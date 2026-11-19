@@ -3,6 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_capability, require_role
+from app.core.countries import ALL_COUNTRIES
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.core.session import revoke_all_sessions
@@ -198,6 +199,7 @@ def _settings_out(row: PlatformSettings) -> PlatformSettingsOut:
         razorpay_key_id=row.razorpay_key_id,
         razorpay_key_secret_set=bool(row.razorpay_key_secret),
         razorpay_webhook_secret_set=bool(row.razorpay_webhook_secret),
+        allowed_countries=row.allowed_countries,
     )
 
 
@@ -242,6 +244,11 @@ async def update_platform_settings(body: PlatformSettingsUpdateRequest, db: Asyn
         settings_row.razorpay_key_secret = body.razorpay_key_secret
     if body.razorpay_webhook_secret is not None:
         settings_row.razorpay_webhook_secret = body.razorpay_webhook_secret
+    if body.allowed_countries is not None:
+        # [] is how the frontend asks to clear the restriction back to
+        # "show every country" — stored as NULL either way, see the
+        # model column's docstring, never as an actual empty list.
+        settings_row.allowed_countries = body.allowed_countries or None
     await db.commit()
     await db.refresh(settings_row)
     return _settings_out(settings_row)
@@ -258,8 +265,12 @@ async def get_platform_status(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(PlatformSettings).where(PlatformSettings.id == SINGLETON_ID))
     settings_row = result.scalar_one_or_none()
     if settings_row is None:
-        return PlatformStatusOut(maintenance_mode=False, debug_mode=False)
-    return PlatformStatusOut(maintenance_mode=settings_row.maintenance_mode, debug_mode=settings_row.debug_mode)
+        return PlatformStatusOut(maintenance_mode=False, debug_mode=False, countries=ALL_COUNTRIES)
+    return PlatformStatusOut(
+        maintenance_mode=settings_row.maintenance_mode,
+        debug_mode=settings_row.debug_mode,
+        countries=settings_row.allowed_countries or ALL_COUNTRIES,
+    )
 
 
 @router.get("/lookup/{slug}", response_model=OrgLookupOut)

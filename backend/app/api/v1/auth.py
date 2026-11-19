@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_user_allow_trial_suspended, get_current_user_and_jti
 from app.core.config import settings
+from app.core.countries import ALL_COUNTRIES
 from app.core.database import get_db
 from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
 from app.core.session import create_session, revoke_all_sessions, revoke_all_sessions_except, revoke_session
@@ -128,6 +129,16 @@ async def register_user(body: UserRegisterRequest, db: AsyncSession = Depends(ge
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    # The form's Country field is a <select> fed by GET /platform-status's
+    # `countries` (Super Admin's allowed_countries, or ALL_COUNTRIES if
+    # unconfigured — see that endpoint). Re-check server-side with the
+    # same fallback, since nothing stops a direct API call from sending
+    # an arbitrary string.
+    if body.country:
+        allowed_countries = (settings_row.allowed_countries if settings_row else None) or ALL_COUNTRIES
+        if body.country not in allowed_countries:
+            raise HTTPException(status_code=400, detail="Select a country from the provided list")
+
     # Same allowlist invite_service.invite_user enforces on an
     # admin-invited user — a visitor can't self-register around an org's
     # domain restriction just because this is a different endpoint.
@@ -170,10 +181,8 @@ async def register_user(body: UserRegisterRequest, db: AsyncSession = Depends(ge
         phone=body.phone,
         job_title=body.job_title,
         location=body.location,
-        bio=body.bio,
         country=body.country,
         city=body.city,
-        timezone=body.timezone,
     )
     db.add(user)
     await db.flush()  # need user.id before writing its custom field values

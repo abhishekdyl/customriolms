@@ -11,6 +11,7 @@ import {
 } from "@/lib/hooks/use-platform-smtp";
 import { useDraft } from "@/lib/hooks/use-draft";
 import { SaveBar } from "@/components/ui/save-bar";
+import { ALL_COUNTRIES } from "@/lib/countries";
 
 const PORT_ENCRYPTION_HINTS: Record<string, "TLS" | "SSL"> = { "465": "SSL", "587": "TLS", "25": "TLS", "2525": "TLS" };
 
@@ -277,9 +278,37 @@ function PlatformFallbackRequestsQueue() {
 function RegistrationTab() {
   const { data: settings, isLoading } = usePlatformSettings();
   const updateSettings = useUpdatePlatformSettings();
-  const serverValue = settings ? { allow_self_serve_signup: settings.allow_self_serve_signup } : undefined;
+  const serverValue = settings
+    ? { allow_self_serve_signup: settings.allow_self_serve_signup, allowed_countries: settings.allowed_countries ?? ALL_COUNTRIES }
+    : undefined;
   const { draft, setDraft, dirty, cancel } = useDraft(serverValue);
   const [saved, setSaved] = useState(false);
+  const [countrySearch, setCountrySearch] = useState("");
+
+  const doSave = () => {
+    if (!draft) return;
+    updateSettings.mutate(
+      {
+        allow_self_serve_signup: draft.allow_self_serve_signup,
+        // All selected == no restriction — send [] so the backend
+        // clears allowed_countries back to NULL rather than storing
+        // every country by name (see update_platform_settings).
+        allowed_countries: draft.allowed_countries.length === ALL_COUNTRIES.length ? [] : draft.allowed_countries,
+      },
+      { onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); } }
+    );
+  };
+
+  const toggleCountry = (country: string) => {
+    if (!draft) return;
+    const has = draft.allowed_countries.includes(country);
+    setDraft((d) => ({
+      ...d,
+      allowed_countries: has ? d.allowed_countries.filter((c) => c !== country) : [...d.allowed_countries, country],
+    }));
+  };
+
+  const shownCountries = ALL_COUNTRIES.filter((c) => c.toLowerCase().includes(countrySearch.trim().toLowerCase()));
 
   return (
     <div className="max-w-2xl">
@@ -296,11 +325,66 @@ function RegistrationTab() {
             </div>
             <Switch
               checked={draft.allow_self_serve_signup}
-              onCheckedChange={(checked) => setDraft({ allow_self_serve_signup: checked })}
+              onCheckedChange={(checked) => setDraft((d) => ({ ...d, allow_self_serve_signup: checked }))}
             />
           </div>
         )}
       </section>
+
+      <section className="mb-5 rounded-xl border border-line bg-surface p-5">
+        {isLoading || !draft ? (
+          <p className="text-sm text-ink-faint">Loading…</p>
+        ) : (
+          <>
+            <div className="mb-3.5 flex items-center justify-between">
+              <div>
+                <h2 className="font-head text-sm text-ink">Countries shown on the registration form</h2>
+                <p className="mt-0.5 text-xs text-ink-faint">
+                  Only the countries checked here appear in the Country dropdown when someone registers as a user.
+                  {" "}{draft.allowed_countries.length} of {ALL_COUNTRIES.length} selected.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDraft((d) => ({ ...d, allowed_countries: [...ALL_COUNTRIES] }))}
+                  className="text-xs font-medium text-primary"
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraft((d) => ({ ...d, allowed_countries: [] }))}
+                  className="text-xs font-medium text-ink-faint"
+                >
+                  Clear all
+                </button>
+              </div>
+            </div>
+            <Input
+              placeholder="Search countries…"
+              value={countrySearch}
+              onChange={(e) => setCountrySearch(e.target.value)}
+              className="mb-3"
+            />
+            <div className="grid max-h-80 grid-cols-3 gap-x-3 gap-y-1.5 overflow-y-auto rounded-lg border border-line-soft p-3">
+              {shownCountries.map((c) => (
+                <label key={c} className="flex items-center gap-2 py-0.5 text-[13px] text-ink">
+                  <input
+                    type="checkbox"
+                    checked={draft.allowed_countries.includes(c)}
+                    onChange={() => toggleCountry(c)}
+                    className="h-3.5 w-3.5 rounded border-line accent-primary"
+                  />
+                  {c}
+                </label>
+              ))}
+              {shownCountries.length === 0 && <p className="col-span-3 py-2 text-xs text-ink-faint">No match.</p>}
+            </div>
+          </>
+        )}
+      </section>
+
       <div className="flex items-start gap-3 rounded-lg border-l-[3px] border-primary bg-primary-soft px-4 py-3.5">
         <ShieldQuestion className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
         <p className="text-[13px] text-ink">
@@ -313,7 +397,7 @@ function RegistrationTab() {
         saving={updateSettings.isPending}
         savedFlash={saved}
         onCancel={cancel}
-        onSave={() => updateSettings.mutate(draft!, { onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); } })}
+        onSave={doSave}
         className="mt-4 rounded-xl border-t-0"
       />
     </div>

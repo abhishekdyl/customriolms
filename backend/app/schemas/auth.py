@@ -19,15 +19,19 @@ class UserRegisterRequest(BaseModel):
     sent them an invite link — see register_user's docstring), role
     always LEARNER.
 
-    phone/job_title/location/bio/country/city/timezone mirror User's own
-    optional profile columns (see models/user.py) — kept here because
-    they're genuinely used elsewhere: job_title can gate module access
-    (course.py's profile_field restriction) and both it and bio are
-    shown to an Org Admin/Team Lead in the user-profile dialog.
-    companyname was deliberately left off this form — nothing in the
-    app besides the learner's own profile page ever reads it back, so
-    it added a field without adding a capability; it's still settable
-    from that profile page after approval, for an org that wants it.
+    phone/job_title/location/country/city mirror User's own optional
+    profile columns (see models/user.py) — kept here because they're
+    genuinely used elsewhere: job_title can gate module access
+    (course.py's profile_field restriction), and it's shown (along with
+    bio, which this form doesn't collect) to an Org Admin/Team Lead in
+    the user-profile dialog. companyname, bio and timezone were
+    deliberately left off this form — companyname because nothing in
+    the app besides the learner's own profile page ever reads it back;
+    bio and timezone because the form was trimmed down to only the
+    fields an Org Admin is likely to actually act on at a glance. All
+    three are still settable from the learner's own profile page after
+    approval, for anyone who wants them. country is validated against
+    this platform's configured list — see ALL_COUNTRIES/allowed_countries.
 
     custom_fields is org_slug-dependent — only meaningful once an org's
     been picked, since each org defines its own set (see orgs.py's
@@ -43,8 +47,6 @@ class UserRegisterRequest(BaseModel):
     location: str | None = Field(default=None, max_length=120)
     city: str | None = Field(default=None, max_length=100)
     country: str | None = Field(default=None, max_length=100)
-    timezone: str | None = Field(default=None, max_length=50)
-    bio: str | None = Field(default=None, max_length=500)
     custom_fields: dict[str, str | None] = {}
 
     @field_validator("name")

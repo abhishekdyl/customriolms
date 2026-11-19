@@ -531,6 +531,10 @@ export interface PlatformSettings {
   razorpay_key_id: string | null;
   razorpay_key_secret_set: boolean;
   razorpay_webhook_secret_set: boolean;
+  // null = not configured yet ("show every country" everywhere this is
+  // read) — see PlatformStatus.countries, which is the already-resolved
+  // list a public form actually renders from.
+  allowed_countries: string[] | null;
 }
 
 // ---------- Billing (self-serve trial -> paid license) ----------
@@ -584,6 +588,10 @@ export interface OrgPayment {
 export interface PlatformStatus {
   maintenance_mode: boolean;
   debug_mode: boolean;
+  // Already resolved server-side (Super Admin's allowed_countries, or
+  // every country if that's unconfigured) — the registration page's
+  // Country <select> renders this list directly, no further filtering.
+  countries: string[];
 }
 
 export interface SuperAdmin {

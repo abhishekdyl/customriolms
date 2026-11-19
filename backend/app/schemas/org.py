@@ -121,6 +121,12 @@ class PlatformSettingsOut(BaseModel):
     price_growth_monthly: int
     price_enterprise_monthly: int
     razorpay_key_id: str | None = None
+    # None = not configured yet, i.e. "show every country" — see the
+    # model column's docstring. Never empty-list-as-sentinel: an empty
+    # list here would mean "Super Admin picked zero countries", which
+    # the update endpoint also treats as "clear back to unrestricted"
+    # rather than actually storing [].
+    allowed_countries: list[str] | None = None
     # Secrets themselves never round-trip back to the browser — only
     # whether one is currently set, same spirit as an SMTP password field
     # that shows a filled/empty dot rather than the value. Computed by the
@@ -146,17 +152,23 @@ class PlatformSettingsUpdateRequest(BaseModel):
     razorpay_key_id: str | None = None
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
+    # None is left alone (no key present in the PATCH body); [] is how
+    # the frontend asks to clear the restriction back to "show every
+    # country" — see update_platform_settings.
+    allowed_countries: list[str] | None = None
 
 
 class PlatformStatusOut(BaseModel):
     """What app/main.py's public, unauthenticated /platform-status
     exposes — just enough for the frontend to decide whether to show the
-    maintenance page / debug bar before anyone has even logged in.
+    maintenance page / debug bar before anyone has even logged in, plus
+    the Country dropdown's options for the public registration form.
     Deliberately a SEPARATE, narrower schema from PlatformSettingsOut:
     this endpoint has no auth at all, so nothing else on that row
     (allow_self_serve_signup, say) belongs in it."""
     maintenance_mode: bool
     debug_mode: bool
+    countries: list[str] = []
 
 
 class ActivateLicenseRequest(BaseModel):

@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import ARRAY, Boolean, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,3 +56,12 @@ class PlatformSettings(Base):
     # dashboard). Verifies POST /billing/webhook/razorpay really came
     # from Razorpay before trusting it to activate an org.
     razorpay_webhook_secret: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    # --- Registration form ---
+    # The Super-Admin-curated subset of app.core.countries.ALL_COUNTRIES
+    # shown in the public user-registration form's Country dropdown.
+    # NULL (the default — nobody's configured this yet) means "no
+    # restriction": every endpoint that reads this falls back to the
+    # full ALL_COUNTRIES list, so an unconfigured platform shows every
+    # country rather than an empty dropdown.
+    allowed_countries: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)

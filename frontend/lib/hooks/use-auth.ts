@@ -57,14 +57,14 @@ export function useLookupOrg(slug: string) {
  * redirect yet. The caller shows a "submitted" message instead.
  *
  * custom_fields is keyed by shortname, matching useLookupOrg's
- * profile_fields — companyname was deliberately dropped from this
- * form, see UserRegisterRequest's docstring for why. */
+ * profile_fields — companyname/bio/timezone were deliberately dropped
+ * from this form, see UserRegisterRequest's docstring for why. */
 export function useRegisterUser() {
   return useMutation({
     mutationFn: (body: {
       org_slug: string; name: string; email: string; password: string;
       phone?: string; job_title?: string; location?: string; city?: string;
-      country?: string; timezone?: string; bio?: string;
+      country?: string;
       custom_fields?: Record<string, string | null>;
     }) => api.post<{ detail: string }>("/api/v1/auth/register-user", body),
   });
