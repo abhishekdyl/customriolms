@@ -203,7 +203,7 @@ function UserRegisterForm() {
       )}
 
       <div className="mb-3.5">
-        <Label className="mb-1.5 block">Organisation code</Label>
+        <Label className="mb-1.5 block">Organisation code <span className="text-danger">*</span></Label>
         <div className="relative"><Hash className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <Input className="pl-9" placeholder="solara-industries" value={orgSlug} onChange={(e) => setOrgSlug(e.target.value)} autoFocus /></div>
         {errors.orgSlug && <p className="mt-1 text-xs text-danger">{errors.orgSlug}</p>}
@@ -218,13 +218,13 @@ function UserRegisterForm() {
         )}
       </div>
       <div className="mb-3.5">
-        <Label className="mb-1.5 block">Your name</Label>
+        <Label className="mb-1.5 block">Your name <span className="text-danger">*</span></Label>
         <div className="relative"><UserIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <Input className="pl-9" placeholder="Rios Sharma" value={name} onChange={(e) => setName(e.target.value)} /></div>
         {errors.name && <p className="mt-1 text-xs text-danger">{errors.name}</p>}
       </div>
       <div className="mb-3.5">
-        <Label className="mb-1.5 block">Email</Label>
+        <Label className="mb-1.5 block">Email <span className="text-danger">*</span></Label>
         <div className="relative"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <Input className="pl-9" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
         {errors.email && <p className="mt-1 text-xs text-danger">{errors.email}</p>}
@@ -276,7 +276,7 @@ function UserRegisterForm() {
       {errors.customFields && <p className="mb-3.5 -mt-2 text-xs text-danger">{errors.customFields}</p>}
 
       <div className="mb-6">
-        <Label className="mb-1.5 block">Password</Label>
+        <Label className="mb-1.5 block">Password <span className="text-danger">*</span></Label>
         <div className="relative"><Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <Input className="pl-9" type="password" placeholder="At least 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         {errors.password && <p className="mt-1 text-xs text-danger">{errors.password}</p>}
