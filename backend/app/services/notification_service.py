@@ -115,12 +115,22 @@ def _connect(row, encryption: str) -> smtplib.SMTP:
     return server
 
 
-def _send_blocking(row, to_addr: str, subject: str, body: str) -> None:
+def _send_blocking(
+    row, to_addr: str, subject: str, body: str,
+    attachment: tuple[str, str, bytes] | None = None,
+) -> None:
+    """attachment, when given, is (filename, mime_type e.g. "application/pdf",
+    raw bytes) — used by the invoice-email path below. Every other caller
+    passes None and gets the original plain-text-only behaviour."""
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = f"{row.from_name} <{row.from_email}>" if row.from_name else row.from_email
     msg["To"] = to_addr
     msg.set_content(body)
+    if attachment is not None:
+        filename, mime_type, data = attachment
+        maintype, _, subtype = mime_type.partition("/")
+        msg.add_attachment(data, maintype=maintype, subtype=subtype or "octet-stream", filename=filename)
 
     try:
         server = _connect(row, row.encryption)
@@ -243,6 +253,29 @@ async def send_email_if_configured(db: AsyncSession, org_id: uuid.UUID, to_addr:
     except Exception as exc:
         await log_email(db, org_id, to_addr, subject, source, "failed", f"{type(exc).__name__}: {exc}")
         return True  # best-effort — see docstring: caller still treats this as "attempted"
+    await log_email(db, org_id, to_addr, subject, source, "sent")
+    return True
+
+
+async def send_email_with_attachment_if_configured(
+    db: AsyncSession, org_id: uuid.UUID, to_addr: str, subject: str, body: str,
+    attachment_filename: str, attachment_bytes: bytes, attachment_mimetype: str = "application/pdf",
+) -> bool:
+    """Same best-effort/3-tier resolution as send_email_if_configured
+    (see that docstring) — only difference is the message carries one
+    file attachment. Used for emailing a payment's invoice PDF the
+    moment it's confirmed (billing.py's _activate_from_payment)."""
+    row, source, why = await resolve_send_source(db, org_id)
+    if row is None:
+        await log_email(db, org_id, to_addr, subject, "none", "skipped", why)
+        return False
+    try:
+        await asyncio.to_thread(
+            _send_blocking, row, to_addr, subject, body, (attachment_filename, attachment_mimetype, attachment_bytes)
+        )
+    except Exception as exc:
+        await log_email(db, org_id, to_addr, subject, source, "failed", f"{type(exc).__name__}: {exc}")
+        return True
     await log_email(db, org_id, to_addr, subject, source, "sent")
     return True
 

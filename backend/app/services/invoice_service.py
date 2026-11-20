@@ -32,9 +32,21 @@ def render_invoice_pdf(
     amount: int,  # paise
     currency: str,
     razorpay_payment_id: str | None,
+    seller_gstin: str | None = None,
+    buyer_gstin: str | None = None,
+    hsn_sac_code: str | None = None,
+    gst_rate_percent: int | None = None,  # None/0 => no tax section at all
+    same_state: bool = False,  # True => CGST+SGST split; False => IGST
 ) -> bytes:
     """Returns the finished PDF as bytes — callers stream it straight
-    back, nothing is written to disk."""
+    back, nothing is written to disk.
+
+    `amount` is always treated as the tax-inclusive total actually
+    charged. When gst_rate_percent is set, it's reverse-split here into
+    a taxable value + tax line(s) purely for display — nothing about
+    what was actually charged changes, so this can be turned on/off or
+    have its rate changed later without touching any stored payment
+    amount."""
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle("InvoiceTitle", parent=styles["Title"], fontSize=20, spaceAfter=2)
     label_style = ParagraphStyle("Label", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#6b7280"))
@@ -66,23 +78,42 @@ def render_invoice_pdf(
     elements.append(meta_table)
     elements.append(Spacer(1, 10 * mm))
 
+    seller_block = f"<b>{seller_name}</b><br/>{seller_detail or ''}"
+    if seller_gstin:
+        seller_block += f"<br/>GSTIN: {seller_gstin}"
+    buyer_block = f"<b>{buyer_name}</b><br/>{buyer_detail or ''}"
+    if buyer_gstin:
+        buyer_block += f"<br/>GSTIN: {buyer_gstin}"
+
     parties = Table(
         [
             [Paragraph("Billed by", label_style), Paragraph("Billed to", label_style)],
-            [
-                Paragraph(f"<b>{seller_name}</b><br/>{seller_detail or ''}", value_style),
-                Paragraph(f"<b>{buyer_name}</b><br/>{buyer_detail or ''}", value_style),
-            ],
+            [Paragraph(seller_block, value_style), Paragraph(buyer_block, value_style)],
         ],
         colWidths=[77.5 * mm, 77.5 * mm],
     )
     elements.append(parties)
     elements.append(Spacer(1, 10 * mm))
 
-    line_items = Table(
-        [["Description", "Amount"], [description, rupees(amount, currency)]],
-        colWidths=[120 * mm, 35 * mm],
-    )
+    has_gst = bool(gst_rate_percent)
+    item_description = f"{description} (HSN/SAC {hsn_sac_code})" if has_gst and hsn_sac_code else description
+
+    if has_gst:
+        # `amount` is the tax-inclusive total actually charged — reverse
+        # -split into taxable value + tax purely for display.
+        taxable_value = round(amount / (1 + gst_rate_percent / 100))
+        tax_total = amount - taxable_value
+        rows = [["Description", "Amount"], [item_description, rupees(taxable_value, currency)]]
+        if same_state:
+            half = gst_rate_percent / 2
+            rows.append([f"CGST @ {half:g}%", rupees(tax_total // 2, currency)])
+            rows.append([f"SGST @ {half:g}%", rupees(tax_total - tax_total // 2, currency)])
+        else:
+            rows.append([f"IGST @ {gst_rate_percent:g}%", rupees(tax_total, currency)])
+    else:
+        rows = [["Description", "Amount"], [item_description, rupees(amount, currency)]]
+
+    line_items = Table(rows, colWidths=[120 * mm, 35 * mm])
     line_items.setStyle(TableStyle([
         ("FONTSIZE", (0, 0), (-1, -1), 10),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -103,6 +134,8 @@ def render_invoice_pdf(
     ]))
     elements.append(total_table)
     elements.append(Spacer(1, 16 * mm))
+    if has_gst:
+        elements.append(Paragraph("Tax is shown for information only; amount charged did not change based on this split.", label_style))
     elements.append(Paragraph("This is a system-generated invoice.", label_style))
 
     doc.build(elements)

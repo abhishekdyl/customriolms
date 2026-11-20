@@ -558,6 +558,11 @@ export interface Org {
   razorpay_key_id: string | null;
   razorpay_key_secret_set: boolean;
   razorpay_webhook_secret_set: boolean;
+  // This org's own GST/billing details — "Billed to" on its own
+  // subscription invoice.
+  gstin: string | null;
+  billing_address: string | null;
+  billing_state: string | null;
 }
 
 export interface PlatformSettings {
@@ -575,6 +580,15 @@ export interface PlatformSettings {
   // read) — see PlatformStatus.countries, which is the already-resolved
   // list a public form actually renders from.
   allowed_countries: string[] | null;
+  // Seller details for the subscription GST invoice — see backend
+  // PlatformSettings model's docstring. None/unconfigured still
+  // produces an invoice, just without a GSTIN/tax line.
+  company_legal_name: string | null;
+  company_address: string | null;
+  company_gstin: string | null;
+  company_state: string | null;
+  gst_rate_percent: number;
+  hsn_sac_code: string;
 }
 
 // ---------- Billing (self-serve trial -> paid license) ----------

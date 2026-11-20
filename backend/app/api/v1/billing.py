@@ -16,6 +16,7 @@ from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.user import RoleName, User
 from app.schemas.billing import CheckoutOut, CheckoutRequest, OrgPaymentOut, PlanPrice, PricingOut, VerifyPaymentOut, VerifyPaymentRequest
 from app.services.invoice_service import render_invoice_pdf
+from app.services.notification_service import send_email_with_attachment_if_configured
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,32 @@ async def create_checkout(
     )
 
 
+def _render_org_payment_invoice(org: Org, settings_row: PlatformSettings, payment: OrgPayment) -> bytes:
+    """Shared by the invoice-download endpoint and the auto-email right
+    after payment — same GST computation either way, see
+    PlatformSettings.company_state's docstring for the CGST+SGST vs IGST
+    call."""
+    same_state = bool(
+        org.billing_state and settings_row.company_state
+        and org.billing_state.strip().lower() == settings_row.company_state.strip().lower()
+    )
+    return render_invoice_pdf(
+        invoice_no=str(payment.id)[:8].upper(),
+        issued_at=payment.paid_at or payment.created_at,
+        status=payment.status.value,
+        seller_name=settings_row.company_legal_name or "Riosmart",
+        seller_detail=settings_row.company_address or "Riosmart LMS — subscription billing",
+        buyer_name=org.name, buyer_detail=org.billing_address or org.contact_email,
+        description=f"{payment.plan.value.title()} plan — monthly subscription",
+        amount=payment.amount, currency=payment.currency,
+        razorpay_payment_id=payment.razorpay_payment_id,
+        seller_gstin=settings_row.company_gstin, buyer_gstin=org.gstin,
+        hsn_sac_code=settings_row.hsn_sac_code,
+        gst_rate_percent=settings_row.gst_rate_percent or None,
+        same_state=same_state,
+    )
+
+
 async def _activate_from_payment(db: AsyncSession, payment: OrgPayment) -> None:
     """Shared by /verify and the webhook — whichever hears about a
     successful payment first does this; the other finds status already
@@ -128,6 +155,31 @@ async def _activate_from_payment(db: AsyncSession, payment: OrgPayment) -> None:
     payment.status = OrgPaymentStatus.PAID
     payment.paid_at = datetime.now(timezone.utc)
     await db.commit()
+
+    # Best-effort — emails the invoice to whichever of the org's own
+    # contact_email or its (first) Org Admin's own login email is
+    # available. Never raises: a failed/skipped send shouldn't undo an
+    # otherwise-successful activation (send_email_with_attachment_if_configured
+    # itself never raises either — see its docstring).
+    to_addr = org.contact_email
+    if not to_addr:
+        admin = (
+            await db.execute(select(User).where(User.org_id == org.id, User.role == RoleName.ORG_ADMIN).order_by(User.id))
+        ).scalars().first()
+        to_addr = admin.email if admin else None
+    if to_addr:
+        settings_row = await _get_settings(db)
+        pdf_bytes = _render_org_payment_invoice(org, settings_row, payment)
+        await send_email_with_attachment_if_configured(
+            db, org.id, to_addr,
+            subject=f"Your Riosmart invoice — {payment.plan.value.title()} plan",
+            body=(
+                f"Hi,\n\nThanks for your payment — your {payment.plan.value.title()} plan subscription is now active.\n\n"
+                f"Your invoice is attached. You can also download it any time from Billing in your Riosmart dashboard.\n\n"
+                f"— Riosmart"
+            ),
+            attachment_filename=f"invoice-{str(payment.id)[:8]}.pdf", attachment_bytes=pdf_bytes,
+        )
 
 
 @router.post("/verify", response_model=VerifyPaymentOut)
@@ -199,16 +251,8 @@ async def get_my_org_payment_invoice(
         raise HTTPException(status_code=400, detail="This payment hasn't completed yet — there's nothing to invoice.")
 
     org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
-    pdf_bytes = render_invoice_pdf(
-        invoice_no=str(payment.id)[:8].upper(),
-        issued_at=payment.paid_at or payment.created_at,
-        status=payment.status.value,
-        seller_name="Riosmart", seller_detail="Riosmart LMS — subscription billing",
-        buyer_name=org.name, buyer_detail=org.contact_email,
-        description=f"{payment.plan.value.title()} plan — monthly subscription",
-        amount=payment.amount, currency=payment.currency,
-        razorpay_payment_id=payment.razorpay_payment_id,
-    )
+    settings_row = await _get_settings(db)
+    pdf_bytes = _render_org_payment_invoice(org, settings_row, payment)
     return Response(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="invoice-{str(payment.id)[:8]}.pdf"'},

@@ -34,6 +34,7 @@ export function useUpdateMyOrg() {
       name?: string; slug?: string; industry?: string; timezone?: string; contact_email?: string | null; allow_custom_username?: boolean;
       default_module_points?: number; default_course_points?: number; default_perfect_quiz_points?: number;
       razorpay_key_id?: string; razorpay_key_secret?: string; razorpay_webhook_secret?: string;
+      gstin?: string; billing_address?: string; billing_state?: string;
     }) => api.patch<Org>("/api/v1/orgs/me", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["orgs", "me"] }),
   });

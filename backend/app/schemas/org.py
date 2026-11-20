@@ -64,6 +64,11 @@ class OrgOut(BaseModel):
     razorpay_key_id: str | None = None
     razorpay_key_secret_set: bool = False
     razorpay_webhook_secret_set: bool = False
+    # This org's own GST/billing details — real columns, so these DO
+    # round-trip plainly (unlike the Razorpay secrets above).
+    gstin: str | None = None
+    billing_address: str | None = None
+    billing_state: str | None = None
 
     class Config:
         from_attributes = True
@@ -135,6 +140,13 @@ class OrgProfileUpdateRequest(BaseModel):
     razorpay_key_id: str | None = None
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
+    # This org's own GST/billing details — "Billed to" on its own
+    # subscription invoice (billing.py's get_my_org_payment_invoice). See
+    # Org model's docstring; all optional, same no-separate-clear-signal
+    # convention as the Razorpay fields just above.
+    gstin: str | None = None
+    billing_address: str | None = None
+    billing_state: str | None = None
 
 
 class PlatformSettingsOut(BaseModel):
@@ -146,6 +158,15 @@ class PlatformSettingsOut(BaseModel):
     price_growth_monthly: int
     price_enterprise_monthly: int
     razorpay_key_id: str | None = None
+    # Seller details for the subscription GST invoice — see
+    # PlatformSettings model's docstring. None/unconfigured still
+    # produces an invoice, just without a GSTIN/tax line.
+    company_legal_name: str | None = None
+    company_address: str | None = None
+    company_gstin: str | None = None
+    company_state: str | None = None
+    gst_rate_percent: int = 18
+    hsn_sac_code: str = "998316"
     # None = not configured yet, i.e. "show every country" — see the
     # model column's docstring. Never empty-list-as-sentinel: an empty
     # list here would mean "Super Admin picked zero countries", which
@@ -181,6 +202,12 @@ class PlatformSettingsUpdateRequest(BaseModel):
     # the frontend asks to clear the restriction back to "show every
     # country" — see update_platform_settings.
     allowed_countries: list[str] | None = None
+    company_legal_name: str | None = None
+    company_address: str | None = None
+    company_gstin: str | None = None
+    company_state: str | None = None
+    gst_rate_percent: int | None = Field(default=None, ge=0, le=100)
+    hsn_sac_code: str | None = None
 
 
 class PlatformStatusOut(BaseModel):

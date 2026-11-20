@@ -38,7 +38,9 @@ export default function BillingPage() {
         <h1 className="font-head text-xl text-ink">Billing</h1>
       </div>
       <p className="mb-6 text-[13px] text-ink-faint">
-        Your organization&apos;s subscription payments to Riosmart — every checkout attempt, newest first.
+        Your organization&apos;s subscription payments to Riosmart — every checkout attempt, newest first. A GST
+        invoice is emailed automatically as soon as a payment is confirmed, and you can re-download any of them
+        here any time.
       </p>
 
       {isLoading && <p className="text-sm text-ink-faint">Loading…</p>}

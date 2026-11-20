@@ -65,3 +65,31 @@ class PlatformSettings(Base):
     # full ALL_COUNTRIES list, so an unconfigured platform shows every
     # country rather than an empty dropdown.
     allowed_countries: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
+
+    # --- Seller details for the subscription GST invoice (billing.py's
+    # get_my_org_payment_invoice) — Platform Settings ▸ Billing, Super
+    # Admin only. None/unconfigured still produces an invoice (seller
+    # name falls back to "Riosmart" in invoice_service), just without a
+    # GSTIN/tax line, since there's nothing legally defensible to show
+    # until a Super Admin fills these in.
+    company_legal_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    company_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    company_gstin: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Full state name, e.g. "Delhi" — compared against Org.billing_state
+    # (case-insensitively) to decide CGST+SGST (same state) vs IGST
+    # (different/unknown state) on an org's invoice.
+    company_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Whole-percent GST slab (5/12/18/28 are India's actual slabs) applied
+    # to every subscription invoice; amount charged is treated as
+    # tax-inclusive and reverse-split into taxable value + tax at invoice
+    # time, so this can be changed later without touching past payments'
+    # stored amount. 0 (not "null") means "don't show a tax line at all" —
+    # this is the one GST field that already has a sane always-valid
+    # default, unlike the others above which need real values entered.
+    gst_rate_percent: Mapped[int] = mapped_column(Integer, default=18, nullable=False)
+    # SAC code for the invoice's line item. 998316 ("IT infrastructure &
+    # software support services") is a reasonable generic default for a
+    # SaaS subscription, but a Super Admin/accountant should confirm the
+    # correct code for Riosmart's own GST registration rather than
+    # trusting this blindly.
+    hsn_sac_code: Mapped[str] = mapped_column(String(20), default="998316", nullable=False)

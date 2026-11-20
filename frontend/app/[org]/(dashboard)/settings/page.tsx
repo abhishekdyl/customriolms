@@ -154,6 +154,68 @@ function CustomFieldsCard() {
   );
 }
 
+function BillingDetailsCard({ org }: { org: Org }) {
+  const updateOrg = useUpdateMyOrg();
+  const [gstin, setGstin] = useState(org.gstin ?? "");
+  const [billingAddress, setBillingAddress] = useState(org.billing_address ?? "");
+  const [billingState, setBillingState] = useState(org.billing_state ?? "");
+  const [saved, setSaved] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const dirty =
+    gstin !== (org.gstin ?? "") || billingAddress !== (org.billing_address ?? "") || billingState !== (org.billing_state ?? "");
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dirty) return;
+    setLocalError(null);
+    updateOrg.mutate(
+      { gstin, billing_address: billingAddress, billing_state: billingState },
+      {
+        onSuccess: () => {
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        },
+        onError: (err) => setLocalError(err instanceof ApiError ? err.message : "Couldn't save."),
+      }
+    );
+  };
+
+  return (
+    <section className="mb-6 rounded-[14px] border border-line bg-surface p-5">
+      <h2 className="mb-1 font-head text-[14.5px] text-ink">Billing details</h2>
+      <p className="mb-4 text-[12px] text-ink-faint">
+        Shown as "Billed to" on your subscription invoice (Billing page). GSTIN is optional — leave it blank if your
+        organization isn't GST-registered.
+      </p>
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        <div>
+          <Label className="mb-1 block text-[11.5px] text-ink-soft">Billing address</Label>
+          <Input value={billingAddress} onChange={(e) => setBillingAddress(e.target.value)} placeholder="Office address for invoices" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label className="mb-1 block text-[11.5px] text-ink-soft">GSTIN (optional)</Label>
+            <Input value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="29ABCDE1234F1Z5" />
+          </div>
+          <div>
+            <Label className="mb-1 block text-[11.5px] text-ink-soft">State</Label>
+            <Input value={billingState} onChange={(e) => setBillingState(e.target.value)} placeholder="e.g. Karnataka" />
+          </div>
+        </div>
+        <p className="text-[11px] text-ink-faint">
+          Your invoice shows CGST+SGST when your state matches Riosmart's own registered state, and IGST otherwise.
+        </p>
+        {localError && <p className="text-[12px] text-danger">{localError}</p>}
+        <div className="flex items-center gap-2">
+          <Button type="submit" disabled={!dirty || updateOrg.isPending}>{updateOrg.isPending ? "Saving…" : "Save"}</Button>
+          {saved && <span className="text-xs text-success">Saved</span>}
+        </div>
+      </form>
+    </section>
+  );
+}
+
 function RazorpayGatewayCard({ org }: { org: Org }) {
   const updateOrg = useUpdateMyOrg();
   const [keyId, setKeyId] = useState(org.razorpay_key_id ?? "");
@@ -454,6 +516,8 @@ export default function OrgSettingsPage() {
       </form>
 
       <CustomFieldsCard />
+
+      <BillingDetailsCard org={org} />
 
       <RazorpayGatewayCard org={org} />
 

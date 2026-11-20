@@ -118,5 +118,16 @@ class Org(Base):
     # Razorpay account, unlike the platform's single shared webhook.
     razorpay_webhook_secret: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
+    # This org's own GST/billing details — shown as "Billed to" on its
+    # subscription invoice (billing.py's get_my_org_payment_invoice).
+    # All optional: plenty of orgs (individuals, unregistered small
+    # businesses) have no GSTIN at all, and the invoice still renders
+    # fine without one — just without that line.
+    gstin: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    billing_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Full state name, e.g. "Maharashtra" — see PlatformSettings.company_state's
+    # docstring for how this decides CGST+SGST vs IGST on the invoice.
+    billing_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
     teams: Mapped[list["Team"]] = relationship(back_populates="org")
     users: Mapped[list["User"]] = relationship(back_populates="org")

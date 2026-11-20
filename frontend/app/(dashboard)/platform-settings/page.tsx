@@ -516,6 +516,12 @@ function LicensingTab() {
         price_growth_monthly: settings.price_growth_monthly,
         price_enterprise_monthly: settings.price_enterprise_monthly,
         razorpay_key_id: settings.razorpay_key_id ?? "",
+        company_legal_name: settings.company_legal_name ?? "",
+        company_address: settings.company_address ?? "",
+        company_gstin: settings.company_gstin ?? "",
+        company_state: settings.company_state ?? "",
+        gst_rate_percent: settings.gst_rate_percent,
+        hsn_sac_code: settings.hsn_sac_code,
       }
     : undefined;
   const { draft, setDraft, dirty: pricingDirty, cancel: cancelPricing } = useDraft(serverValue);
@@ -646,6 +652,71 @@ function LicensingTab() {
                 ? "Both secrets are configured. Leave a field blank to keep what's already saved."
                 : "Checkout stays disabled until both secrets are set."}
             </div>
+          </div>
+        )}
+      </section>
+
+      <section className="mb-5 rounded-xl border border-line bg-surface p-5">
+        <h2 className="mb-1 font-head text-sm text-ink">Invoice (GST)</h2>
+        <p className="mb-3.5 text-xs text-ink-faint">
+          Seller details shown on every org's downloadable subscription invoice (Org Admin ▸ Billing). Leave GSTIN
+          blank to skip the tax line on invoices entirely — useful before you've registered for GST.
+        </p>
+        {isLoading || !draft ? (
+          <p className="text-sm text-ink-faint">Loading…</p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div>
+              <Label className="mb-1.5 block">Legal / company name</Label>
+              <Input
+                value={draft.company_legal_name} placeholder="Riosmart Technologies Pvt Ltd"
+                onChange={(e) => setDraft((d) => ({ ...d, company_legal_name: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label className="mb-1.5 block">Registered address</Label>
+              <Input
+                value={draft.company_address} placeholder="123 MG Road, Bengaluru"
+                onChange={(e) => setDraft((d) => ({ ...d, company_address: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="mb-1.5 block">GSTIN</Label>
+                <Input
+                  value={draft.company_gstin} placeholder="29ABCDE1234F1Z5"
+                  onChange={(e) => setDraft((d) => ({ ...d, company_gstin: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">State</Label>
+                <Input
+                  value={draft.company_state} placeholder="Karnataka"
+                  onChange={(e) => setDraft((d) => ({ ...d, company_state: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="mb-1.5 block">GST rate (%)</Label>
+                <Input
+                  type="number" min={0} max={100} value={draft.gst_rate_percent}
+                  onChange={(e) => setDraft((d) => ({ ...d, gst_rate_percent: Math.max(0, Number(e.target.value) || 0) }))}
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">HSN/SAC code</Label>
+                <Input
+                  value={draft.hsn_sac_code} placeholder="998316"
+                  onChange={(e) => setDraft((d) => ({ ...d, hsn_sac_code: e.target.value }))}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-ink-faint">
+              An org&apos;s invoice shows CGST+SGST when its own billing state (set from its Org Settings) matches
+              the state above, and IGST otherwise. Confirm the HSN/SAC code with your accountant before relying on
+              it — 998316 is a reasonable default for a software subscription, not a guarantee.
+            </p>
           </div>
         )}
       </section>

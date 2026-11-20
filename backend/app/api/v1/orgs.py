@@ -82,6 +82,7 @@ async def update_my_org(body: OrgProfileUpdateRequest, db: AsyncSession = Depend
         "name", "slug", "industry", "timezone", "contact_email", "allow_custom_username",
         "default_module_points", "default_course_points", "default_perfect_quiz_points",
         "razorpay_key_id", "razorpay_key_secret", "razorpay_webhook_secret",
+        "gstin", "billing_address", "billing_state",
     ):
         value = getattr(body, field)
         if value is not None:
@@ -211,6 +212,12 @@ def _settings_out(row: PlatformSettings) -> PlatformSettingsOut:
         razorpay_key_secret_set=bool(row.razorpay_key_secret),
         razorpay_webhook_secret_set=bool(row.razorpay_webhook_secret),
         allowed_countries=row.allowed_countries,
+        company_legal_name=row.company_legal_name,
+        company_address=row.company_address,
+        company_gstin=row.company_gstin,
+        company_state=row.company_state,
+        gst_rate_percent=row.gst_rate_percent,
+        hsn_sac_code=row.hsn_sac_code,
     )
 
 
@@ -260,6 +267,18 @@ async def update_platform_settings(body: PlatformSettingsUpdateRequest, db: Asyn
         # "show every country" — stored as NULL either way, see the
         # model column's docstring, never as an actual empty list.
         settings_row.allowed_countries = body.allowed_countries or None
+    if body.company_legal_name is not None:
+        settings_row.company_legal_name = body.company_legal_name
+    if body.company_address is not None:
+        settings_row.company_address = body.company_address
+    if body.company_gstin is not None:
+        settings_row.company_gstin = body.company_gstin
+    if body.company_state is not None:
+        settings_row.company_state = body.company_state
+    if body.gst_rate_percent is not None:
+        settings_row.gst_rate_percent = body.gst_rate_percent
+    if body.hsn_sac_code is not None:
+        settings_row.hsn_sac_code = body.hsn_sac_code
     await db.commit()
     await db.refresh(settings_row)
     return _settings_out(settings_row)
