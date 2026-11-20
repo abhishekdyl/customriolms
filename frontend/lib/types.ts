@@ -402,6 +402,33 @@ export interface Course extends CourseListItem {
   /** Fresh presigned URL, null when no cover image is set. */
   cover_image_url: string | null;
   modules: Module[];
+  /** Enrolment methods, beyond the always-available manual assign above.
+   * See backend Course model's own docstring on these five. */
+  self_enrol_enabled: boolean;
+  /** Empty = no country restriction. */
+  self_enrol_allowed_countries: string[];
+  self_enrol_required_course_id: string | null;
+  /** Populated by the backend (not a real column) for display. */
+  self_enrol_required_course_title: string | null;
+  paid_enrol_enabled: boolean;
+  /** Paise — null until an admin sets a price. */
+  paid_enrol_price: number | null;
+}
+
+/** One course a learner isn't enrolled in yet but could self or paid-enrol
+ * into — GET /courses/catalog. See backend CatalogCourseOut. */
+export interface CatalogCourse {
+  id: string;
+  title: string;
+  category_name: string | null;
+  duration_label: string;
+  cover_image_url: string | null;
+  self_enrol_enabled: boolean;
+  /** Null when self_enrol_enabled is false, or when eligible right now;
+   * otherwise why self-enrol is currently blocked. */
+  self_enrol_blocked_reason: string | null;
+  paid_enrol_enabled: boolean;
+  paid_enrol_price: number | null; // paise
 }
 
 /** One module that actually counts toward the weighted course grade —

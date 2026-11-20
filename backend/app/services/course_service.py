@@ -10,6 +10,7 @@ from app.models.badge import Badge
 from app.models.category import Category
 from app.models.course import Course
 from app.models.course_due_override import CourseDueOverride
+from app.models.course_enrolment_payment import CourseEnrolmentPayment, CourseEnrolmentPaymentStatus
 from app.models.course_group import CourseGroup
 from app.models.module import Module, ModuleQuizQuestion, ModuleType
 from app.models.quiz_attempt import QuizAttempt
@@ -17,9 +18,9 @@ from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.course import (
-    AttemptOverrideOut, CalendarItemOut, CourseGroupIn, CourseGroupOut, CourseGroupUpdate, CourseListItem,
-    CourseModuleProgressOut, DueOverrideOut, EnrolledLearnerOut, GradableModuleOut, GradebookOut, GradebookRowOut,
-    LearnerCourseOut, LearnerModuleOut, LearnerModuleProgressOut, ModuleCreate, ModuleProgressCellOut,
+    AttemptOverrideOut, CalendarItemOut, CatalogCourseOut, CourseGroupIn, CourseGroupOut, CourseGroupUpdate,
+    CourseListItem, CourseModuleProgressOut, DueOverrideOut, EnrolledLearnerOut, GradableModuleOut, GradebookOut,
+    GradebookRowOut, LearnerCourseOut, LearnerModuleOut, LearnerModuleProgressOut, ModuleCreate, ModuleProgressCellOut,
     ModuleSummaryOut, ModuleUpdate, MyCourseItem, QuizAttemptOut,
 )
 from app.schemas.question import QuestionLearnerOut
@@ -250,6 +251,13 @@ async def get_course_or_404(db: AsyncSession, course_id: uuid.UUID, org_id: uuid
     # plain transient attribute, read straight off the now selectin-loaded
     # `category` relationship, rather than a second query.
     course.category_name = course.category.name if course.category else None
+    # self_enrol_required_course_title — same transient-attribute pattern,
+    # one extra query only when the restriction is actually set.
+    course.self_enrol_required_course_title = None
+    if course.self_enrol_required_course_id:
+        course.self_enrol_required_course_title = (
+            await db.execute(select(Course.title).where(Course.id == course.self_enrol_required_course_id))
+        ).scalar_one_or_none()
     return course
 
 
@@ -865,3 +873,86 @@ async def set_attempt_override(db: AsyncSession, module: Module, user_id: uuid.U
         db.add(existing)
     await db.commit()
     return AttemptOverrideOut(module_id=module.id, user_id=user_id, extra_attempts=extra_attempts)
+
+
+# ---------- Enrolment methods (self-enrol / paid enrol) ----------
+async def self_enrol_blocked_reason(db: AsyncSession, course: Course, user: User) -> str | None:
+    """Why `user` can't self-enrol in `course` right now, or None if they
+    can — doesn't check course.self_enrol_enabled itself (callers check
+    that separately, since "not open at all" and "open but restricted"
+    are different messages to show)."""
+    if course.self_enrol_allowed_countries and (user.country not in course.self_enrol_allowed_countries):
+        allowed = ", ".join(course.self_enrol_allowed_countries)
+        return f"Self-enrolment on this course is limited to learners in: {allowed}"
+    if course.self_enrol_required_course_id:
+        required = (
+            await db.execute(select(Course).where(Course.id == course.self_enrol_required_course_id))
+        ).scalar_one_or_none()
+        if required is not None:  # a deleted required course is treated as no restriction, same forward-compat
+            done = await progress_svc.completed_map(db, user.id)
+            pct, _, _ = progress_svc.course_progress(required, done)
+            if pct < 100:
+                return f'You need to complete "{required.title}" before you can self-enrol in this course.'
+    return None
+
+
+async def self_enrol(db: AsyncSession, course: Course, user: User) -> None:
+    """The self-enrol action itself — adds `user` to Course.assigned_user_ids,
+    same union-merge convention as assign_course, after re-checking every
+    gate server-side (never trust a stale client read)."""
+    if not course.self_enrol_enabled:
+        raise HTTPException(status_code=400, detail="Self-enrolment isn't open for this course")
+    if course.closes_at is not None and datetime.now(timezone.utc) > course.closes_at:
+        raise HTTPException(status_code=400, detail="This course is closed")
+    reason = await self_enrol_blocked_reason(db, course, user)
+    if reason:
+        raise HTTPException(status_code=403, detail=reason)
+    if user.id in (course.assigned_user_ids or []):
+        return  # already enrolled — no-op, not an error
+    course.assigned_user_ids = list(set(course.assigned_user_ids or []) | {user.id})
+    await db.commit()
+
+
+async def list_enrolable_courses(db: AsyncSession, user: User) -> list[CatalogCourseOut]:
+    """Published courses this learner isn't enrolled in yet (directly or
+    via their team) but could be, through self or paid enrolment —
+    backs GET /courses/catalog. A course with neither method on never
+    shows up here; it only ever reaches a learner via manual assignment,
+    which already puts it straight into list_my_courses."""
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(Course, Category.name.label("category_name"))
+        .outerjoin(Category, Course.category_id == Category.id)
+        .where(
+            Course.org_id == user.org_id,
+            Course.published == True,  # noqa: E712
+            or_(Course.self_enrol_enabled == True, Course.paid_enrol_enabled == True),  # noqa: E712
+            or_(Course.closes_at.is_(None), Course.closes_at > now),
+            ~or_(*_assigned_to(user)),
+        )
+        .order_by(Course.title)
+    )
+    out = []
+    for course, category_name in result.all():
+        blocked = await self_enrol_blocked_reason(db, course, user) if course.self_enrol_enabled else None
+        out.append(CatalogCourseOut(
+            id=course.id, title=course.title, category_name=category_name, duration_label=course.duration_label,
+            cover_image_url=storage_service.presigned_get_url(course.cover_image_key) if course.cover_image_key else None,
+            self_enrol_enabled=course.self_enrol_enabled, self_enrol_blocked_reason=blocked,
+            paid_enrol_enabled=course.paid_enrol_enabled, paid_enrol_price=course.paid_enrol_price,
+        ))
+    return out
+
+
+async def activate_course_payment(db: AsyncSession, payment: CourseEnrolmentPayment) -> None:
+    """Shared by /courses/{id}/enrol/verify and billing.py's
+    /billing/webhook/razorpay (which checks this table too — see that
+    function) — whichever hears about a successful payment first does
+    this; the other finds status already PAID and no-ops. Mirrors
+    billing.py's _activate_from_payment exactly, just enrolling the
+    learner instead of activating an org."""
+    course = (await db.execute(select(Course).where(Course.id == payment.course_id))).scalar_one()
+    course.assigned_user_ids = list(set(course.assigned_user_ids or []) | {payment.user_id})
+    payment.status = CourseEnrolmentPaymentStatus.PAID
+    payment.paid_at = datetime.now(timezone.utc)
+    await db.commit()

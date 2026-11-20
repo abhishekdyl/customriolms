@@ -284,6 +284,16 @@ class CourseUpdate(BaseModel):
     # validated in the endpoint, same as completion_module_ids above.
     prerequisite_course_ids: list[uuid.UUID] | None = None
 
+    # Enrolment methods — see Course model's own docstring on these five.
+    self_enrol_enabled: bool | None = None
+    self_enrol_allowed_countries: list[str] | None = None
+    # Sent as a real id to set it, or explicitly null to clear it —
+    # validated against this org's own courses (and "not itself") in the
+    # endpoint, same as prerequisite_course_ids above.
+    self_enrol_required_course_id: uuid.UUID | None = None
+    paid_enrol_enabled: bool | None = None
+    paid_enrol_price: int | None = Field(default=None, ge=1)
+
     _check_opens = field_validator("opens_at")(_reject_past)
     _check_closes = field_validator("closes_at")(_reject_past)
 
@@ -543,6 +553,16 @@ class CourseOut(BaseModel):
     # Prerequisites / learning paths — see Course.prerequisite_course_ids'
     # docstring.
     prerequisite_course_ids: list[uuid.UUID] = []
+    # Enrolment methods — see Course model's own docstring on these five.
+    # self_enrol_required_course_title is populated by the service (same
+    # pattern as category_name above), not a DB column, so the admin
+    # settings panel can show a name without a second round trip.
+    self_enrol_enabled: bool = False
+    self_enrol_allowed_countries: list[str] = []
+    self_enrol_required_course_id: uuid.UUID | None = None
+    self_enrol_required_course_title: str | None = None
+    paid_enrol_enabled: bool = False
+    paid_enrol_price: int | None = None
     cover_image_url: str | None = None
     # Not sent to the client (exclude=True) — same file_key/file_url
     # pattern as ModuleOut above: the storage key is permanent, the
@@ -600,6 +620,54 @@ class MyCourseItem(CourseListItem):
     # module. locked_reason names the first unmet prerequisite.
     locked: bool = False
     locked_reason: str | None = None
+
+
+# ---------- Enrolment catalog (self/paid enrol) ----------
+class CatalogCourseOut(BaseModel):
+    """One course a learner isn't enrolled in yet but could be, via self
+    or paid enrolment (GET /courses/catalog, list_enrolable_courses) —
+    manual assignment needs none of this, it just shows up directly in
+    MyCourseItem once an admin does it. Deliberately lighter than
+    CourseListItem: nothing about progress (there isn't any yet) and
+    nothing authoring-only."""
+    id: uuid.UUID
+    title: str
+    category_name: str | None = None
+    duration_label: str
+    cover_image_url: str | None = None
+    self_enrol_enabled: bool = False
+    # Null when self_enrol_enabled is false (nothing to be blocked from);
+    # otherwise null means eligible right now, non-null is why not — see
+    # course_service.self_enrol_blocked_reason.
+    self_enrol_blocked_reason: str | None = None
+    paid_enrol_enabled: bool = False
+    paid_enrol_price: int | None = None  # paise
+
+
+class SelfEnrolOut(BaseModel):
+    enrolled: bool = True
+
+
+class CourseEnrolCheckoutOut(BaseModel):
+    """Mirrors billing.py's CheckoutOut — handed straight to Razorpay's
+    Checkout widget on the frontend."""
+    razorpay_order_id: str
+    razorpay_key_id: str
+    amount: int  # paise
+    currency: str
+    course_id: uuid.UUID
+
+
+class CourseEnrolVerifyRequest(BaseModel):
+    """Mirrors billing.py's VerifyPaymentRequest — the three fields
+    Razorpay Checkout's success callback hands back."""
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+class CourseEnrolVerifyOut(BaseModel):
+    enrolled: bool = True
 
 
 # ---------- Learner-facing course view ----------

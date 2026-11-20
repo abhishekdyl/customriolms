@@ -1,34 +1,15 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Rocket, Check } from "lucide-react";
 import { useLogout } from "@/lib/hooks/use-auth";
 import { usePricing, useCheckout, useVerifyPayment } from "@/lib/hooks/use-billing";
+import { useRazorpayScript } from "@/lib/hooks/use-razorpay-script";
 import { planLabel as PLAN_LABEL } from "@/lib/org-display";
 import type { OrgPlan } from "@/lib/types";
 
 function formatRupees(paise: number): string {
   return `₹${(paise / 100).toLocaleString("en-IN")}`;
-}
-
-/** Loads Razorpay's checkout widget script once, on demand — not in
- * app/layout.tsx, since most visitors never reach this page. */
-function useRazorpayScript(): boolean {
-  const [ready, setReady] = useState(() => typeof window !== "undefined" && !!(window as any).Razorpay);
-  useEffect(() => {
-    if (ready) return;
-    const existing = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
-    if (existing) {
-      existing.addEventListener("load", () => setReady(true));
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.async = true;
-    script.onload = () => setReady(true);
-    document.body.appendChild(script);
-  }, [ready]);
-  return ready;
 }
 
 /** Shown instead of the real dashboard once a self-registered org's

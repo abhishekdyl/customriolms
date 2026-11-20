@@ -20,6 +20,7 @@ import { useCertTemplates } from "@/lib/hooks/use-cert-templates";
 import { useDraft } from "@/lib/hooks/use-draft";
 import { SaveBar } from "@/components/ui/save-bar";
 import { ModuleEditorRow, restrictionValid } from "@/components/shell/courses/module-editor";
+import { EnrolmentSettingsPanel } from "@/components/shell/courses/enrolment-settings-panel";
 import { GroupsPanel } from "@/components/shell/courses/groups-panel";
 import { ActivityPanel } from "@/components/shell/courses/activity-panel";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
@@ -637,7 +638,9 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
       )}
 
       {tab === "participants" && (
-        <div className="rounded-xl border border-line bg-surface p-4">
+        <div className="flex flex-col gap-4">
+          <EnrolmentSettingsPanel courseId={id} course={course} />
+          <div className="rounded-xl border border-line bg-surface p-4">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <p className="text-xs font-medium text-ink-faint">
@@ -723,6 +726,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
               ))}
             </div>
           )}
+          </div>
         </div>
       )}
 

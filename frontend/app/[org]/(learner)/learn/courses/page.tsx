@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { CourseCard } from "@/components/learner/course-card";
+import { CatalogList } from "@/components/learner/catalog-list";
 import { Topbar } from "@/components/shell/topbar";
 import { COURSE_FILTERS, courseStatus, type CourseFilter } from "@/lib/learner-courses";
 import { useMyCourses } from "@/lib/hooks/use-my-courses";
 import { cn } from "@/lib/utils";
 
 export default function MyCoursesPage() {
+  const [view, setView] = useState<"mine" | "catalog">("mine");
   const { data: courses, isLoading, isError } = useMyCourses();
   const [filter, setFilter] = useState<CourseFilter>("All");
   const [search, setSearch] = useState("");
@@ -25,6 +27,21 @@ export default function MyCoursesPage() {
       <Topbar title="My Courses" search={search} onSearch={setSearch} />
 
       <div className="mx-auto w-full max-w-[1080px] flex-1 px-4 pb-6 pt-3 md:px-8 md:pt-6">
+        <div className="mb-4 flex p-1 bg-line-soft rounded-[10px] w-full md:w-[320px]">
+          {([["mine", "My Courses"], ["catalog", "Browse / Enrol"]] as const).map(([id, label]) => (
+            <button
+              key={id} type="button" onClick={() => setView(id)}
+              className={cn("flex-1 py-2 rounded-lg", view === id && "bg-surface")}
+            >
+              <span className={cn("text-[12.5px]", view === id ? "text-ink font-semibold" : "text-ink-faint")}>{label}</span>
+            </button>
+          ))}
+        </div>
+
+        {view === "catalog" ? (
+          <CatalogList />
+        ) : (
+        <>
         <div className="mb-4 flex gap-1.5 overflow-x-auto">
           {COURSE_FILTERS.map((f) => (
             <button
@@ -67,6 +84,8 @@ export default function MyCoursesPage() {
               </div>
             )}
           </div>
+        )}
+        </>
         )}
       </div>
     </>

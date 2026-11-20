@@ -125,6 +125,47 @@ class Course(Base):
     # silently disappears from a learner's course list.
     published: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("true"), nullable=False)
 
+    # Enrolment methods — how a learner ends up enrolled, beyond the
+    # always-available manual path (an Org Admin assigning a team/user
+    # directly via assigned_team_ids/assigned_user_ids above, which needs
+    # no flag of its own since it's never gated). Both default OFF —
+    # server_default "false" so every course that existed before these
+    # columns did keeps behaving exactly as before (manual-only) until an
+    # admin opts in.
+    #
+    # self_enrol_enabled: when true, any org member can enrol themselves
+    # (course_service.self_enrol) without an admin assigning them,
+    # subject to the two restrictions below — same "open course" idea as
+    # Moodle's self-enrolment method.
+    self_enrol_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # Empty list = no country restriction (anyone can self-enrol). Plain
+    # string array, not a join table — same reasoning as skill_ids/
+    # badge_ids elsewhere in this codebase: short admin-authored lists,
+    # no need for a relationship. Matched against User.country exactly.
+    self_enrol_allowed_countries: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    # Soft-referenced course id (same convention as prerequisite_course_ids
+    # above) that must be 100% complete for THIS user before self-enrol is
+    # allowed. Null = no such restriction. Deliberately separate from
+    # prerequisite_course_ids: that one gates content/completion for a
+    # learner already enrolled; this one gates the self-enrol action
+    # itself, before they're enrolled at all — same course could plausibly
+    # want different values for each, so one field doing both would be
+    # the wrong default to force.
+    self_enrol_required_course_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True
+    )
+    # paid_enrol_enabled: when true (and paid_enrol_price is set), a
+    # learner enrols by paying paid_enrol_price through Razorpay Checkout
+    # (see api/v1/courses.py's enrol/checkout + enrol/verify, mirroring
+    # billing.py's org-subscription checkout exactly) rather than an admin
+    # assigning them or a free self-enrol click.
+    paid_enrol_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # Paise (smallest INR unit) — same convention as OrgPayment.amount /
+    # PlatformSettings.price_*_monthly. Null until an admin sets a price;
+    # paid_enrol_enabled can't be turned on without one (validated at the
+    # API layer, not here, since that needs the pair checked together).
+    paid_enrol_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     org: Mapped["Org"] = relationship()
     # lazy="selectin": both of these get read into CourseOut on every
     # response. Left as the SQLAlchemy default (lazy="select"), accessing

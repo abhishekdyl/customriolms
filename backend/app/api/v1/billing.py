@@ -198,10 +198,26 @@ async def razorpay_webhook(request: Request, db: AsyncSession = Depends(get_db))
     order_id = payload["payload"]["payment"]["entity"]["order_id"]
     payment_id = payload["payload"]["payment"]["entity"]["id"]
     payment = (await db.execute(select(OrgPayment).where(OrgPayment.razorpay_order_id == order_id))).scalar_one_or_none()
-    if payment is None:
+    if payment is not None:
+        if payment.status != OrgPaymentStatus.PAID:
+            payment.razorpay_payment_id = payment_id
+            await _activate_from_payment(db, payment)
+        return {"ok": True}
+
+    # Not an org-plan payment — the same one webhook URL/secret also
+    # covers course paid-enrolment checkouts (see courses.py's
+    # /enrol/checkout + /enrol/verify), so check that table before giving
+    # up on this order_id entirely.
+    from app.models.course_enrolment_payment import CourseEnrolmentPayment, CourseEnrolmentPaymentStatus
+    from app.services.course_service import activate_course_payment
+
+    course_payment = (
+        await db.execute(select(CourseEnrolmentPayment).where(CourseEnrolmentPayment.razorpay_order_id == order_id))
+    ).scalar_one_or_none()
+    if course_payment is None:
         logger.warning("Razorpay webhook for unknown order_id %s", order_id)
         return {"ok": True}
-    if payment.status != OrgPaymentStatus.PAID:
-        payment.razorpay_payment_id = payment_id
-        await _activate_from_payment(db, payment)
+    if course_payment.status != CourseEnrolmentPaymentStatus.PAID:
+        course_payment.razorpay_payment_id = payment_id
+        await activate_course_payment(db, course_payment)
     return {"ok": True}

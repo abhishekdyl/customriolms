@@ -1,40 +1,49 @@
+import logging
 import mimetypes
 import uuid
 
+import razorpay
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
+from razorpay.errors import SignatureVerificationError
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_optional_user_via_header_or_query, require_capability
+from app.api.v1.billing import _get_settings, _razorpay_client
 from app.core.database import get_db
 from app.models.category import Category
 from app.models.course import Course
+from app.models.course_enrolment_payment import CourseEnrolmentPayment, CourseEnrolmentPaymentStatus
 from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
 from app.schemas.audit_log import AuditLogOut
 from app.schemas.course import (
-    AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CourseAssignRequest, CourseCreate, CourseDuplicateRequest,
-    CourseGroupIn, CourseGroupOut, CourseGroupUpdate, CourseImportRequest, CourseImportResult, CourseListItem,
+    AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CatalogCourseOut, CourseAssignRequest, CourseCreate,
+    CourseDuplicateRequest, CourseEnrolCheckoutOut, CourseEnrolVerifyOut, CourseEnrolVerifyRequest, CourseGroupIn,
+    CourseGroupOut, CourseGroupUpdate, CourseImportRequest, CourseImportResult, CourseListItem,
     CourseModuleProgressOut, CourseOut, CourseUpdate, DueOverrideOut, DueOverrideSet, EnrolledLearnerOut,
     GradebookOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem,
-    QuizAttemptOut,
+    QuizAttemptOut, SelfEnrolOut,
 )
 from app.schemas.learn import (
     CompleteRequest, CompleteResult, QuizResult, QuizSubmit, ScormCheckpointIn, ScormProgressOut, WatchCheckpointIn,
     WatchProgressOut,
 )
 from app.services.course_service import (
-    _assigned_to, _validate_ids_belong_to_org, _would_create_cycle, add_module, assign_course, create_course_group,
-    delete_course_group, get_course_or_404, get_my_course, list_attempt_overrides, list_calendar,
-    list_course_groups, list_courses, list_enrolled, list_gradebook, list_module_progress, list_my_courses,
-    list_quiz_attempts, remove_module_content, reorder_modules, set_attempt_override, set_due_override,
-    update_course_group, update_module, upload_module_content, upload_scorm_package,
+    _assigned_to, _validate_ids_belong_to_org, _would_create_cycle, activate_course_payment, add_module,
+    assign_course, create_course_group, delete_course_group, get_course_or_404, get_my_course,
+    list_attempt_overrides, list_calendar, list_course_groups, list_courses, list_enrolable_courses, list_enrolled,
+    list_gradebook, list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content,
+    reorder_modules, self_enrol, set_attempt_override, set_due_override, update_course_group, update_module,
+    upload_module_content, upload_scorm_package,
 )
 from app.services.course_transfer_service import duplicate_course, export_course_snapshot, import_course_snapshot
 from app.services import audit_log_service
 from app.services import learn_service as progress_svc
 from app.services import storage_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/courses", tags=["courses"])
 
@@ -59,6 +68,106 @@ async def get_my_courses(db: AsyncSession = Depends(get_db), current_user: User 
 async def get_my_course_detail(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Course view for the learner it's assigned to — modules and quiz questions, no answers."""
     return await get_my_course(db, course_id, current_user)
+
+
+@router.get("/catalog", response_model=list[CatalogCourseOut])
+async def get_catalog(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Published courses this user isn't enrolled in yet but could self or
+    paid-enrol into — the "browse" view alongside /mine's "already
+    assigned" one. Declared before "/{course_id}" for the same reason
+    "/mine" is (see that comment)."""
+    return await list_enrolable_courses(db, current_user)
+
+
+async def _get_published_course_or_404(db: AsyncSession, course_id: uuid.UUID, org_id: uuid.UUID) -> Course:
+    """Same org-scoped lookup as get_course_or_404, plus the draft gate
+    list_my_courses/get_my_course apply — a learner enrolling themselves
+    (free or paid) must never be able to do it to a course that isn't
+    live yet, even by guessing/reusing an id."""
+    course = await get_course_or_404(db, course_id, org_id)
+    if not course.published:
+        raise HTTPException(status_code=404, detail="Course not found")
+    return course
+
+
+@router.post("/{course_id}/self-enrol", response_model=SelfEnrolOut)
+async def self_enrol_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Learner enrols themselves — every restriction (country, required
+    course) is re-checked server-side in course_service.self_enrol, never
+    trusted from what the catalog call showed earlier."""
+    course = await _get_published_course_or_404(db, course_id, current_user.org_id)
+    await self_enrol(db, course, current_user)
+    return SelfEnrolOut(enrolled=True)
+
+
+@router.post("/{course_id}/enrol/checkout", response_model=CourseEnrolCheckoutOut)
+async def create_course_enrol_checkout(
+    course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Mints a Razorpay order for this learner's own paid enrolment —
+    exact mirror of billing.py's create_checkout, scoped to a course
+    instead of an org plan. Nothing is enrolled yet; that only happens
+    once /enrol/verify or the webhook confirms a real payment."""
+    course = await _get_published_course_or_404(db, course_id, current_user.org_id)
+    if not course.paid_enrol_enabled or not course.paid_enrol_price:
+        raise HTTPException(status_code=400, detail="Paid enrolment isn't available for this course")
+    if current_user.id in (course.assigned_user_ids or []):
+        raise HTTPException(status_code=400, detail="You're already enrolled in this course")
+
+    settings_row = await _get_settings(db)
+    client = _razorpay_client(settings_row)
+    try:
+        order = client.order.create({"amount": course.paid_enrol_price, "currency": "INR", "payment_capture": 1})
+    except Exception:
+        logger.exception("Razorpay order creation failed for course %s", course.id)
+        raise HTTPException(status_code=502, detail="Couldn't reach the payment gateway. Try again in a moment.")
+
+    payment = CourseEnrolmentPayment(
+        org_id=current_user.org_id, course_id=course.id, user_id=current_user.id,
+        amount=course.paid_enrol_price, currency="INR", razorpay_order_id=order["id"],
+        status=CourseEnrolmentPaymentStatus.CREATED,
+    )
+    db.add(payment)
+    await db.commit()
+    return CourseEnrolCheckoutOut(
+        razorpay_order_id=order["id"], razorpay_key_id=settings_row.razorpay_key_id,
+        amount=course.paid_enrol_price, currency="INR", course_id=course.id,
+    )
+
+
+@router.post("/{course_id}/enrol/verify", response_model=CourseEnrolVerifyOut)
+async def verify_course_enrol_payment(
+    course_id: uuid.UUID, body: CourseEnrolVerifyRequest,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """The fast path, same reasoning as billing.py's verify_payment — the
+    webhook (checked by billing.py's razorpay_webhook) is the slower,
+    authoritative backup for when this call never happens."""
+    payment = (
+        await db.execute(select(CourseEnrolmentPayment).where(CourseEnrolmentPayment.razorpay_order_id == body.razorpay_order_id))
+    ).scalar_one_or_none()
+    if payment is None or payment.course_id != course_id or payment.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="No matching checkout found for this order.")
+    if payment.status == CourseEnrolmentPaymentStatus.PAID:
+        return CourseEnrolVerifyOut(enrolled=True)  # webhook (or an earlier call) already handled it
+
+    settings_row = await _get_settings(db)
+    client = _razorpay_client(settings_row)
+    try:
+        client.utility.verify_payment_signature({
+            "razorpay_order_id": body.razorpay_order_id,
+            "razorpay_payment_id": body.razorpay_payment_id,
+            "razorpay_signature": body.razorpay_signature,
+        })
+    except SignatureVerificationError:
+        payment.status = CourseEnrolmentPaymentStatus.FAILED
+        await db.commit()
+        raise HTTPException(status_code=400, detail="Payment verification failed. If money was deducted, contact support.")
+
+    payment.razorpay_payment_id = body.razorpay_payment_id
+    payment.razorpay_signature = body.razorpay_signature
+    await activate_course_payment(db, payment)
+    return CourseEnrolVerifyOut(enrolled=True)
 
 
 async def _module_belongs_to_course(module_id: uuid.UUID, course_id: uuid.UUID, db: AsyncSession) -> None:
@@ -285,6 +394,19 @@ async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSessi
         if ids and await _would_create_cycle(db, course.id, ids):
             raise HTTPException(status_code=400, detail="That would create a prerequisite cycle")
         data["prerequisite_course_ids"] = ids
+    if "self_enrol_required_course_id" in data and data["self_enrol_required_course_id"] is not None:
+        req_id = data["self_enrol_required_course_id"]
+        if req_id == course.id:
+            raise HTTPException(status_code=400, detail="A course can't require itself for self-enrolment")
+        await _validate_ids_belong_to_org(db, Course, [req_id], current_user.org_id, "required course")
+    if "self_enrol_allowed_countries" in data:
+        # Dedup + trim, same light cleanup as any free-text list elsewhere
+        # in this codebase — [] (the default) means no restriction.
+        data["self_enrol_allowed_countries"] = sorted({c.strip() for c in (data["self_enrol_allowed_countries"] or []) if c.strip()})
+    resolved_paid_enabled = data.get("paid_enrol_enabled", course.paid_enrol_enabled)
+    resolved_paid_price = data.get("paid_enrol_price", course.paid_enrol_price)
+    if resolved_paid_enabled and not resolved_paid_price:
+        raise HTTPException(status_code=400, detail="Set a price before turning paid enrolment on")
     old_published = course.published
     for key, value in data.items():
         setattr(course, key, value)
