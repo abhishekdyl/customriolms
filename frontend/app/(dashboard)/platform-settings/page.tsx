@@ -518,8 +518,11 @@ function LicensingTab() {
         razorpay_key_id: settings.razorpay_key_id ?? "",
         company_legal_name: settings.company_legal_name ?? "",
         company_address: settings.company_address ?? "",
+        company_city: settings.company_city ?? "",
+        company_pincode: settings.company_pincode ?? "",
         company_gstin: settings.company_gstin ?? "",
         company_state: settings.company_state ?? "",
+        support_email: settings.support_email ?? "",
         gst_enabled: settings.gst_enabled,
         gst_rate_percent: settings.gst_rate_percent,
         gateway_fee_enabled: settings.gateway_fee_enabled,
@@ -722,12 +725,19 @@ function LicensingTab() {
                 onChange={(e) => setDraft((d) => ({ ...d, company_address: e.target.value }))}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div>
-                <Label className="mb-1.5 block">GSTIN</Label>
+                <Label className="mb-1.5 block">City</Label>
                 <Input
-                  value={draft.company_gstin} placeholder="29ABCDE1234F1Z5"
-                  onChange={(e) => setDraft((d) => ({ ...d, company_gstin: e.target.value }))}
+                  value={draft.company_city} placeholder="Bengaluru"
+                  onChange={(e) => setDraft((d) => ({ ...d, company_city: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Pincode</Label>
+                <Input
+                  value={draft.company_pincode} placeholder="560001"
+                  onChange={(e) => setDraft((d) => ({ ...d, company_pincode: e.target.value }))}
                 />
               </div>
               <div>
@@ -737,6 +747,13 @@ function LicensingTab() {
                   onChange={(e) => setDraft((d) => ({ ...d, company_state: e.target.value }))}
                 />
               </div>
+            </div>
+            <div>
+              <Label className="mb-1.5 block">GSTIN</Label>
+              <Input
+                value={draft.company_gstin} placeholder="29ABCDE1234F1Z5" className="max-w-[260px]"
+                onChange={(e) => setDraft((d) => ({ ...d, company_gstin: e.target.value }))}
+              />
             </div>
             <div>
               <Label className="mb-1.5 block">HSN/SAC code</Label>
@@ -752,6 +769,15 @@ function LicensingTab() {
               is a reasonable default for a software subscription, not a guarantee. A rate change here never
               rewrites an invoice already issued; it only applies to payments made after the change.
             </p>
+
+            <h3 className="mt-1 font-head text-[13px] text-ink">Support contact</h3>
+            <div className="max-w-[320px]">
+              <Label className="mb-1.5 block">Support email</Label>
+              <Input
+                type="email" value={draft.support_email} placeholder="support@riosmart.com"
+                onChange={(e) => setDraft((d) => ({ ...d, support_email: e.target.value }))}
+              />
+            </div>
           </div>
         )}
       </section>

@@ -73,12 +73,21 @@ class PlatformSettings(Base):
     # GSTIN/tax line, since there's nothing legally defensible to show
     # until a Super Admin fills these in.
     company_legal_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # company_address is the street/location line; city/pincode are
+    # separate so the invoice shows a proper multi-line address instead
+    # of relying on one admin to type everything into one field.
     company_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    company_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    company_pincode: Mapped[str | None] = mapped_column(String(20), nullable=True)
     company_gstin: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Full state name, e.g. "Delhi" — compared against Org.billing_state
     # (case-insensitively) to decide CGST+SGST (same state) vs IGST
     # (different/unknown state) on an org's invoice.
     company_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Shown wherever the platform needs to give a customer/learner a way
+    # to reach Riosmart itself — currently just a plain contact line on
+    # Platform Settings; nothing else reads this yet.
+    support_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Whole-percent GST slab (5/12/18/28 are India's actual slabs),
     # ADDED ON TOP of a plan's price at checkout time when gst_enabled is
     # on — e.g. a ₹1999 plan with GST on becomes ₹1999 + 18% charged, not

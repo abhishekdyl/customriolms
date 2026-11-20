@@ -19,6 +19,21 @@ def rupees(paise: int, currency: str = "INR") -> str:
     return f"{symbol}{paise / 100:,.2f}"
 
 
+def compose_address(line: str | None, city: str | None = None, pincode: str | None = None, country: str | None = None) -> str | None:
+    """Builds the multi-line seller_detail/buyer_detail string
+    render_invoice_pdf expects (it renders `<br/>` inside these as a
+    line break — see seller_block/buyer_block below). Each part is
+    optional and simply skipped when blank, so a seller/buyer with only
+    some fields filled in still gets a sensible (not blank, not
+    comma-littered) address rather than every caller re-implementing
+    this blank-skipping join itself. Returns None only when every part
+    is blank, so callers can still fall back to something else (e.g.
+    org.contact_email) exactly as before this existed."""
+    line2 = ", ".join(part for part in (city, pincode) if part)
+    parts = [p for p in (line, line2 or None, country) if p]
+    return "<br/>".join(parts) if parts else None
+
+
 def render_invoice_pdf(
     *,
     invoice_no: str,

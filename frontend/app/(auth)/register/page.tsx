@@ -66,9 +66,23 @@ function OrgRegisterForm() {
   const [orgName, setOrgName] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  // city/country/pincode are required (shown with a red asterisk,
+  // same convention as orgName/name/email/password below); location
+  // and gstin are optional — all five are billing/invoice fields, see
+  // RegisterRequest's docstring. confirmPassword is a client-only
+  // check, same pattern as UserRegisterForm's own below — never sent
+  // to the backend, only `password` is.
+  const [city, setCity] = useState("");
+  const [location, setLocation] = useState("");
+  const [country, setCountry] = useState("");
+  const [pincode, setPincode] = useState("");
+  const [gstin, setGstin] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const register = useRegister();
+  const { data: platformStatus } = usePlatformStatus();
+  const countries = platformStatus?.countries ?? [];
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,10 +90,18 @@ function OrgRegisterForm() {
     if (!orgName) e2.orgName = "Organization name is required";
     if (!name) e2.name = "Your name is required";
     if (!/\S+@\S+\.\S+/.test(email)) e2.email = "Enter a valid email address";
+    if (!city.trim()) e2.city = "City is required";
+    if (!country) e2.country = "Country is required";
+    if (!pincode.trim()) e2.pincode = "Pincode is required";
     if (password.length < 8) e2.password = "At least 8 characters";
+    if (confirmPassword !== password) e2.confirmPassword = "Passwords don't match";
     setErrors(e2);
     if (Object.keys(e2).length) return;
-    register.mutate({ org_name: orgName, name, email, password });
+    register.mutate({
+      org_name: orgName, name, email, password,
+      city: city.trim(), location: location.trim() || undefined,
+      country, pincode: pincode.trim(), gstin: gstin.trim() || undefined,
+    });
   };
 
   return (
@@ -95,27 +117,65 @@ function OrgRegisterForm() {
       )}
 
       <div className="mb-3.5">
-        <Label className="mb-1.5 block">Organization name</Label>
+        <Label className="mb-1.5 block">Organization name <span className="text-danger">*</span></Label>
         <div className="relative"><Building2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <Input className="pl-9" placeholder="Solara Industries" value={orgName} onChange={(e) => setOrgName(e.target.value)} autoFocus /></div>
         {errors.orgName && <p className="mt-1 text-xs text-danger">{errors.orgName}</p>}
       </div>
       <div className="mb-3.5">
-        <Label className="mb-1.5 block">Your name</Label>
+        <Label className="mb-1.5 block">Your name <span className="text-danger">*</span></Label>
         <Input placeholder="Rios Sharma" value={name} onChange={(e) => setName(e.target.value)} />
         {errors.name && <p className="mt-1 text-xs text-danger">{errors.name}</p>}
       </div>
       <div className="mb-3.5">
-        <Label className="mb-1.5 block">Work email</Label>
+        <Label className="mb-1.5 block">Work email <span className="text-danger">*</span></Label>
         <div className="relative"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <Input className="pl-9" type="email" placeholder="you@solara.com" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
         {errors.email && <p className="mt-1 text-xs text-danger">{errors.email}</p>}
       </div>
-      <div className="mb-6">
-        <Label className="mb-1.5 block">Password</Label>
+      <div className="mb-3.5">
+        <Label className="mb-1.5 block">City <span className="text-danger">*</span></Label>
+        <Input placeholder="e.g. Bengaluru" value={city} onChange={(e) => setCity(e.target.value)} />
+        {errors.city && <p className="mt-1 text-xs text-danger">{errors.city}</p>}
+      </div>
+      <div className="mb-3.5">
+        <Label className="mb-1.5 block">Location</Label>
+        <Input placeholder="e.g. Head Office, Sector 5" value={location} onChange={(e) => setLocation(e.target.value)} />
+      </div>
+      <div className="mb-3.5">
+        <Label className="mb-1.5 block">Country <span className="text-danger">*</span></Label>
+        <select
+          value={country}
+          onChange={(e) => setCountry(e.target.value)}
+          className="h-10 w-full rounded-lg border border-line bg-surface px-3 text-sm outline-none focus-visible:border-primary"
+        >
+          <option value="">Select a country</option>
+          {countries.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        {errors.country && <p className="mt-1 text-xs text-danger">{errors.country}</p>}
+      </div>
+      <div className="mb-3.5">
+        <Label className="mb-1.5 block">Pincode <span className="text-danger">*</span></Label>
+        <Input placeholder="e.g. 560001" value={pincode} onChange={(e) => setPincode(e.target.value)} />
+        {errors.pincode && <p className="mt-1 text-xs text-danger">{errors.pincode}</p>}
+      </div>
+      <div className="mb-3.5">
+        <Label className="mb-1.5 block">GST number</Label>
+        <Input placeholder="e.g. 29ABCDE1234F1Z5" value={gstin} onChange={(e) => setGstin(e.target.value)} />
+      </div>
+      <div className="mb-3.5">
+        <Label className="mb-1.5 block">Password <span className="text-danger">*</span></Label>
         <div className="relative"><Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <Input className="pl-9" type="password" placeholder="At least 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         {errors.password && <p className="mt-1 text-xs text-danger">{errors.password}</p>}
+      </div>
+      <div className="mb-6">
+        <Label className="mb-1.5 block">Confirm password <span className="text-danger">*</span></Label>
+        <div className="relative"><Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+          <Input className="pl-9" type="password" placeholder="Re-enter your password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} /></div>
+        {errors.confirmPassword && <p className="mt-1 text-xs text-danger">{errors.confirmPassword}</p>}
       </div>
 
       <Button type="submit" className="w-full h-12" disabled={register.isPending}>

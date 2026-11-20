@@ -34,8 +34,31 @@ export function useUpdateMyOrg() {
       name?: string; slug?: string; industry?: string; timezone?: string; contact_email?: string | null; allow_custom_username?: boolean;
       default_module_points?: number; default_course_points?: number; default_perfect_quiz_points?: number;
       razorpay_key_id?: string; razorpay_key_secret?: string; razorpay_webhook_secret?: string;
-      gstin?: string; billing_address?: string; billing_state?: string;
+      gstin?: string; billing_address?: string; city?: string; pincode?: string; country?: string; billing_state?: string;
     }) => api.patch<Org>("/api/v1/orgs/me", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["orgs", "me"] }),
+  });
+}
+
+/** Org Settings' "Upload logo" button — multipart, not JSON, so this
+ * bypasses api.patch's usual JSON body in favor of FormData (same
+ * pattern the course cover-image upload uses). */
+export function useUploadOrgLogo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api.upload<Org>("/api/v1/orgs/me/logo", form);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["orgs", "me"] }),
+  });
+}
+
+export function useDeleteOrgLogo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete<Org>("/api/v1/orgs/me/logo"),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["orgs", "me"] }),
   });
 }

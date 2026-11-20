@@ -70,6 +70,14 @@ _IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024    # 10 MB — a quiz question/option image, not a video frame
 
+# An org's own logo (Org Settings) — deliberately narrower than a quiz
+# image: PNG or SVG only (no JPG/WEBP/GIF), since this is shown small
+# and needs to look crisp on the learner login screen and in reports,
+# not whatever format a photo happened to be saved as.
+_LOGO_TYPES = {"image/png", "image/svg+xml"}
+_LOGO_EXTS = {".png", ".svg"}
+MAX_LOGO_BYTES = 2 * 1024 * 1024      # 2 MB — a logo, not a photo
+
 
 @dataclass
 class UploadLimits:
@@ -149,6 +157,17 @@ def validate_image_upload(file: UploadFile, size: int) -> None:
         raise HTTPException(status_code=400, detail=f"Unsupported image type ({ext or content_type or 'unknown'}) — use JPG, PNG, WEBP or GIF")
     if size > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail=f"Image is too large — max {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
+
+
+def validate_logo_upload(file: UploadFile, size: int) -> None:
+    """An org's own logo (Org Settings) — PNG or SVG only, see
+    _LOGO_TYPES/_LOGO_EXTS's docstring above."""
+    ext = "." + file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else ""
+    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or ""
+    if ext not in _LOGO_EXTS and content_type not in _LOGO_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported logo type ({ext or content_type or 'unknown'}) — use PNG or SVG")
+    if size > MAX_LOGO_BYTES:
+        raise HTTPException(status_code=400, detail=f"Logo is too large — max {MAX_LOGO_BYTES // (1024 * 1024)} MB")
 
 
 def validate_image_bytes(filename: str, size: int) -> None:

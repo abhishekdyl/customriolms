@@ -1,10 +1,11 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 from app.models.org import OrgPlan, OrgStatus
 from app.schemas.profile_field import ProfileFieldOut
+from app.services import storage_service
 
 
 class OrgLookupOut(BaseModel):
@@ -35,6 +36,11 @@ class OrgOut(BaseModel):
     timezone: str = "UTC"
     contact_email: str | None = None
     logo_url: str | None = None
+    # Not sent to the client (exclude=True) — same presigned-on-read
+    # pattern as CourseOut.cover_image_key/cover_image_url: the storage
+    # key is what's permanent, logo_url below is rebuilt fresh from it
+    # on every read by _resolve_logo_url.
+    logo_key: str | None = Field(default=None, exclude=True)
     allow_custom_username: bool = False
     # Leaderboard point defaults — see Org model's docstring. A specific
     # course/module can override these via PointRule; see the
@@ -68,10 +74,19 @@ class OrgOut(BaseModel):
     # round-trip plainly (unlike the Razorpay secrets above).
     gstin: str | None = None
     billing_address: str | None = None
+    city: str | None = None
+    pincode: str | None = None
+    country: str | None = None
     billing_state: str | None = None
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="after")
+    def _resolve_logo_url(self):
+        if self.logo_key:
+            self.logo_url = storage_service.presigned_get_url(self.logo_key)
+        return self
 
 
 class OrgCreateRequest(BaseModel):
@@ -146,6 +161,9 @@ class OrgProfileUpdateRequest(BaseModel):
     # convention as the Razorpay fields just above.
     gstin: str | None = None
     billing_address: str | None = None
+    city: str | None = None
+    pincode: str | None = None
+    country: str | None = None
     billing_state: str | None = None
 
 
@@ -163,8 +181,13 @@ class PlatformSettingsOut(BaseModel):
     # produces an invoice, just without a GSTIN/tax line.
     company_legal_name: str | None = None
     company_address: str | None = None
+    company_city: str | None = None
+    company_pincode: str | None = None
     company_gstin: str | None = None
     company_state: str | None = None
+    # Shown on the Platform Settings page as a plain contact line —
+    # nothing else reads this yet.
+    support_email: str | None = None
     # Whether GST/a gateway-fee surcharge are actually added at checkout
     # right now — see PlatformSettings.gst_enabled's docstring. Both
     # default OFF, so a plan's monthly_price IS the total charged until
@@ -211,8 +234,11 @@ class PlatformSettingsUpdateRequest(BaseModel):
     allowed_countries: list[str] | None = None
     company_legal_name: str | None = None
     company_address: str | None = None
+    company_city: str | None = None
+    company_pincode: str | None = None
     company_gstin: str | None = None
     company_state: str | None = None
+    support_email: str | None = None
     gst_enabled: bool | None = None
     gst_rate_percent: int | None = Field(default=None, ge=0, le=100)
     gateway_fee_enabled: bool | None = None

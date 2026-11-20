@@ -4,10 +4,25 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class RegisterRequest(BaseModel):
-    org_name: str
-    name: str
+    """The registration page's "create a brand-new org" tab. city/
+    country/pincode are required (shown with a red asterisk on the
+    form, same convention as org_name/name/email/password); location and
+    gstin are optional, same as on Org Settings afterward. All five are
+    billing/invoice fields — stored directly on the new Org row (see
+    register()) so "Billed to" on the very first subscription invoice
+    already has a real address instead of needing an Org Admin to visit
+    Org Settings first. confirm_password is deliberately NOT here — it's
+    a frontend-only check (see UserRegisterForm's own confirmPassword
+    for the existing precedent), never sent to the backend."""
+    org_name: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=200)
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8)
+    city: str = Field(min_length=1, max_length=100)
+    location: str | None = Field(default=None, max_length=120)
+    country: str = Field(min_length=1, max_length=100)
+    pincode: str = Field(min_length=1, max_length=20)
+    gstin: str | None = Field(default=None, max_length=20)
 
 
 class UserRegisterRequest(BaseModel):

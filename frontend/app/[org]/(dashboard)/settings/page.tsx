@@ -1,11 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, ShieldCheck, AlertCircle, CreditCard, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useMyOrg, useUpdateMyOrg, useDeactivateMyOrg } from "@/lib/hooks/use-orgs";
+import { useMyOrg, useUpdateMyOrg, useDeactivateMyOrg, useUploadOrgLogo, useDeleteOrgLogo } from "@/lib/hooks/use-orgs";
 import {
   useProfileFields, useCreateProfileField, useUpdateProfileField, useDeleteProfileField,
 } from "@/lib/hooks/use-profile-fields";
@@ -158,19 +158,24 @@ function BillingDetailsCard({ org }: { org: Org }) {
   const updateOrg = useUpdateMyOrg();
   const [gstin, setGstin] = useState(org.gstin ?? "");
   const [billingAddress, setBillingAddress] = useState(org.billing_address ?? "");
+  const [city, setCity] = useState(org.city ?? "");
+  const [pincode, setPincode] = useState(org.pincode ?? "");
+  const [country, setCountry] = useState(org.country ?? "");
   const [billingState, setBillingState] = useState(org.billing_state ?? "");
   const [saved, setSaved] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   const dirty =
-    gstin !== (org.gstin ?? "") || billingAddress !== (org.billing_address ?? "") || billingState !== (org.billing_state ?? "");
+    gstin !== (org.gstin ?? "") || billingAddress !== (org.billing_address ?? "") ||
+    city !== (org.city ?? "") || pincode !== (org.pincode ?? "") || country !== (org.country ?? "") ||
+    billingState !== (org.billing_state ?? "");
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!dirty) return;
     setLocalError(null);
     updateOrg.mutate(
-      { gstin, billing_address: billingAddress, billing_state: billingState },
+      { gstin, billing_address: billingAddress, city, pincode, country, billing_state: billingState },
       {
         onSuccess: () => {
           setSaved(true);
@@ -185,13 +190,27 @@ function BillingDetailsCard({ org }: { org: Org }) {
     <section className="mb-6 rounded-[14px] border border-line bg-surface p-5">
       <h2 className="mb-1 font-head text-[14.5px] text-ink">Billing details</h2>
       <p className="mb-4 text-[12px] text-ink-faint">
-        Shown as "Billed to" on your subscription invoice (Billing page). GSTIN is optional — leave it blank if your
-        organization isn't GST-registered.
+        Shown as "Billed to" on your subscription and course-enrolment invoices. GSTIN is optional — leave it blank if
+        your organization isn't GST-registered.
       </p>
       <form onSubmit={submit} className="flex flex-col gap-3">
         <div>
-          <Label className="mb-1 block text-[11.5px] text-ink-soft">Billing address</Label>
+          <Label className="mb-1 block text-[11.5px] text-ink-soft">Location</Label>
           <Input value={billingAddress} onChange={(e) => setBillingAddress(e.target.value)} placeholder="Office address for invoices" />
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <Label className="mb-1 block text-[11.5px] text-ink-soft">City</Label>
+            <Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="e.g. Bengaluru" />
+          </div>
+          <div>
+            <Label className="mb-1 block text-[11.5px] text-ink-soft">Pincode</Label>
+            <Input value={pincode} onChange={(e) => setPincode(e.target.value)} placeholder="e.g. 560001" />
+          </div>
+          <div>
+            <Label className="mb-1 block text-[11.5px] text-ink-soft">Country</Label>
+            <Input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="e.g. India" />
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -204,7 +223,8 @@ function BillingDetailsCard({ org }: { org: Org }) {
           </div>
         </div>
         <p className="text-[11px] text-ink-faint">
-          Your invoice shows CGST+SGST when your state matches Riosmart's own registered state, and IGST otherwise.
+          Your subscription invoice shows CGST+SGST when your state matches Riosmart's own registered state, and IGST
+          otherwise.
         </p>
         {localError && <p className="text-[12px] text-danger">{localError}</p>}
         <div className="flex items-center gap-2">
@@ -307,6 +327,10 @@ export default function OrgSettingsPage() {
   const { data: org, isLoading } = useMyOrg();
   const updateOrg = useUpdateMyOrg();
   const deactivate = useDeactivateMyOrg();
+  const uploadLogo = useUploadOrgLogo();
+  const deleteLogo = useDeleteOrgLogo();
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const [logoError, setLogoError] = useState<string | null>(null);
   const router = useRouter();
 
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -413,14 +437,38 @@ export default function OrgSettingsPage() {
           )}
         </div>
         <div>
-          <button
-            type="button"
-            title="Not wired up yet — there's no file storage behind this button"
-            className="text-[12.5px] font-medium text-primary/60"
-          >
-            Upload logo
-          </button>
+          <input
+            ref={logoInputRef} type="file" accept="image/png,image/svg+xml,.png,.svg" className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f) return;
+              setLogoError(null);
+              uploadLogo.mutate(f, { onError: (err) => setLogoError(err instanceof ApiError ? err.message : "Couldn't upload logo.") });
+            }}
+          />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => logoInputRef.current?.click()}
+              disabled={uploadLogo.isPending}
+              className="text-[12.5px] font-medium text-primary"
+            >
+              {uploadLogo.isPending ? "Uploading…" : org.logo_url ? "Replace logo" : "Upload logo"}
+            </button>
+            {org.logo_url && (
+              <button
+                type="button"
+                onClick={() => deleteLogo.mutate()}
+                disabled={deleteLogo.isPending}
+                className="text-[12.5px] font-medium text-danger"
+              >
+                Remove
+              </button>
+            )}
+          </div>
           <div className="text-[11px] text-ink-faint">PNG or SVG, shown on the learner login and reports</div>
+          {logoError && <p className="mt-1 text-[11px] text-danger">{logoError}</p>}
         </div>
       </div>
 

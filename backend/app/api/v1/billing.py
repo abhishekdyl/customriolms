@@ -15,7 +15,7 @@ from app.models.org_payment import OrgPayment, OrgPaymentStatus
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.user import RoleName, User
 from app.schemas.billing import CheckoutOut, CheckoutRequest, OrgPaymentOut, PlanPrice, PricingOut, VerifyPaymentOut, VerifyPaymentRequest
-from app.services.invoice_service import render_invoice_pdf
+from app.services.invoice_service import compose_address, render_invoice_pdf
 from app.services.notification_service import send_email_with_attachment_if_configured
 
 logger = logging.getLogger(__name__)
@@ -162,8 +162,11 @@ def _render_org_payment_invoice(org: Org, settings_row: PlatformSettings, paymen
         issued_at=payment.paid_at or payment.created_at,
         status=payment.status.value,
         seller_name=settings_row.company_legal_name or "Riosmart",
-        seller_detail=settings_row.company_address or "Riosmart LMS — subscription billing",
-        buyer_name=org.name, buyer_detail=org.billing_address or org.contact_email,
+        seller_detail=compose_address(
+            settings_row.company_address, settings_row.company_city, settings_row.company_pincode,
+        ) or "Riosmart LMS — subscription billing",
+        buyer_name=org.name,
+        buyer_detail=compose_address(org.billing_address, org.city, org.pincode, org.country) or org.contact_email,
         description=f"{payment.plan.value.title()} plan — monthly subscription",
         base_amount=payment.base_amount, gst_amount=payment.gst_amount, gateway_fee_amount=payment.gateway_fee_amount,
         total_amount=payment.amount, currency=payment.currency,

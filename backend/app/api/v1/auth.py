@@ -53,6 +53,15 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    # Same re-check register_user does for its own Country field — the
+    # frontend's <select> is fed by GET /platform-status's `countries`
+    # (Super Admin's allowed_countries, or ALL_COUNTRIES if
+    # unconfigured), but nothing stops a direct API call from sending an
+    # arbitrary string.
+    allowed_countries = (settings_row.allowed_countries if settings_row else None) or ALL_COUNTRIES
+    if body.country not in allowed_countries:
+        raise HTTPException(status_code=400, detail="Select a country from the provided list")
+
     # Self-serve signup starts the free-trial clock right here —
     # trial_days from Platform Settings (default 15, see that model's
     # docstring). status stays the model's own TRIAL default. deps.py's
@@ -68,6 +77,12 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     org = Org(
         name=body.org_name, slug=slug, plan=OrgPlan.FREE, user_limit=PLAN_USER_LIMITS[OrgPlan.FREE],
         trial_ends_at=datetime.now(timezone.utc) + timedelta(days=trial_days),
+        # Billing/invoice address — see RegisterRequest's docstring.
+        # billing_address holds "location" (the street/location line);
+        # city/pincode/country are their own columns so each shows on
+        # its own on the invoice. gstin is "gstno" on the form.
+        billing_address=body.location, city=body.city, pincode=body.pincode,
+        country=body.country, gstin=body.gstin,
     )
     db.add(org)
     await db.flush()  # get org.id before creating the user

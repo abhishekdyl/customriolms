@@ -38,7 +38,7 @@ from app.services.course_service import (
     reorder_modules, self_enrol, set_attempt_override, set_due_override, update_course_group, update_module,
     upload_module_content, upload_scorm_package,
 )
-from app.services.invoice_service import render_invoice_pdf
+from app.services.invoice_service import compose_address, render_invoice_pdf
 from app.services.course_transfer_service import duplicate_course, export_course_snapshot, import_course_snapshot
 from app.services import audit_log_service
 from app.services import learn_service as progress_svc
@@ -254,7 +254,7 @@ async def get_my_course_enrol_payment_invoice(
     actually confirmed the money."""
     row = (
         await db.execute(
-            select(CourseEnrolmentPayment, Course.title, Org.name)
+            select(CourseEnrolmentPayment, Course.title, Org)
             .join(Course, Course.id == CourseEnrolmentPayment.course_id)
             .join(Org, Org.id == CourseEnrolmentPayment.org_id)
             .where(CourseEnrolmentPayment.id == payment_id, CourseEnrolmentPayment.user_id == current_user.id)
@@ -262,19 +262,32 @@ async def get_my_course_enrol_payment_invoice(
     ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    payment, course_title, org_name = row
+    payment, course_title, org = row
     if payment.status != CourseEnrolmentPaymentStatus.PAID:
         raise HTTPException(status_code=400, detail="This payment hasn't completed yet — there's nothing to invoice.")
+
+    # "Billed by" is the ORG (it's selling its own course, see Org
+    # model's razorpay_* docstring for why this money lands in the
+    # org's own account, not the platform's) — same compose_address
+    # helper billing.py's subscription invoice uses, so the org's real
+    # address shows here too instead of the old hardcoded
+    # "Course enrolment" placeholder that was never wired to anything.
+    seller_detail = compose_address(org.billing_address, org.city, org.pincode, org.country) or org.contact_email
+    # "Billed to" is the learner — their own city/country (collected on
+    # the "join an org" registration form, see UserRegisterRequest) if
+    # they filled it in, else just the email as before.
+    buyer_detail = compose_address(None, current_user.city, None, current_user.country) or current_user.email
 
     pdf_bytes = render_invoice_pdf(
         invoice_no=str(payment.id)[:8].upper(),
         issued_at=payment.paid_at or payment.created_at,
         status=payment.status.value,
-        seller_name=org_name, seller_detail="Course enrolment",
-        buyer_name=f"{current_user.firstname} {current_user.lastname}".strip(), buyer_detail=current_user.email,
+        seller_name=org.name, seller_detail=seller_detail,
+        buyer_name=f"{current_user.firstname} {current_user.lastname}".strip(), buyer_detail=buyer_detail,
         description=f"Enrolment — {course_title}",
         base_amount=payment.amount, total_amount=payment.amount, currency=payment.currency,
         razorpay_payment_id=payment.razorpay_payment_id,
+        seller_gstin=org.gstin,
     )
     return Response(
         content=pdf_bytes, media_type="application/pdf",

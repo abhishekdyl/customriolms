@@ -74,8 +74,10 @@ export function useRegister() {
   const router = useRouter();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { org_name: string; name: string; email: string; password: string }) =>
-      api.post<TokenResponse>("/api/v1/auth/register", body),
+    mutationFn: (body: {
+      org_name: string; name: string; email: string; password: string;
+      city: string; location?: string; country: string; pincode: string; gstin?: string;
+    }) => api.post<TokenResponse>("/api/v1/auth/register", body),
     onSuccess: (data) => {
       localStorage.setItem("access_token", data.access_token);
       localStorage.setItem("refresh_token", data.refresh_token);

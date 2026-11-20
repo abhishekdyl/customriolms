@@ -78,7 +78,15 @@ class Org(Base):
     industry: Mapped[str | None] = mapped_column(String(100), nullable=True)
     timezone: Mapped[str] = mapped_column(String(50), default="UTC", nullable=False)
     contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # logo_url is legacy/unused — nothing writes to it any more (the
+    # upload button used to be unwired). A real upload now goes through
+    # POST /orgs/me/logo, storage_service's usual content-addressed
+    # store, keyed here; OrgOut computes logo_url fresh from this key on
+    # every read (same presigned-on-read pattern as a course's cover
+    # image — see CourseOut._resolve_cover_image_url), so logo_url is
+    # never read from the column directly once this is set.
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    logo_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
     # Off by default: every user's username mirrors their email and login
     # only ever happens by email. Once an Org Admin flips this on, users
     # may set their own custom username from their profile (see
@@ -124,7 +132,17 @@ class Org(Base):
     # businesses) have no GSTIN at all, and the invoice still renders
     # fine without one — just without that line.
     gstin: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # billing_address is the street/location line; city/pincode are
+    # separate so each shows on its own on the invoice and can be
+    # collected as its own field on the registration form (see
+    # RegisterRequest) without the Org Admin having to re-type a whole
+    # address block to fix just the city later.
     billing_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    pincode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Full country name, validated against ALL_COUNTRIES/allowed_countries
+    # the same way the learner-join form's own country field already is.
+    country: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Full state name, e.g. "Maharashtra" — see PlatformSettings.company_state's
     # docstring for how this decides CGST+SGST vs IGST on the invoice.
     billing_state: Mapped[str | None] = mapped_column(String(100), nullable=True)

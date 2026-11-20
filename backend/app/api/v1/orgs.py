@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +12,7 @@ from app.models.org_payment import OrgPayment
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.user import RoleName, User, split_full_name
 from app.schemas.billing import OrgPaymentOut
-from app.services import profile_field_service
+from app.services import profile_field_service, storage_service
 from app.schemas.org import (
     ActivateLicenseRequest,
     OrgAdminUpdateRequest,
@@ -82,12 +82,53 @@ async def update_my_org(body: OrgProfileUpdateRequest, db: AsyncSession = Depend
         "name", "slug", "industry", "timezone", "contact_email", "allow_custom_username",
         "default_module_points", "default_course_points", "default_perfect_quiz_points",
         "razorpay_key_id", "razorpay_key_secret", "razorpay_webhook_secret",
-        "gstin", "billing_address", "billing_state",
+        "gstin", "billing_address", "city", "pincode", "country", "billing_state",
     ):
         value = getattr(body, field)
         if value is not None:
             setattr(org, field, value)
 
+    await db.commit()
+    await db.refresh(org)
+    count_result = await db.execute(select(func.count(User.id)).where(User.org_id == org.id, User.status != "deactivated"))
+    return OrgOut.model_validate({
+        **org.__dict__, "user_count": count_result.scalar_one(),
+        "razorpay_key_secret_set": bool(org.razorpay_key_secret), "razorpay_webhook_secret_set": bool(org.razorpay_webhook_secret),
+    })
+
+
+@router.post("/me/logo", response_model=OrgOut, dependencies=org_admin_only)
+async def upload_org_logo(
+    file: UploadFile = File(...), db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Org Settings' "Upload logo" button — same dedup-ledger upload as a
+    course cover image (storage_service.store_file keyed by
+    component/filearea/itemid), so a re-upload replaces this org's one
+    logo slot rather than piling up orphaned blobs. PNG or SVG only —
+    see storage_service.validate_logo_upload."""
+    org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
+    file.file.seek(0, 2)
+    size = file.file.tell()
+    file.file.seek(0)
+    storage_service.validate_logo_upload(file, size)
+    record = await storage_service.store_file(
+        db, file, org_id=org.id, component="org", filearea="logo", itemid=org.id, user=current_user,
+    )
+    org.logo_key = storage_service.file_key(record)
+    await db.commit()
+    await db.refresh(org)
+    count_result = await db.execute(select(func.count(User.id)).where(User.org_id == org.id, User.status != "deactivated"))
+    return OrgOut.model_validate({
+        **org.__dict__, "user_count": count_result.scalar_one(),
+        "razorpay_key_secret_set": bool(org.razorpay_key_secret), "razorpay_webhook_secret_set": bool(org.razorpay_webhook_secret),
+    })
+
+
+@router.delete("/me/logo", response_model=OrgOut, dependencies=org_admin_only)
+async def delete_org_logo(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
+    org.logo_key = None
+    org.logo_url = None
     await db.commit()
     await db.refresh(org)
     count_result = await db.execute(select(func.count(User.id)).where(User.org_id == org.id, User.status != "deactivated"))
@@ -214,8 +255,11 @@ def _settings_out(row: PlatformSettings) -> PlatformSettingsOut:
         allowed_countries=row.allowed_countries,
         company_legal_name=row.company_legal_name,
         company_address=row.company_address,
+        company_city=row.company_city,
+        company_pincode=row.company_pincode,
         company_gstin=row.company_gstin,
         company_state=row.company_state,
+        support_email=row.support_email,
         gst_enabled=row.gst_enabled,
         gst_rate_percent=row.gst_rate_percent,
         gateway_fee_enabled=row.gateway_fee_enabled,
@@ -274,10 +318,16 @@ async def update_platform_settings(body: PlatformSettingsUpdateRequest, db: Asyn
         settings_row.company_legal_name = body.company_legal_name
     if body.company_address is not None:
         settings_row.company_address = body.company_address
+    if body.company_city is not None:
+        settings_row.company_city = body.company_city
+    if body.company_pincode is not None:
+        settings_row.company_pincode = body.company_pincode
     if body.company_gstin is not None:
         settings_row.company_gstin = body.company_gstin
     if body.company_state is not None:
         settings_row.company_state = body.company_state
+    if body.support_email is not None:
+        settings_row.support_email = body.support_email
     if body.gst_enabled is not None:
         settings_row.gst_enabled = body.gst_enabled
     if body.gst_rate_percent is not None:

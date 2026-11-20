@@ -562,6 +562,9 @@ export interface Org {
   // subscription invoice.
   gstin: string | null;
   billing_address: string | null;
+  city: string | null;
+  pincode: string | null;
+  country: string | null;
   billing_state: string | null;
 }
 
@@ -585,8 +588,13 @@ export interface PlatformSettings {
   // produces an invoice, just without a GSTIN/tax line.
   company_legal_name: string | null;
   company_address: string | null;
+  company_city: string | null;
+  company_pincode: string | null;
   company_gstin: string | null;
   company_state: string | null;
+  // Plain contact line shown on Platform Settings — nothing else reads
+  // this yet.
+  support_email: string | null;
   // Both OFF by default — until turned on, checkout charges exactly a
   // plan's own price, and every invoice's corresponding line reads "—".
   gst_enabled: boolean;
