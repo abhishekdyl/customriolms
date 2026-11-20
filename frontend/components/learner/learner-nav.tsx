@@ -42,9 +42,17 @@ export function LearnerSidebar() {
     <aside className="hidden h-full w-[72px] shrink-0 flex-col bg-rail md:flex lg:w-[232px]">
       <div className="flex justify-center border-b border-white/12 pb-5 pt-6 lg:justify-start lg:px-5">
         <div className="flex items-center gap-2">
-          <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] bg-primary font-head text-[13px] font-bold text-white">
-            {brandName.charAt(0).toUpperCase()}
-          </div>
+          {/* Org's own uploaded logo (Org Settings) takes over this
+           * badge once set — same fallback-to-initial pattern as the
+           * admin-side sidebar. */}
+          {myOrg?.logo_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={myOrg.logo_url} alt="" className="h-[26px] w-[26px] shrink-0 rounded-[7px] object-cover" />
+          ) : (
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] bg-primary font-head text-[13px] font-bold text-white">
+              {brandName.charAt(0).toUpperCase()}
+            </div>
+          )}
           <span className="hidden truncate font-head text-[15px] font-medium text-white lg:block">{brandName}</span>
         </div>
       </div>

@@ -101,9 +101,19 @@ export function Sidebar() {
     >
       <div className="border-b border-white/10 px-5 pb-5 pt-6">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary font-head text-sm font-bold text-white">
-            {brandName.charAt(0).toUpperCase()}
-          </div>
+          {/* Org's own uploaded logo (Org Settings) takes over this
+           * badge once set — Super Admin never has one (brandName stays
+           * "Riosmart LMS" for that role, see above), so the letter
+           * badge is only ever a fallback for an org that hasn't
+           * uploaded a logo yet. */}
+          {myOrg?.logo_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={myOrg.logo_url} alt="" className="h-7 w-7 flex-shrink-0 rounded-lg object-cover" />
+          ) : (
+            <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary font-head text-sm font-bold text-white">
+              {brandName.charAt(0).toUpperCase()}
+            </div>
+          )}
           <span className="truncate font-head text-[15px] text-white">{brandName}</span>
         </div>
       </div>
