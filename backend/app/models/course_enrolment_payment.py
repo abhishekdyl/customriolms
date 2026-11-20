@@ -21,9 +21,9 @@ class CourseEnrolmentPayment(Base):
     a single course/learner instead of an org/plan. Created the moment
     POST /courses/{id}/enrol/checkout mints a Razorpay order, then moved
     to PAID or FAILED by whichever of /courses/{id}/enrol/verify (the
-    client-side redirect callback) or billing.py's shared
-    /billing/webhook/razorpay (which checks this table too — see that
-    function) hears about it first. Paying enrols the learner
+    client-side redirect callback) or courses.py's own
+    /courses/webhook/razorpay/{org_id} (that org's own Razorpay webhook —
+    see that function) hears about it first. Paying enrols the learner
     (course_service.activate_course_payment adds them to
     Course.assigned_user_ids); nothing else about the course changes."""
     __tablename__ = "course_enrolment_payments"

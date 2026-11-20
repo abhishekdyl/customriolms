@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Award, BookOpen, CalendarDays, Home, LogOut, User as UserIcon } from "lucide-react";
+import { Award, BookOpen, CalendarDays, Home, LogOut, Receipt, User as UserIcon } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/learn/courses", label: "My Courses", icon: BookOpen },
   { href: "/learn/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/learn/progress", label: "Progress", icon: Award },
+  { href: "/learn/payments", label: "Payments", icon: Receipt },
   { href: "/learn/profile", label: "Profile", icon: UserIcon },
 ];
 

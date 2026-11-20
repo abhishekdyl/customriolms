@@ -34,6 +34,7 @@ const navByRole: Record<RoleName, NavItem[]> = {
     { href: "/notifications", label: "Notifications", icon: Bell, capability: "notifications.manage" },
     { href: "/audit-log", label: "Audit Log", icon: History, capability: "audit_log.view" },
     { href: "/roles", label: "Roles", icon: KeyRound }, // ORG_ADMIN-only, never shown to custom roles
+    { href: "/billing", label: "Billing", icon: CreditCard }, // ORG_ADMIN-only, same reasoning as Roles above
     { href: "/settings", label: "Org Settings", icon: Building2, capability: "org_settings.manage" },
   ],
   team_lead: [
@@ -64,7 +65,7 @@ const navByRole: Record<RoleName, NavItem[]> = {
 function navItemsFor(role: RoleName, capabilities: string[] | null | undefined): NavItem[] {
   if (role !== "custom") return navByRole[role];
   return navByRole.org_admin.filter((item) => {
-    if (item.href === "/roles") return false;
+    if (item.href === "/roles" || item.href === "/billing") return false;
     if (!item.capability) return true;
     if (!capabilities) return true;
     const required = Array.isArray(item.capability) ? item.capability : [item.capability];

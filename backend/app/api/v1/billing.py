@@ -1,8 +1,9 @@
 import logging
+import uuid
 from datetime import datetime, timezone
 
 import razorpay
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from razorpay.errors import SignatureVerificationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +14,8 @@ from app.models.org import PLAN_USER_LIMITS, Org, OrgStatus
 from app.models.org_payment import OrgPayment, OrgPaymentStatus
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.user import RoleName, User
-from app.schemas.billing import CheckoutOut, CheckoutRequest, PlanPrice, PricingOut, VerifyPaymentOut, VerifyPaymentRequest
+from app.schemas.billing import CheckoutOut, CheckoutRequest, OrgPaymentOut, PlanPrice, PricingOut, VerifyPaymentOut, VerifyPaymentRequest
+from app.services.invoice_service import render_invoice_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +168,51 @@ async def verify_payment(
     payment.razorpay_signature = body.razorpay_signature
     await _activate_from_payment(db, payment)
     return VerifyPaymentOut(activated=True, plan=payment.plan)
+
+
+@router.get("/payments", response_model=list[OrgPaymentOut])
+async def list_my_org_payments(db: AsyncSession = Depends(get_db), current_user: User = Depends(_require_org_admin)):
+    """The Org Admin's own Billing page — exact mirror of orgs.py's
+    Super-Admin-only list_org_payments, scoped to the caller's own org
+    instead of taking an org_id. Newest first; empty means this org has
+    never gone through self-checkout (still on its original trial, or
+    every activation was a manual Super Admin override)."""
+    result = await db.execute(
+        select(OrgPayment).where(OrgPayment.org_id == current_user.org_id).order_by(OrgPayment.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+@router.get("/payments/{payment_id}/invoice")
+async def get_my_org_payment_invoice(
+    payment_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(_require_org_admin),
+):
+    """Downloadable PDF for one of this org's own subscription payments —
+    only ever the org's own rows, and only once Razorpay has actually
+    confirmed the money (a CREATED/FAILED row has nothing to invoice)."""
+    payment = (
+        await db.execute(select(OrgPayment).where(OrgPayment.id == payment_id, OrgPayment.org_id == current_user.org_id))
+    ).scalar_one_or_none()
+    if payment is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if payment.status != OrgPaymentStatus.PAID:
+        raise HTTPException(status_code=400, detail="This payment hasn't completed yet — there's nothing to invoice.")
+
+    org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
+    pdf_bytes = render_invoice_pdf(
+        invoice_no=str(payment.id)[:8].upper(),
+        issued_at=payment.paid_at or payment.created_at,
+        status=payment.status.value,
+        seller_name="Riosmart", seller_detail="Riosmart LMS — subscription billing",
+        buyer_name=org.name, buyer_detail=org.contact_email,
+        description=f"{payment.plan.value.title()} plan — monthly subscription",
+        amount=payment.amount, currency=payment.currency,
+        razorpay_payment_id=payment.razorpay_payment_id,
+    )
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="invoice-{str(payment.id)[:8]}.pdf"'},
+    )
 
 
 @router.post("/webhook/razorpay", include_in_schema=False)

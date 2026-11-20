@@ -622,6 +622,20 @@ export interface OrgPayment {
   paid_at: string | null;
 }
 
+/** One row of a learner's own paid-course-enrolment history — their
+ * "Payments" page. */
+export interface CourseEnrolmentPayment {
+  id: string;
+  course_id: string;
+  course_title: string;
+  amount: number; // paise
+  currency: string;
+  razorpay_payment_id: string | null;
+  status: "created" | "paid" | "failed";
+  created_at: string;
+  paid_at: string | null;
+}
+
 /** What the public, unauthenticated GET /api/v1/orgs/platform-status
  * returns — a narrower view than PlatformSettings, fetchable before
  * anyone has logged in. */

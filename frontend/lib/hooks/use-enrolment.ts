@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { CatalogCourse } from "@/lib/types";
+import type { CatalogCourse, CourseEnrolmentPayment } from "@/lib/types";
 
 /** Published courses this learner isn't enrolled in yet but could self
  * or paid-enrol into — see backend GET /courses/catalog. */
@@ -42,6 +42,22 @@ export function useVerifyCourseEnrolPayment() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["courses", "catalog"] });
       qc.invalidateQueries({ queryKey: ["courses", "mine"] });
+      qc.invalidateQueries({ queryKey: ["courses", "enrol-payments", "mine"] });
     },
   });
+}
+
+/** A learner's own "Payments" page — every paid-enrolment checkout
+ * they've made, across any course, newest first. */
+export function useMyCourseEnrolPayments() {
+  return useQuery({
+    queryKey: ["courses", "enrol-payments", "mine"],
+    queryFn: () => api.get<CourseEnrolmentPayment[]>("/api/v1/courses/enrol-payments/mine"),
+  });
+}
+
+/** Downloads the PDF invoice for one of the learner's own paid-enrolment
+ * payments. */
+export function downloadMyCourseEnrolPaymentInvoice(paymentId: string) {
+  return api.download(`/api/v1/courses/enrol-payments/${paymentId}/invoice`, `invoice-${paymentId.slice(0, 8)}.pdf`);
 }

@@ -670,6 +670,26 @@ class CourseEnrolVerifyOut(BaseModel):
     enrolled: bool = True
 
 
+class CourseEnrolmentPaymentOut(BaseModel):
+    """One row of a learner's own paid-enrolment history — their
+    "Payments" page. Mirrors billing.py's OrgPaymentOut shape, plus the
+    course's title/id since one learner can have paid for several
+    courses (course_title is service-populated, not a real column —
+    same pattern as CourseOut.self_enrol_required_course_title)."""
+    id: uuid.UUID
+    course_id: uuid.UUID
+    course_title: str
+    amount: int  # paise
+    currency: str
+    razorpay_payment_id: str | None = None
+    status: str
+    created_at: datetime
+    paid_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
 # ---------- Learner-facing course view ----------
 # Deliberately separate from CourseOut/ModuleOut: those carry authoring data
 # (correct_option_id, accepted_answers, certificate config, assignment

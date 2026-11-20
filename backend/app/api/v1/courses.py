@@ -20,11 +20,11 @@ from app.models.user import RoleName, User
 from app.schemas.audit_log import AuditLogOut
 from app.schemas.course import (
     AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CatalogCourseOut, CourseAssignRequest, CourseCreate,
-    CourseDuplicateRequest, CourseEnrolCheckoutOut, CourseEnrolVerifyOut, CourseEnrolVerifyRequest, CourseGroupIn,
-    CourseGroupOut, CourseGroupUpdate, CourseImportRequest, CourseImportResult, CourseListItem,
-    CourseModuleProgressOut, CourseOut, CourseUpdate, DueOverrideOut, DueOverrideSet, EnrolledLearnerOut,
-    GradebookOut, LearnerCourseOut, ModuleCreate, ModuleOut, ModuleReorderRequest, ModuleUpdate, MyCourseItem,
-    QuizAttemptOut, SelfEnrolOut,
+    CourseDuplicateRequest, CourseEnrolCheckoutOut, CourseEnrolVerifyOut, CourseEnrolVerifyRequest,
+    CourseEnrolmentPaymentOut, CourseGroupIn, CourseGroupOut, CourseGroupUpdate, CourseImportRequest,
+    CourseImportResult, CourseListItem, CourseModuleProgressOut, CourseOut, CourseUpdate, DueOverrideOut,
+    DueOverrideSet, EnrolledLearnerOut, GradebookOut, LearnerCourseOut, ModuleCreate, ModuleOut,
+    ModuleReorderRequest, ModuleUpdate, MyCourseItem, QuizAttemptOut, SelfEnrolOut,
 )
 from app.schemas.learn import (
     CompleteRequest, CompleteResult, QuizResult, QuizSubmit, ScormCheckpointIn, ScormProgressOut, WatchCheckpointIn,
@@ -38,6 +38,7 @@ from app.services.course_service import (
     reorder_modules, self_enrol, set_attempt_override, set_due_override, update_course_group, update_module,
     upload_module_content, upload_scorm_package,
 )
+from app.services.invoice_service import render_invoice_pdf
 from app.services.course_transfer_service import duplicate_course, export_course_snapshot, import_course_snapshot
 from app.services import audit_log_service
 from app.services import learn_service as progress_svc
@@ -220,6 +221,65 @@ async def course_enrol_razorpay_webhook(org_id: uuid.UUID, request: Request, db:
         payment.razorpay_payment_id = payment_id
         await activate_course_payment(db, payment)
     return {"ok": True}
+
+
+@router.get("/enrol-payments/mine", response_model=list[CourseEnrolmentPaymentOut])
+async def list_my_course_enrol_payments(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """A learner's own "Payments" page — every paid-enrolment checkout
+    attempt they've made, across any course, newest first. Mirrors
+    billing.py's list_my_org_payments, scoped to the caller's own
+    user_id instead of an org."""
+    result = await db.execute(
+        select(CourseEnrolmentPayment, Course.title)
+        .join(Course, Course.id == CourseEnrolmentPayment.course_id)
+        .where(CourseEnrolmentPayment.user_id == current_user.id)
+        .order_by(CourseEnrolmentPayment.created_at.desc())
+    )
+    return [
+        CourseEnrolmentPaymentOut(
+            id=payment.id, course_id=payment.course_id, course_title=title,
+            amount=payment.amount, currency=payment.currency, razorpay_payment_id=payment.razorpay_payment_id,
+            status=payment.status.value, created_at=payment.created_at, paid_at=payment.paid_at,
+        )
+        for payment, title in result.all()
+    ]
+
+
+@router.get("/enrol-payments/{payment_id}/invoice")
+async def get_my_course_enrol_payment_invoice(
+    payment_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Downloadable PDF for one of the learner's own paid-enrolment
+    payments — only ever their own row, and only once Razorpay has
+    actually confirmed the money."""
+    row = (
+        await db.execute(
+            select(CourseEnrolmentPayment, Course.title, Org.name)
+            .join(Course, Course.id == CourseEnrolmentPayment.course_id)
+            .join(Org, Org.id == CourseEnrolmentPayment.org_id)
+            .where(CourseEnrolmentPayment.id == payment_id, CourseEnrolmentPayment.user_id == current_user.id)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    payment, course_title, org_name = row
+    if payment.status != CourseEnrolmentPaymentStatus.PAID:
+        raise HTTPException(status_code=400, detail="This payment hasn't completed yet — there's nothing to invoice.")
+
+    pdf_bytes = render_invoice_pdf(
+        invoice_no=str(payment.id)[:8].upper(),
+        issued_at=payment.paid_at or payment.created_at,
+        status=payment.status.value,
+        seller_name=org_name, seller_detail="Course enrolment",
+        buyer_name=f"{current_user.firstname} {current_user.lastname}".strip(), buyer_detail=current_user.email,
+        description=f"Enrolment — {course_title}",
+        amount=payment.amount, currency=payment.currency,
+        razorpay_payment_id=payment.razorpay_payment_id,
+    )
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="invoice-{str(payment.id)[:8]}.pdf"'},
+    )
 
 
 async def _module_belongs_to_course(module_id: uuid.UUID, course_id: uuid.UUID, db: AsyncSession) -> None:
