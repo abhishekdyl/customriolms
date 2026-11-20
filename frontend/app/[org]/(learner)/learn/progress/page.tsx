@@ -192,10 +192,10 @@ function LeaderboardTab() {
         <button type="button" onClick={() => setScope("global")} title="Global" className={cn("flex items-center gap-1 text-[11.5px] px-2 py-1 rounded-md", scope === "global" ? "bg-primary/10 text-primary" : "text-ink-faint")}><Globe2 size={13} /> Global</button>
         <button
           type="button" onClick={() => me?.country && setScope("country")} disabled={!me?.country}
-          title={me?.country ? "My country" : "Your country isn't set"}
+          title={me?.country ? "Country" : "Your country isn't set"}
           className={cn("flex items-center gap-1 text-[11.5px] px-2 py-1 rounded-md disabled:opacity-40", scope === "country" ? "bg-primary/10 text-primary" : "text-ink-faint")}
         >
-          <MapPin size={13} /> {me?.country ?? "My country"}
+          <MapPin size={13} /> Country
         </button>
         {tierFilter && (
           <button type="button" onClick={() => { setTierFilter(null); setScope("global"); }} className="text-[11px] text-primary underline ml-1">Clear filter</button>
