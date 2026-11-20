@@ -139,11 +139,17 @@ export function useForgotPassword() {
   });
 }
 
-export function useCurrentUser() {
+export function useCurrentUser(enabled: boolean = true) {
+  // `enabled` lets a caller hold this off until it knows there's actually a
+  // token to check (see GuestGuard) — firing it with none would 401, and
+  // the api-client's global 401 handler treats any 401 as "session died,
+  // go to /login", which is exactly wrong on a page a logged-out visitor
+  // is allowed to be on.
   return useQuery({
     queryKey: ["me"],
     queryFn: () => api.get<User>("/api/v1/auth/me"),
     retry: false,
+    enabled,
   });
 }
 

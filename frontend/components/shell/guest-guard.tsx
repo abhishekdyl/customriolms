@@ -20,7 +20,12 @@ export function GuestGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [checkedToken, setCheckedToken] = useState(false);
   const [hasToken, setHasToken] = useState(false);
-  const { data: user, isError, isFetched } = useCurrentUser();
+  // Only actually call /auth/me once we know there's a token to check —
+  // calling it with none 401s, and the api-client's global 401 handler
+  // reads any 401 as "go to /login", which is exactly the bug this was
+  // causing: a logged-out visitor landing on /register got bounced to
+  // /login before ever seeing the form.
+  const { data: user, isError, isFetched } = useCurrentUser(checkedToken && hasToken);
 
   useEffect(() => {
     setHasToken(!!localStorage.getItem("access_token"));
