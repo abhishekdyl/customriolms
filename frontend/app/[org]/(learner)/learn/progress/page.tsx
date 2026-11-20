@@ -134,10 +134,8 @@ function LeaderboardTab() {
   const [teamFilter, setTeamFilter] = useState("All teams");
   const [tierFilter, setTierFilter] = useState<string | null>(null);
   const [scope, setScope] = useState<"global" | "country">("global");
-  const [countryFilter, setCountryFilter] = useState("");
 
   const teams = Array.from(new Set(rows.map((r) => r.team_name).filter((t): t is string => !!t)));
-  const countries = Array.from(new Set(rows.map((r) => r.country).filter((c): c is string => !!c))).sort();
   const me = rows.find((r) => r.is_me);
   const fullRanked = [...rows].sort((a, b) => (b.points || 0) - (a.points || 0));
   const myRank = me ? fullRanked.findIndex((r) => r.id === me.id) + 1 : 0;
@@ -148,10 +146,12 @@ function LeaderboardTab() {
   const nextLevel = sortedLevels.find((lv) => lv.min_points > (me?.points ?? 0));
   const pointsToNext = nextLevel ? nextLevel.min_points - (me?.points ?? 0) : null;
 
+  // A learner only ever sees Global or their own country — not an
+  // open-ended country picker, which is an admin-only concern.
   const ranked = rows
     .filter((r) => teamFilter === "All teams" || r.team_name === teamFilter)
     .filter((r) => !tierFilter || r.tier_name === tierFilter)
-    .filter((r) => scope === "global" || !countryFilter || r.country === countryFilter)
+    .filter((r) => scope === "global" || (!!me?.country && r.country === me.country))
     .sort((a, b) => (b.points || 0) - (a.points || 0));
 
   return (
@@ -170,7 +170,7 @@ function LeaderboardTab() {
       </div>
 
       {sortedLevels.length > 0 && (
-        <div className="flex items-center gap-2 mb-4 overflow-x-auto">
+        <div className="flex items-center gap-2 mb-2 overflow-x-auto">
           {sortedLevels.map((lv) => (
             <button
               key={lv.id} type="button" onClick={() => setTierFilter(tierFilter === lv.name ? null : lv.name)}
@@ -185,21 +185,22 @@ function LeaderboardTab() {
               <span className="text-[10px] text-ink-faint">{lv.name}</span>
             </button>
           ))}
-          <div className="flex items-center gap-1.5 ml-2 shrink-0">
-            <button type="button" onClick={() => setScope("global")} title="Global" className={cn("p-1.5 rounded-md", scope === "global" ? "bg-primary/10 text-primary" : "text-ink-faint")}><Globe2 size={14} /></button>
-            <button type="button" onClick={() => setScope("country")} title="Country" className={cn("p-1.5 rounded-md", scope === "country" ? "bg-primary/10 text-primary" : "text-ink-faint")}><MapPin size={14} /></button>
-            {scope === "country" && (
-              <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} className="text-[11.5px] border border-line rounded-md px-1.5 py-1 bg-surface">
-                <option value="">All countries</option>
-                {countries.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            )}
-            {(tierFilter || (scope === "country" && countryFilter)) && (
-              <button type="button" onClick={() => { setTierFilter(null); setScope("global"); setCountryFilter(""); }} className="text-[11px] text-primary underline">Clear filter</button>
-            )}
-          </div>
         </div>
       )}
+
+      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+        <button type="button" onClick={() => setScope("global")} title="Global" className={cn("flex items-center gap-1 text-[11.5px] px-2 py-1 rounded-md", scope === "global" ? "bg-primary/10 text-primary" : "text-ink-faint")}><Globe2 size={13} /> Global</button>
+        <button
+          type="button" onClick={() => me?.country && setScope("country")} disabled={!me?.country}
+          title={me?.country ? "My country" : "Your country isn't set"}
+          className={cn("flex items-center gap-1 text-[11.5px] px-2 py-1 rounded-md disabled:opacity-40", scope === "country" ? "bg-primary/10 text-primary" : "text-ink-faint")}
+        >
+          <MapPin size={13} /> {me?.country ?? "My country"}
+        </button>
+        {tierFilter && (
+          <button type="button" onClick={() => { setTierFilter(null); setScope("global"); }} className="text-[11px] text-primary underline ml-1">Clear filter</button>
+        )}
+      </div>
 
       {me && (
         <div className="p-4 bg-surface border border-line rounded-xl mb-4">

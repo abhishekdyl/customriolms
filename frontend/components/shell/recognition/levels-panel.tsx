@@ -18,19 +18,44 @@ export function LevelsPanel() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<PointLevelDraft>(emptyDraft);
+  const [draftImage, setDraftImage] = useState<File | null>(null);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
+  const formImageInput = useRef<HTMLInputElement | null>(null);
 
   const startEdit = (lv: PointLevel) => {
     setEditingId(lv.id);
     setDraft({ name: lv.name, min_points: lv.min_points, max_points: lv.max_points, color: lv.color, sort_order: lv.sort_order });
+    setDraftImage(null);
   };
-  const startNew = () => { setEditingId("new"); setDraft({ ...emptyDraft, sort_order: levels.length + 1 }); };
-  const cancel = () => { setEditingId(null); setDraft(emptyDraft); };
+  const startNew = () => {
+    setEditingId("new");
+    // Min points picks up right where the last level's max left off, so
+    // tiers stay contiguous without the admin having to do the math.
+    const sorted = [...levels].sort((a, b) => a.min_points - b.min_points);
+    const last = sorted[sorted.length - 1];
+    const autoMin = last ? (last.max_points ?? last.min_points) + 1 : 0;
+    setDraft({ ...emptyDraft, min_points: autoMin, sort_order: levels.length + 1 });
+    setDraftImage(null);
+  };
+  const cancel = () => { setEditingId(null); setDraft(emptyDraft); setDraftImage(null); };
 
   const save = () => {
     if (!draft.name.trim()) return;
-    if (editingId === "new") create.mutate(draft, { onSuccess: cancel });
-    else if (editingId) update.mutate({ id: editingId, ...draft }, { onSuccess: cancel });
+    if (editingId === "new") {
+      create.mutate(draft, {
+        onSuccess: (created) => {
+          if (draftImage) uploadImage.mutate({ id: created.id, file: draftImage });
+          cancel();
+        },
+      });
+    } else if (editingId) {
+      update.mutate({ id: editingId, ...draft }, {
+        onSuccess: () => {
+          if (draftImage) uploadImage.mutate({ id: editingId, file: draftImage });
+          cancel();
+        },
+      });
+    }
   };
 
   return (
@@ -64,9 +89,23 @@ export function LevelsPanel() {
                 className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-paper"
               />
             </label>
-            <label className="flex flex-col gap-1 col-span-2">
+            <label className="flex flex-col gap-1">
               <span className="text-[11px] text-ink-faint">Color</span>
               <input type="color" value={draft.color} onChange={(e) => setDraft({ ...draft, color: e.target.value })} className="h-8 w-16 border border-line rounded-md bg-paper" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-ink-faint">Level image (optional)</span>
+              <input
+                ref={formImageInput} type="file" accept="image/*" className="hidden"
+                onChange={(e) => setDraftImage(e.target.files?.[0] ?? null)}
+              />
+              <button
+                type="button" onClick={() => formImageInput.current?.click()}
+                className="flex items-center gap-1.5 text-[12px] text-ink-soft border border-line rounded-md px-2 py-1.5 bg-paper active:opacity-70"
+              >
+                <Upload size={13} />
+                <span className="truncate">{draftImage ? draftImage.name : "Choose image"}</span>
+              </button>
             </label>
           </div>
           <div className="flex gap-2">

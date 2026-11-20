@@ -2,7 +2,6 @@
 import { useState } from "react";
 import { Award, Globe2, MapPin, Settings2 } from "lucide-react";
 import { PageLoader } from "@/components/ui/loading";
-import { useMyOrg, useUpdateMyOrg } from "@/lib/hooks/use-orgs";
 import { useAdminLeaderboard } from "@/lib/hooks/use-point-rules";
 import { usePointLevels } from "@/lib/hooks/use-point-levels";
 import { PointsRulesPanel } from "./points-rules-panel";
@@ -10,55 +9,14 @@ import { LevelsPanel } from "./levels-panel";
 
 const medal: Record<number, string> = { 0: "#FFC542", 1: "#C7CBDB", 2: "#E0A672" };
 
-function DefaultsPanel() {
-  const { data: org } = useMyOrg();
-  const updateOrg = useUpdateMyOrg();
-  const [defaults, setDefaults] = useState<{ module: string; course: string; quiz: string } | null>(null);
-  const d = defaults ?? {
-    module: String(org?.default_module_points ?? 10),
-    course: String(org?.default_course_points ?? 50),
-    quiz: String(org?.default_perfect_quiz_points ?? 20),
-  };
-  return (
-    <div className="mb-5">
-      <h3 className="font-head text-[13.5px] text-ink mb-1">Default points</h3>
-      <p className="text-[11.5px] text-ink-faint mb-3">
-        Applied to any course/activity completion that has no points rule of its own set below.
-      </p>
-      <div className="grid grid-cols-3 gap-2.5 mb-3">
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] text-ink-faint">Activity complete</span>
-          <input type="number" min={0} value={d.module} onChange={(e) => setDefaults({ ...d, module: e.target.value })} className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-paper" />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] text-ink-faint">Course complete</span>
-          <input type="number" min={0} value={d.course} onChange={(e) => setDefaults({ ...d, course: e.target.value })} className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-paper" />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] text-ink-faint">Perfect quiz</span>
-          <input type="number" min={0} value={d.quiz} onChange={(e) => setDefaults({ ...d, quiz: e.target.value })} className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-paper" />
-        </label>
-      </div>
-      <button
-        type="button" disabled={updateOrg.isPending}
-        onClick={() => updateOrg.mutate(
-          { default_module_points: Number(d.module), default_course_points: Number(d.course), default_perfect_quiz_points: Number(d.quiz) },
-          { onSuccess: () => setDefaults(null) },
-        )}
-        className="px-3.5 py-1.5 bg-primary rounded-[5px] text-[12px] text-white font-medium disabled:opacity-60"
-      >
-        Save defaults
-      </button>
-    </div>
-  );
-}
-
 function SettingsPanel() {
-  const [tab, setTab] = useState<"defaults" | "rules" | "levels">("rules");
+  // Levels/Tiers is what the admin lands on — Points rules is a step
+  // away via the toggle, since levels is the more frequent edit.
+  const [tab, setTab] = useState<"levels" | "rules">("levels");
   return (
     <div className="mb-4 bg-surface border border-line rounded-[10px] p-4">
       <div className="flex items-center gap-1 mb-4 border-b border-line pb-2">
-        {([["rules", "Points rules"], ["levels", "Levels/Tiers"], ["defaults", "Defaults"]] as const).map(([id, label]) => (
+        {([["levels", "Levels/Tiers"], ["rules", "Points rules"]] as const).map(([id, label]) => (
           <button
             key={id} type="button" onClick={() => setTab(id)}
             className={`px-2.5 py-1 rounded-md text-[12px] font-medium ${tab === id ? "bg-primary/10 text-primary" : "text-ink-soft"}`}
@@ -67,9 +25,8 @@ function SettingsPanel() {
           </button>
         ))}
       </div>
-      {tab === "rules" && <PointsRulesPanel />}
       {tab === "levels" && <LevelsPanel />}
-      {tab === "defaults" && <DefaultsPanel />}
+      {tab === "rules" && <PointsRulesPanel />}
     </div>
   );
 }
@@ -109,7 +66,7 @@ export function LeaderboardTab({ query = "" }: { query?: string }) {
       {settingsOpen && <SettingsPanel />}
 
       {levels.length > 0 && (
-        <div className="flex items-center gap-2 mb-3 overflow-x-auto">
+        <div className="flex items-center gap-2 mb-2 overflow-x-auto">
           {levels.map((lv) => (
             <button
               key={lv.id} type="button" onClick={() => setTierFilter(tierFilter === lv.name ? null : lv.name)}
@@ -125,21 +82,22 @@ export function LeaderboardTab({ query = "" }: { query?: string }) {
               <span className="text-[10px] text-ink-faint">{lv.name}</span>
             </button>
           ))}
-          <div className="flex items-center gap-1.5 ml-2 shrink-0">
-            <button type="button" onClick={() => setScope("global")} title="Global" className={`p-1.5 rounded-md ${scope === "global" ? "bg-primary/10 text-primary" : "text-ink-faint"}`}><Globe2 size={14} /></button>
-            <button type="button" onClick={() => setScope("country")} title="Country" className={`p-1.5 rounded-md ${scope === "country" ? "bg-primary/10 text-primary" : "text-ink-faint"}`}><MapPin size={14} /></button>
-            {scope === "country" && (
-              <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} className="text-[11.5px] border border-line rounded-md px-1.5 py-1 bg-surface">
-                <option value="">All countries</option>
-                {countries.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            )}
-            {(tierFilter || (scope === "country" && countryFilter)) && (
-              <button type="button" onClick={() => { setTierFilter(null); setScope("global"); setCountryFilter(""); }} className="text-[11px] text-primary underline">Clear filter</button>
-            )}
-          </div>
         </div>
       )}
+
+      <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+        <button type="button" onClick={() => setScope("global")} title="Global" className={`flex items-center gap-1 text-[11.5px] px-2 py-1 rounded-md ${scope === "global" ? "bg-primary/10 text-primary" : "text-ink-faint"}`}><Globe2 size={13} /> Global</button>
+        <button type="button" onClick={() => setScope("country")} title="Country" className={`flex items-center gap-1 text-[11.5px] px-2 py-1 rounded-md ${scope === "country" ? "bg-primary/10 text-primary" : "text-ink-faint"}`}><MapPin size={13} /> Country</button>
+        {scope === "country" && (
+          <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} className="text-[11.5px] border border-line rounded-md px-1.5 py-1 bg-surface">
+            <option value="">All countries</option>
+            {countries.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+        {(tierFilter || (scope === "country" && countryFilter)) && (
+          <button type="button" onClick={() => { setTierFilter(null); setScope("global"); setCountryFilter(""); }} className="text-[11px] text-primary underline ml-1">Clear filter</button>
+        )}
+      </div>
 
       <div className="flex flex-col gap-2">
         {ranked.map((u, i) => (
