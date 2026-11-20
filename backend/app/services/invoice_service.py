@@ -29,24 +29,27 @@ def render_invoice_pdf(
     buyer_name: str,
     buyer_detail: str | None,
     description: str,
-    amount: int,  # paise
+    base_amount: int,  # paise — the plan/course price itself, before anything added on top
+    total_amount: int,  # paise — what was actually charged = base_amount + gst_amount + gateway_fee_amount
     currency: str,
     razorpay_payment_id: str | None,
+    gst_amount: int = 0,  # 0 => GST line reads "—" (not charged on this payment)
+    gateway_fee_amount: int = 0,  # 0 => gateway-fee line reads "—" (not charged on this payment)
     seller_gstin: str | None = None,
     buyer_gstin: str | None = None,
     hsn_sac_code: str | None = None,
-    gst_rate_percent: int | None = None,  # None/0 => no tax section at all
-    same_state: bool = False,  # True => CGST+SGST split; False => IGST
+    same_state: bool = False,  # only matters when gst_amount > 0: True => CGST+SGST split; False => IGST
 ) -> bytes:
     """Returns the finished PDF as bytes — callers stream it straight
     back, nothing is written to disk.
 
-    `amount` is always treated as the tax-inclusive total actually
-    charged. When gst_rate_percent is set, it's reverse-split here into
-    a taxable value + tax line(s) purely for display — nothing about
-    what was actually charged changes, so this can be turned on/off or
-    have its rate changed later without touching any stored payment
-    amount."""
+    GST and the gateway fee are ADDED ON TOP of base_amount, never
+    deducted from it — base_amount + gst_amount + gateway_fee_amount
+    must equal total_amount. The rate shown next to each is derived from
+    the amounts themselves (gst_amount / base_amount), not from
+    whatever PlatformSettings' rate happens to be today, so an invoice
+    for a payment made under an old rate keeps showing that old rate
+    forever, even after a Super Admin changes it."""
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle("InvoiceTitle", parent=styles["Title"], fontSize=20, spaceAfter=2)
     label_style = ParagraphStyle("Label", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#6b7280"))
@@ -95,23 +98,25 @@ def render_invoice_pdf(
     elements.append(parties)
     elements.append(Spacer(1, 10 * mm))
 
-    has_gst = bool(gst_rate_percent)
-    item_description = f"{description} (HSN/SAC {hsn_sac_code})" if has_gst and hsn_sac_code else description
+    item_description = f"{description} (HSN/SAC {hsn_sac_code})" if gst_amount and hsn_sac_code else description
+    rows = [["Description", "Amount"], [item_description, rupees(base_amount, currency)]]
 
-    if has_gst:
-        # `amount` is the tax-inclusive total actually charged — reverse
-        # -split into taxable value + tax purely for display.
-        taxable_value = round(amount / (1 + gst_rate_percent / 100))
-        tax_total = amount - taxable_value
-        rows = [["Description", "Amount"], [item_description, rupees(taxable_value, currency)]]
+    if gst_amount > 0:
+        gst_rate = round(gst_amount / base_amount * 100, 2) if base_amount else 0
         if same_state:
-            half = gst_rate_percent / 2
-            rows.append([f"CGST @ {half:g}%", rupees(tax_total // 2, currency)])
-            rows.append([f"SGST @ {half:g}%", rupees(tax_total - tax_total // 2, currency)])
+            half_rate, half_amount = gst_rate / 2, gst_amount // 2
+            rows.append([f"CGST @ {half_rate:g}%", rupees(half_amount, currency)])
+            rows.append([f"SGST @ {half_rate:g}%", rupees(gst_amount - half_amount, currency)])
         else:
-            rows.append([f"IGST @ {gst_rate_percent:g}%", rupees(tax_total, currency)])
+            rows.append([f"IGST @ {gst_rate:g}%", rupees(gst_amount, currency)])
     else:
-        rows = [["Description", "Amount"], [item_description, rupees(amount, currency)]]
+        rows.append(["GST", "—"])
+
+    if gateway_fee_amount > 0:
+        fee_rate = round(gateway_fee_amount / base_amount * 100, 2) if base_amount else 0
+        rows.append([f"Gateway fee @ {fee_rate:g}%", rupees(gateway_fee_amount, currency)])
+    else:
+        rows.append(["Gateway fee", "—"])
 
     line_items = Table(rows, colWidths=[120 * mm, 35 * mm])
     line_items.setStyle(TableStyle([
@@ -126,7 +131,7 @@ def render_invoice_pdf(
     elements.append(line_items)
     elements.append(Spacer(1, 4 * mm))
 
-    total_table = Table([["Total", rupees(amount, currency)]], colWidths=[120 * mm, 35 * mm])
+    total_table = Table([["Total", rupees(total_amount, currency)]], colWidths=[120 * mm, 35 * mm])
     total_table.setStyle(TableStyle([
         ("FONTSIZE", (0, 0), (-1, -1), 12),
         ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
@@ -134,8 +139,6 @@ def render_invoice_pdf(
     ]))
     elements.append(total_table)
     elements.append(Spacer(1, 16 * mm))
-    if has_gst:
-        elements.append(Paragraph("Tax is shown for information only; amount charged did not change based on this split.", label_style))
     elements.append(Paragraph("This is a system-generated invoice.", label_style))
 
     doc.build(elements)

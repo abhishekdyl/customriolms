@@ -110,9 +110,16 @@ export function TrialEndedPage() {
             <div key={p.plan} className="flex flex-col gap-3 rounded-xl border border-line bg-paper-raised p-5 text-left">
               <div className="font-head text-sm text-ink">{PLAN_LABEL[p.plan]}</div>
               <div className="font-head text-2xl text-ink">
-                {formatRupees(p.monthly_price)}
+                {formatRupees(p.total_amount)}
                 <span className="text-xs font-normal text-ink-faint"> /month</span>
               </div>
+              {(p.gst_amount > 0 || p.gateway_fee_amount > 0) && (
+                <div className="text-[11px] text-ink-faint">
+                  {formatRupees(p.monthly_price)} plan
+                  {p.gst_amount > 0 && ` + ${formatRupees(p.gst_amount)} GST`}
+                  {p.gateway_fee_amount > 0 && ` + ${formatRupees(p.gateway_fee_amount)} gateway fee`}
+                </div>
+              )}
               <div className="text-xs text-ink-faint">Up to {p.user_limit} users</div>
               <button
                 onClick={() => pay(p.plan)}

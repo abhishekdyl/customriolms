@@ -68,6 +68,13 @@ export default function BillingPage() {
                 Order {p.razorpay_order_id} · Created {formatDate(p.created_at)}
                 {p.paid_at ? ` · Paid ${formatDate(p.paid_at)}` : ""}
               </div>
+              {(p.gst_amount > 0 || p.gateway_fee_amount > 0) && (
+                <div className="mt-0.5 text-[11.5px] text-ink-faint">
+                  {formatRupees(p.base_amount)} plan
+                  {p.gst_amount > 0 && ` + ${formatRupees(p.gst_amount)} GST`}
+                  {p.gateway_fee_amount > 0 && ` + ${formatRupees(p.gateway_fee_amount)} gateway fee`}
+                </div>
+              )}
             </div>
             {p.status === "paid" && (
               <Button variant="secondary" size="sm" disabled={downloadingId === p.id} onClick={() => download(p.id)}>

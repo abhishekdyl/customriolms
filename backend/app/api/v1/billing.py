@@ -56,6 +56,19 @@ async def _require_org_admin(user: User = Depends(get_current_user_allow_trial_s
     return user
 
 
+def _compute_breakdown(base_amount: int, settings_row: PlatformSettings) -> tuple[int, int, int]:
+    """base_amount is a plan's own price (paise). Returns (gst_amount,
+    gateway_fee_amount, total) — each ADDED ON TOP of base_amount, each
+    independently 0 whenever its own *_enabled toggle is off. This is the
+    one place that formula lives; both get_pricing (informational,
+    "what would it cost right now") and create_checkout (what actually
+    gets charged and locked into the OrgPayment row) call this, so they
+    can never drift apart."""
+    gst_amount = round(base_amount * settings_row.gst_rate_percent / 100) if settings_row.gst_enabled else 0
+    gateway_fee_amount = round(base_amount * settings_row.gateway_fee_percent / 100) if settings_row.gateway_fee_enabled else 0
+    return gst_amount, gateway_fee_amount, base_amount + gst_amount + gateway_fee_amount
+
+
 @router.get("/pricing", response_model=PricingOut)
 async def get_pricing(db: AsyncSession = Depends(get_db)):
     """Public, unauthenticated — same reasoning as orgs.py's
@@ -63,13 +76,20 @@ async def get_pricing(db: AsyncSession = Depends(get_db)):
     suspended org's token is good for much else, and a visitor on the
     registration page can use it to advertise the trial length. Only
     plans with a non-zero configured price are listed (see
-    PlatformSettings.price_*_monthly's docstring)."""
+    PlatformSettings.price_*_monthly's docstring). The gst/gateway-fee
+    breakdown here is purely informational (today's rates applied to
+    today's price) — see _compute_breakdown's docstring."""
     settings_row = await _get_settings(db)
-    plans = [
-        PlanPrice(plan=plan, monthly_price=getattr(settings_row, field), user_limit=PLAN_USER_LIMITS[plan])
-        for plan, field in _PRICE_FIELD.items()
-        if getattr(settings_row, field) > 0
-    ]
+    plans = []
+    for plan, field in _PRICE_FIELD.items():
+        base = getattr(settings_row, field)
+        if base <= 0:
+            continue
+        gst_amount, gateway_fee_amount, total = _compute_breakdown(base, settings_row)
+        plans.append(PlanPrice(
+            plan=plan, monthly_price=base, gst_amount=gst_amount, gateway_fee_amount=gateway_fee_amount,
+            total_amount=total, user_limit=PLAN_USER_LIMITS[plan],
+        ))
     return PricingOut(trial_days=settings_row.trial_days, razorpay_key_id=settings_row.razorpay_key_id, plans=plans)
 
 
@@ -83,15 +103,22 @@ async def create_checkout(
     matching OrgPayment row (status=created) — the frontend hands the
     order straight to Razorpay's Checkout widget. Nothing about the org
     changes yet; that only happens once /billing/verify or the webhook
-    confirms a real payment (see those docstrings)."""
+    confirms a real payment (see those docstrings).
+
+    The order (and the row) charge base + gst + gateway fee, computed
+    from whatever PlatformSettings says RIGHT NOW — once this order
+    exists, that breakdown is locked into the row and never
+    recalculated, even if a Super Admin changes a rate or toggle a
+    second later."""
     settings_row = await _get_settings(db)
-    price = getattr(settings_row, _PRICE_FIELD[body.plan.value])
-    if price <= 0:
+    base = getattr(settings_row, _PRICE_FIELD[body.plan.value])
+    if base <= 0:
         raise HTTPException(status_code=400, detail=f"The {body.plan.value} plan isn't available for self-checkout.")
+    gst_amount, gateway_fee_amount, total = _compute_breakdown(base, settings_row)
 
     client = _razorpay_client(settings_row)
     try:
-        order = client.order.create({"amount": price, "currency": "INR", "payment_capture": 1})
+        order = client.order.create({"amount": total, "currency": "INR", "payment_capture": 1})
     except Exception:
         logger.exception("Razorpay order creation failed for org %s", current_user.org_id)
         raise HTTPException(status_code=502, detail="Couldn't reach the payment gateway. Try again in a moment.")
@@ -99,7 +126,10 @@ async def create_checkout(
     payment = OrgPayment(
         org_id=current_user.org_id,
         plan=body.plan,
-        amount=price,
+        amount=total,
+        base_amount=base,
+        gst_amount=gst_amount,
+        gateway_fee_amount=gateway_fee_amount,
         currency="INR",
         razorpay_order_id=order["id"],
         status=OrgPaymentStatus.CREATED,
@@ -108,15 +138,21 @@ async def create_checkout(
     await db.commit()
 
     return CheckoutOut(
-        razorpay_order_id=order["id"], razorpay_key_id=settings_row.razorpay_key_id, amount=price, currency="INR", plan=body.plan
+        razorpay_order_id=order["id"], razorpay_key_id=settings_row.razorpay_key_id,
+        amount=total, base_amount=base, gst_amount=gst_amount, gateway_fee_amount=gateway_fee_amount,
+        currency="INR", plan=body.plan,
     )
 
 
 def _render_org_payment_invoice(org: Org, settings_row: PlatformSettings, payment: OrgPayment) -> bytes:
     """Shared by the invoice-download endpoint and the auto-email right
-    after payment — same GST computation either way, see
+    after payment. Uses the payment's OWN locked-in base_amount/
+    gst_amount/gateway_fee_amount — never recomputed from today's
+    PlatformSettings rates, so this always matches what was actually
+    charged, even years later after rates/toggles have changed. See
     PlatformSettings.company_state's docstring for the CGST+SGST vs IGST
-    call."""
+    call (same_state only affects how a non-zero gst_amount is split for
+    display, never whether there IS one)."""
     same_state = bool(
         org.billing_state and settings_row.company_state
         and org.billing_state.strip().lower() == settings_row.company_state.strip().lower()
@@ -129,11 +165,11 @@ def _render_org_payment_invoice(org: Org, settings_row: PlatformSettings, paymen
         seller_detail=settings_row.company_address or "Riosmart LMS — subscription billing",
         buyer_name=org.name, buyer_detail=org.billing_address or org.contact_email,
         description=f"{payment.plan.value.title()} plan — monthly subscription",
-        amount=payment.amount, currency=payment.currency,
+        base_amount=payment.base_amount, gst_amount=payment.gst_amount, gateway_fee_amount=payment.gateway_fee_amount,
+        total_amount=payment.amount, currency=payment.currency,
         razorpay_payment_id=payment.razorpay_payment_id,
         seller_gstin=settings_row.company_gstin, buyer_gstin=org.gstin,
         hsn_sac_code=settings_row.hsn_sac_code,
-        gst_rate_percent=settings_row.gst_rate_percent or None,
         same_state=same_state,
     )
 

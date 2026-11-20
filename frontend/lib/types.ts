@@ -587,14 +587,25 @@ export interface PlatformSettings {
   company_address: string | null;
   company_gstin: string | null;
   company_state: string | null;
+  // Both OFF by default — until turned on, checkout charges exactly a
+  // plan's own price, and every invoice's corresponding line reads "—".
+  gst_enabled: boolean;
   gst_rate_percent: number;
+  gateway_fee_enabled: boolean;
+  gateway_fee_percent: number;
   hsn_sac_code: string;
 }
 
 // ---------- Billing (self-serve trial -> paid license) ----------
 export interface PlanPrice {
   plan: OrgPlan;
-  monthly_price: number; // paise
+  monthly_price: number; // paise — the plan's own base price
+  // Computed from today's GST/gateway-fee toggle+rate — informational
+  // only, so the upgrade screen never surprises with a bigger charge
+  // than shown. Both 0 when that charge is currently disabled.
+  gst_amount: number;
+  gateway_fee_amount: number;
+  total_amount: number; // monthly_price + gst_amount + gateway_fee_amount — what checkout actually charges right now
   user_limit: number;
 }
 
@@ -607,7 +618,10 @@ export interface Pricing {
 export interface CheckoutOut {
   razorpay_order_id: string;
   razorpay_key_id: string;
-  amount: number;
+  amount: number; // paise — total actually charged
+  base_amount: number;
+  gst_amount: number;
+  gateway_fee_amount: number;
   currency: string;
   plan: OrgPlan;
 }
@@ -627,7 +641,10 @@ export type OrgPaymentStatus = "created" | "paid" | "failed";
 export interface OrgPayment {
   id: string;
   plan: OrgPlan;
-  amount: number; // paise
+  amount: number; // paise — the TOTAL charged (base + gst + gateway fee)
+  base_amount: number;
+  gst_amount: number;
+  gateway_fee_amount: number;
   currency: string;
   razorpay_order_id: string;
   razorpay_payment_id: string | null;

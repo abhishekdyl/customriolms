@@ -165,7 +165,14 @@ class PlatformSettingsOut(BaseModel):
     company_address: str | None = None
     company_gstin: str | None = None
     company_state: str | None = None
+    # Whether GST/a gateway-fee surcharge are actually added at checkout
+    # right now — see PlatformSettings.gst_enabled's docstring. Both
+    # default OFF, so a plan's monthly_price IS the total charged until
+    # a Super Admin turns one of these on.
+    gst_enabled: bool = False
     gst_rate_percent: int = 18
+    gateway_fee_enabled: bool = False
+    gateway_fee_percent: float = 0.0
     hsn_sac_code: str = "998316"
     # None = not configured yet, i.e. "show every country" — see the
     # model column's docstring. Never empty-list-as-sentinel: an empty
@@ -206,7 +213,10 @@ class PlatformSettingsUpdateRequest(BaseModel):
     company_address: str | None = None
     company_gstin: str | None = None
     company_state: str | None = None
+    gst_enabled: bool | None = None
     gst_rate_percent: int | None = Field(default=None, ge=0, le=100)
+    gateway_fee_enabled: bool | None = None
+    gateway_fee_percent: float | None = Field(default=None, ge=0, le=100)
     hsn_sac_code: str | None = None
 
 

@@ -520,7 +520,10 @@ function LicensingTab() {
         company_address: settings.company_address ?? "",
         company_gstin: settings.company_gstin ?? "",
         company_state: settings.company_state ?? "",
+        gst_enabled: settings.gst_enabled,
         gst_rate_percent: settings.gst_rate_percent,
+        gateway_fee_enabled: settings.gateway_fee_enabled,
+        gateway_fee_percent: settings.gateway_fee_percent,
         hsn_sac_code: settings.hsn_sac_code,
       }
     : undefined;
@@ -657,15 +660,54 @@ function LicensingTab() {
       </section>
 
       <section className="mb-5 rounded-xl border border-line bg-surface p-5">
-        <h2 className="mb-1 font-head text-sm text-ink">Invoice (GST)</h2>
+        <h2 className="mb-1 font-head text-sm text-ink">Invoice — GST &amp; gateway fee</h2>
         <p className="mb-3.5 text-xs text-ink-faint">
-          Seller details shown on every org's downloadable subscription invoice (Org Admin ▸ Billing). Leave GSTIN
-          blank to skip the tax line on invoices entirely — useful before you've registered for GST.
+          Both OFF by default — a plan&apos;s listed price is exactly what gets charged until you turn one of these
+          on. Once on, each is ADDED on top of the plan price at checkout (e.g. ₹1999 + 18% GST + 5% gateway fee =
+          the total actually charged), and every invoice shows it broken out line by line.
         </p>
         {isLoading || !draft ? (
           <p className="text-sm text-ink-faint">Loading…</p>
         ) : (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-5">
+            <div className="flex items-center justify-between rounded-lg border border-line p-3.5">
+              <div>
+                <div className="text-[13px] font-medium text-ink">Charge GST</div>
+                <div className="text-xs text-ink-faint">Adds the rate below on top of every plan price at checkout.</div>
+              </div>
+              <Switch checked={draft.gst_enabled} onCheckedChange={(v) => setDraft((d) => ({ ...d, gst_enabled: v }))} />
+            </div>
+            {draft.gst_enabled && (
+              <div className="max-w-[160px]">
+                <Label className="mb-1.5 block">GST rate (%)</Label>
+                <Input
+                  type="number" min={0} max={100} value={draft.gst_rate_percent}
+                  onChange={(e) => setDraft((d) => ({ ...d, gst_rate_percent: Math.max(0, Number(e.target.value) || 0) }))}
+                />
+              </div>
+            )}
+
+            <div className="flex items-center justify-between rounded-lg border border-line p-3.5">
+              <div>
+                <div className="text-[13px] font-medium text-ink">Charge gateway fee</div>
+                <div className="text-xs text-ink-faint">
+                  A payment-gateway surcharge, also added on top at checkout — not a fixed number, set whatever
+                  rate your Razorpay plan actually charges you.
+                </div>
+              </div>
+              <Switch checked={draft.gateway_fee_enabled} onCheckedChange={(v) => setDraft((d) => ({ ...d, gateway_fee_enabled: v }))} />
+            </div>
+            {draft.gateway_fee_enabled && (
+              <div className="max-w-[160px]">
+                <Label className="mb-1.5 block">Gateway fee (%)</Label>
+                <Input
+                  type="number" min={0} max={100} step={0.01} value={draft.gateway_fee_percent}
+                  onChange={(e) => setDraft((d) => ({ ...d, gateway_fee_percent: Math.max(0, Number(e.target.value) || 0) }))}
+                />
+              </div>
+            )}
+
+            <h3 className="mt-1 font-head text-[13px] text-ink">Seller details (for the GST line on every invoice)</h3>
             <div>
               <Label className="mb-1.5 block">Legal / company name</Label>
               <Input
@@ -696,26 +738,19 @@ function LicensingTab() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="mb-1.5 block">GST rate (%)</Label>
-                <Input
-                  type="number" min={0} max={100} value={draft.gst_rate_percent}
-                  onChange={(e) => setDraft((d) => ({ ...d, gst_rate_percent: Math.max(0, Number(e.target.value) || 0) }))}
-                />
-              </div>
-              <div>
-                <Label className="mb-1.5 block">HSN/SAC code</Label>
-                <Input
-                  value={draft.hsn_sac_code} placeholder="998316"
-                  onChange={(e) => setDraft((d) => ({ ...d, hsn_sac_code: e.target.value }))}
-                />
-              </div>
+            <div>
+              <Label className="mb-1.5 block">HSN/SAC code</Label>
+              <Input
+                value={draft.hsn_sac_code} placeholder="998316" className="max-w-[160px]"
+                onChange={(e) => setDraft((d) => ({ ...d, hsn_sac_code: e.target.value }))}
+              />
             </div>
             <p className="text-xs text-ink-faint">
               An org&apos;s invoice shows CGST+SGST when its own billing state (set from its Org Settings) matches
-              the state above, and IGST otherwise. Confirm the HSN/SAC code with your accountant before relying on
-              it — 998316 is a reasonable default for a software subscription, not a guarantee.
+              the state above, and IGST otherwise — this only affects how a non-zero GST amount is split for
+              display, never whether GST is charged at all. Confirm the HSN/SAC code with your accountant — 998316
+              is a reasonable default for a software subscription, not a guarantee. A rate change here never
+              rewrites an invoice already issued; it only applies to payments made after the change.
             </p>
           </div>
         )}

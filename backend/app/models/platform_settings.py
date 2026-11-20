@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ARRAY, Boolean, Integer, String
+from sqlalchemy import ARRAY, Boolean, Float, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -79,14 +79,24 @@ class PlatformSettings(Base):
     # (case-insensitively) to decide CGST+SGST (same state) vs IGST
     # (different/unknown state) on an org's invoice.
     company_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    # Whole-percent GST slab (5/12/18/28 are India's actual slabs) applied
-    # to every subscription invoice; amount charged is treated as
-    # tax-inclusive and reverse-split into taxable value + tax at invoice
-    # time, so this can be changed later without touching past payments'
-    # stored amount. 0 (not "null") means "don't show a tax line at all" —
-    # this is the one GST field that already has a sane always-valid
-    # default, unlike the others above which need real values entered.
+    # Whole-percent GST slab (5/12/18/28 are India's actual slabs),
+    # ADDED ON TOP of a plan's price at checkout time when gst_enabled is
+    # on — e.g. a ₹1999 plan with GST on becomes ₹1999 + 18% charged, not
+    # ₹1999 split into a lower taxable value. gst_enabled defaults OFF:
+    # until a Super Admin turns it on, checkout charges exactly the plan
+    # price and every invoice's GST line reads "—", never a computed
+    # amount. Once a payment goes through, its own OrgPayment.gst_amount
+    # is what the invoice shows forever after — changing this rate later
+    # never rewrites a past invoice.
+    gst_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     gst_rate_percent: Mapped[int] = mapped_column(Integer, default=18, nullable=False)
+    # Same shape as GST just above, but for a payment-gateway surcharge
+    # instead of tax — also added on top at checkout, also OFF by
+    # default, also locked into OrgPayment.gateway_fee_amount once
+    # charged. A float (not whole-percent like GST) since a real gateway
+    # surcharge is rarely a round number (e.g. 2.36%).
+    gateway_fee_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    gateway_fee_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     # SAC code for the invoice's line item. 998316 ("IT infrastructure &
     # software support services") is a reasonable generic default for a
     # SaaS subscription, but a Super Admin/accountant should confirm the

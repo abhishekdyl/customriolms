@@ -15,7 +15,10 @@ class OrgPaymentOut(BaseModel):
     or a Super Admin activated it manually)."""
     id: uuid.UUID
     plan: OrgPlan
-    amount: int  # paise
+    amount: int  # paise — the TOTAL charged (base + gst + gateway fee)
+    base_amount: int
+    gst_amount: int
+    gateway_fee_amount: int
     currency: str
     razorpay_order_id: str
     razorpay_payment_id: str | None = None
@@ -29,7 +32,15 @@ class OrgPaymentOut(BaseModel):
 
 class PlanPrice(BaseModel):
     plan: OrgPlan
-    monthly_price: int  # paise — see PlatformSettings.price_*_monthly
+    monthly_price: int  # paise — the plan's own base price, see PlatformSettings.price_*_monthly
+    # Breakdown computed from PlatformSettings' CURRENT gst/gateway-fee
+    # toggle+rate at the moment this was requested — purely informational
+    # (so the upgrade screen never surprises someone with a bigger charge
+    # than shown), not locked to anything. gst_amount/gateway_fee_amount
+    # are 0 whenever that charge is currently disabled.
+    gst_amount: int
+    gateway_fee_amount: int
+    total_amount: int  # monthly_price + gst_amount + gateway_fee_amount — what checkout actually charges right now
     user_limit: int  # PLAN_USER_LIMITS — shown alongside price on the upgrade screen
 
 
@@ -50,10 +61,17 @@ class CheckoutRequest(BaseModel):
 
 
 class CheckoutOut(BaseModel):
-    """What the frontend hands straight to Razorpay's Checkout widget."""
+    """What the frontend hands straight to Razorpay's Checkout widget —
+    `amount` is the TOTAL Razorpay will actually charge. base_amount/
+    gst_amount/gateway_fee_amount are the same breakdown that gets
+    locked into the resulting OrgPayment row, included here purely so
+    the frontend can show it before the Checkout modal opens."""
     razorpay_order_id: str
     razorpay_key_id: str
-    amount: int  # paise
+    amount: int  # paise — total
+    base_amount: int
+    gst_amount: int
+    gateway_fee_amount: int
     currency: str
     plan: OrgPlan
 

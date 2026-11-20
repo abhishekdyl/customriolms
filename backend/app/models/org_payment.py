@@ -38,7 +38,20 @@ class OrgPayment(Base):
     plan: Mapped[OrgPlan] = mapped_column(Enum(OrgPlan, name="orgplan"), nullable=False)
     # Paise (smallest INR unit), matching PlatformSettings.price_*_monthly
     # and Razorpay's own `amount` convention — see that model's docstring.
+    # `amount` is always the TOTAL actually charged (and what's sent to
+    # Razorpay as the order amount) = base_amount + gst_amount +
+    # gateway_fee_amount. The three are broken out and locked in at
+    # checkout time (billing.py's create_checkout, from whatever
+    # PlatformSettings.gst_enabled/gateway_fee_enabled/*_percent said at
+    # that moment) so a later rate change, or GST/the fee being turned
+    # on or off, never rewrites what an already-issued invoice shows.
+    # gst_amount/gateway_fee_amount are 0 whenever that charge wasn't
+    # enabled for this particular payment (including every payment made
+    # before this breakdown existed at all — see the migration backfill).
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    gst_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    gateway_fee_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     currency: Mapped[str] = mapped_column(String(10), default="INR", nullable=False)
 
     razorpay_order_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)

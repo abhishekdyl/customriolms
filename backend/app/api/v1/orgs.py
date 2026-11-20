@@ -216,7 +216,10 @@ def _settings_out(row: PlatformSettings) -> PlatformSettingsOut:
         company_address=row.company_address,
         company_gstin=row.company_gstin,
         company_state=row.company_state,
+        gst_enabled=row.gst_enabled,
         gst_rate_percent=row.gst_rate_percent,
+        gateway_fee_enabled=row.gateway_fee_enabled,
+        gateway_fee_percent=row.gateway_fee_percent,
         hsn_sac_code=row.hsn_sac_code,
     )
 
@@ -275,8 +278,14 @@ async def update_platform_settings(body: PlatformSettingsUpdateRequest, db: Asyn
         settings_row.company_gstin = body.company_gstin
     if body.company_state is not None:
         settings_row.company_state = body.company_state
+    if body.gst_enabled is not None:
+        settings_row.gst_enabled = body.gst_enabled
     if body.gst_rate_percent is not None:
         settings_row.gst_rate_percent = body.gst_rate_percent
+    if body.gateway_fee_enabled is not None:
+        settings_row.gateway_fee_enabled = body.gateway_fee_enabled
+    if body.gateway_fee_percent is not None:
+        settings_row.gateway_fee_percent = body.gateway_fee_percent
     if body.hsn_sac_code is not None:
         settings_row.hsn_sac_code = body.hsn_sac_code
     await db.commit()

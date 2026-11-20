@@ -273,7 +273,7 @@ async def get_my_course_enrol_payment_invoice(
         seller_name=org_name, seller_detail="Course enrolment",
         buyer_name=f"{current_user.firstname} {current_user.lastname}".strip(), buyer_detail=current_user.email,
         description=f"Enrolment — {course_title}",
-        amount=payment.amount, currency=payment.currency,
+        base_amount=payment.amount, total_amount=payment.amount, currency=payment.currency,
         razorpay_payment_id=payment.razorpay_payment_id,
     )
     return Response(
