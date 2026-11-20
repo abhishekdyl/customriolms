@@ -14,13 +14,15 @@ from app.models.course import Course
 from app.models.module import Module, ModuleType
 from app.models.module_progress import ModuleProgress
 from app.models.org import Org
-from app.models.point_rule import PointRule
+from app.models.point_level import PointLevel
+from app.models.point_rule import PointRule, RuleEvent, RuleScope
 from app.models.quiz_attempt import QuizAttempt
 from app.models.scorm_progress import ScormProgress
 from app.models.skill import Skill
 from app.models.team import Team
 from app.models.user import RoleName, User, UserStatus
 from app.models.watch_progress import WatchProgress
+from app.services import storage_service
 from app.services.certificate_service import issue_certificate
 
 
@@ -322,27 +324,44 @@ async def trained_week(db: AsyncSession, user_id: uuid.UUID) -> list[bool]:
 
 # ---------- points / leaderboard ----------
 async def points_by_user(db: AsyncSession, org_id: uuid.UUID) -> dict[uuid.UUID, int]:
-    """Each learner's total leaderboard points in this org:
-      - one module completion (any ModuleType, including SCORM) is worth
-        that module's own PointRule.points if the Org Admin set one,
-        else the org's default_module_points;
-      - one course certificate (= that course fully completed) is worth
-        that course's own PointRule.points if set, else the org's
-        default_course_points;
+    """Each learner's total leaderboard points in this org, per the
+    Recognition page's Leaderboard tab "Points Rules":
+      - one module COMPLETE (any ModuleType, including SCORM) is worth
+        that module's own PointRule if the Org Admin set one (scope=
+        MODULE, event=COMPLETE), else the org's default_module_points;
+      - one course COMPLETE (= that course's certificate issued) is
+        worth that course's own PointRule if set (scope=COURSE,
+        event=COMPLETE), else the org's default_course_points;
+      - one module START only awards points when the Org Admin
+        explicitly set a scope=MODULE/event=START rule for it — there's
+        no org-wide default for this, it's purely opt-in. "Started" can
+        only be detected for WATCH/SCORM modules (the only two types
+        that persist an in-progress row — WatchProgress/ScormProgress —
+        the instant a learner opens them, before they've necessarily
+        finished); the API layer refuses to save a START rule on any
+        other ModuleType, so module_start_rules below is never
+        populated with one that could never fire;
       - one perfect (100%) quiz attempt on a module is worth the org's
-        flat default_perfect_quiz_points (not per-course/module
-        overridable — same as before this became configurable).
-    See point_rule.py's docstring for why course_id/module_id overrides
-    don't need the `event` discriminator to stay unambiguous."""
+        flat default_perfect_quiz_points (not rule-overridable).
+    """
     org = (await db.execute(select(Org).where(Org.id == org_id))).scalar_one()
     rules = (await db.execute(select(PointRule).where(PointRule.org_id == org_id))).scalars().all()
-    module_overrides = {r.module_id: r.points for r in rules if r.module_id is not None}
-    course_overrides = {r.course_id: r.points for r in rules if r.course_id is not None}
+    module_complete_rules = {r.module_id: r.points for r in rules if r.scope == RuleScope.MODULE and r.event == RuleEvent.COMPLETE}
+    module_start_rules = {r.module_id: r.points for r in rules if r.scope == RuleScope.MODULE and r.event == RuleEvent.START}
+    course_complete_rules = {r.course_id: r.points for r in rules if r.scope == RuleScope.COURSE}
 
     pts: dict[uuid.UUID, int] = {}
     mods = await db.execute(select(ModuleProgress.user_id, ModuleProgress.module_id).where(ModuleProgress.org_id == org_id))
     for uid, mid in mods.all():
-        pts[uid] = pts.get(uid, 0) + module_overrides.get(mid, org.default_module_points)
+        pts[uid] = pts.get(uid, 0) + module_complete_rules.get(mid, org.default_module_points)
+
+    if module_start_rules:
+        start_ids = list(module_start_rules.keys())
+        starts = await db.execute(select(WatchProgress.user_id, WatchProgress.module_id).where(WatchProgress.org_id == org_id, WatchProgress.module_id.in_(start_ids)))
+        starts2 = await db.execute(select(ScormProgress.user_id, ScormProgress.module_id).where(ScormProgress.org_id == org_id, ScormProgress.module_id.in_(start_ids)))
+        for uid, mid in [*starts.all(), *starts2.all()]:
+            pts[uid] = pts.get(uid, 0) + module_start_rules[mid]
+
     perfect = await db.execute(
         select(QuizAttempt.user_id, func.count(func.distinct(QuizAttempt.module_id)))
         .where(QuizAttempt.org_id == org_id, QuizAttempt.score == 100).group_by(QuizAttempt.user_id)
@@ -351,21 +370,41 @@ async def points_by_user(db: AsyncSession, org_id: uuid.UUID) -> dict[uuid.UUID,
         pts[uid] = pts.get(uid, 0) + n * org.default_perfect_quiz_points
     certs = await db.execute(select(Certificate.user_id, Certificate.course_id).where(Certificate.org_id == org_id))
     for uid, cid in certs.all():
-        pts[uid] = pts.get(uid, 0) + course_overrides.get(cid, org.default_course_points)
+        pts[uid] = pts.get(uid, 0) + course_complete_rules.get(cid, org.default_course_points)
     return pts
+
+
+def resolve_tier(points: int, levels: list[PointLevel]) -> PointLevel | None:
+    """Which configured level a given point total currently falls in —
+    the highest-min_points level whose [min_points, max_points] range
+    contains it (max_points=None means "and above"). None means
+    "Unranked": no level was configured low enough to cover this total
+    (e.g. nothing configured yet, or every level starts above 0 and
+    this learner has 0 points)."""
+    candidates = [lv for lv in levels if points >= lv.min_points and (lv.max_points is None or points <= lv.max_points)]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda lv: lv.min_points)
 
 
 async def leaderboard(db: AsyncSession, me: User) -> list[dict]:
     pts = await points_by_user(db, me.org_id)
+    levels = (await db.execute(select(PointLevel).where(PointLevel.org_id == me.org_id))).scalars().all()
     rows = await db.execute(
         select(User, Team.name)
         .outerjoin(Team, Team.id == User.team_id)
         .where(User.org_id == me.org_id, User.role == RoleName.LEARNER, User.status.in_([UserStatus.ACTIVE, UserStatus.INVITED]))
     )
-    board = [
-        {"id": u.id, "name": u.full_name, "team_name": tname, "points": pts.get(u.id, 0), "is_me": u.id == me.id}
-        for u, tname in rows.all()
-    ]
+    board = []
+    for u, tname in rows.all():
+        points = pts.get(u.id, 0)
+        tier = resolve_tier(points, levels)
+        board.append({
+            "id": u.id, "name": u.full_name, "team_name": tname, "country": u.country, "points": points, "is_me": u.id == me.id,
+            "tier_name": tier.name if tier else None,
+            "tier_color": tier.color if tier else None,
+            "tier_image_url": storage_service.presigned_get_url(tier.image_key) if tier and tier.image_key else None,
+        })
     board.sort(key=lambda r: (-r["points"], r["name"].lower()))
     return board
 

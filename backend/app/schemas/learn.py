@@ -232,8 +232,15 @@ class LeaderRow(BaseModel):
     id: uuid.UUID
     name: str
     team_name: str | None
+    country: str | None = None
     points: int
     is_me: bool
+    # This learner's current tier per the org's configured Levels/Tiers —
+    # None/Unranked if nothing's configured low enough to cover their
+    # total yet. See learn_service.resolve_tier.
+    tier_name: str | None = None
+    tier_color: str | None = None
+    tier_image_url: str | None = None
 
 
 class ProfileOut(BaseModel):

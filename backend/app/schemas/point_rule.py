@@ -1,26 +1,43 @@
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.models.point_rule import RuleEvent, RuleScope
 
 
-class PointsUpdate(BaseModel):
-    """Body for PUT /point-rules/courses/{course_id} and
-    /point-rules/modules/{module_id} — points=None clears the override
-    and reverts that course/module to the org's own default."""
-    points: int | None = Field(default=None, ge=0, le=100_000)
+class PointRuleCreate(BaseModel):
+    """POST /api/v1/point-rules — upserts: if a rule already exists for
+    the same (scope, course_id/module_id, event), it's updated in place
+    rather than creating a duplicate row."""
+    scope: RuleScope
+    course_id: uuid.UUID | None = None
+    module_id: uuid.UUID | None = None
+    event: RuleEvent
+    points: int = Field(ge=0, le=100_000)
+
+    @model_validator(mode="after")
+    def _check_shape(self):
+        if self.scope == RuleScope.COURSE:
+            if self.course_id is None:
+                raise ValueError("course_id is required for scope=course")
+            if self.event != RuleEvent.COMPLETE:
+                raise ValueError("Course-scoped rules can only be event=complete — this app has no 'course started' event")
+        else:
+            if self.module_id is None:
+                raise ValueError("module_id is required for scope=module")
+        return self
 
 
-class CoursePointsOut(BaseModel):
-    course_id: uuid.UUID
-    title: str
+class PointRuleOut(BaseModel):
+    id: uuid.UUID
+    scope: RuleScope
+    event: RuleEvent
     points: int
-    is_override: bool  # False = showing the org's default_course_points, not a rule of its own
-
-
-class ModulePointsOut(BaseModel):
-    module_id: uuid.UUID
     course_id: uuid.UUID
-    title: str
-    type: str
-    points: int
-    is_override: bool  # False = showing the org's default_module_points, not a rule of its own
+    course_title: str
+    module_id: uuid.UUID | None = None
+    module_title: str | None = None
+    module_type: str | None = None
+
+    class Config:
+        from_attributes = True

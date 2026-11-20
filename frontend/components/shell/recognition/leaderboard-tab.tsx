@@ -1,98 +1,42 @@
 "use client";
 import { useState } from "react";
-import { Award, ChevronDown, ChevronRight, Settings2, X } from "lucide-react";
+import { Award, Globe2, MapPin, Settings2 } from "lucide-react";
 import { PageLoader } from "@/components/ui/loading";
-import { useTeams } from "@/lib/hooks/use-teams";
 import { useMyOrg, useUpdateMyOrg } from "@/lib/hooks/use-orgs";
-import { useAdminLeaderboard, useCoursePoints, useModulePoints, useSetCoursePoints, useSetModulePoints } from "@/lib/hooks/use-point-rules";
+import { useAdminLeaderboard } from "@/lib/hooks/use-point-rules";
+import { usePointLevels } from "@/lib/hooks/use-point-levels";
+import { PointsRulesPanel } from "./points-rules-panel";
+import { LevelsPanel } from "./levels-panel";
 
 const medal: Record<number, string> = { 0: "#FFC542", 1: "#C7CBDB", 2: "#E0A672" };
 
-/** One course's own module list, lazily loaded only once its row is
- * expanded — this is where a specific SCORM module (or any other
- * module) gets its own override, independent of its course's. */
-function ModuleRows({ courseId }: { courseId: string }) {
-  const { data: modules = [], isLoading } = useModulePoints(courseId);
-  const setPoints = useSetModulePoints();
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-
-  if (isLoading) return <div className="pl-9 py-2 text-[11.5px] text-ink-faint">Loading modules…</div>;
-  if (modules.length === 0) return <div className="pl-9 py-2 text-[11.5px] text-ink-faint">No modules in this course yet.</div>;
-
-  return (
-    <div className="pl-9 pr-3 pb-2 flex flex-col gap-1.5">
-      {modules.map((m) => {
-        const draft = drafts[m.module_id];
-        return (
-          <div key={m.module_id} className="flex items-center gap-2 py-1">
-            <div className="flex-1 min-w-0">
-              <div className="text-[12px] text-ink truncate">{m.title}</div>
-              <div className="text-[10.5px] text-ink-faint uppercase">{m.type}{m.is_override ? " · custom" : ""}</div>
-            </div>
-            <input
-              type="number" min={0}
-              value={draft ?? m.points}
-              onChange={(e) => setDrafts((d) => ({ ...d, [m.module_id]: e.target.value }))}
-              onBlur={() => {
-                if (draft === undefined || draft === "") return;
-                const n = Number(draft);
-                if (!Number.isNaN(n) && n !== m.points) setPoints.mutate({ moduleId: m.module_id, points: n });
-                setDrafts((d) => { const { [m.module_id]: _, ...rest } = d; return rest; });
-              }}
-              className="w-16 text-[12px] text-right border border-line rounded-md px-2 py-1 bg-paper"
-            />
-            {m.is_override && (
-              <button
-                type="button" title="Revert to default"
-                onClick={() => setPoints.mutate({ moduleId: m.module_id, points: null })}
-                className="text-ink-faint active:opacity-60"
-              >
-                <X size={13} />
-              </button>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function PointsSettingsPanel() {
+function DefaultsPanel() {
   const { data: org } = useMyOrg();
   const updateOrg = useUpdateMyOrg();
-  const { data: courses = [], isLoading: coursesLoading } = useCoursePoints();
-  const setCoursePoints = useSetCoursePoints();
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [courseDrafts, setCourseDrafts] = useState<Record<string, string>>({});
   const [defaults, setDefaults] = useState<{ module: string; course: string; quiz: string } | null>(null);
-
   const d = defaults ?? {
     module: String(org?.default_module_points ?? 10),
     course: String(org?.default_course_points ?? 50),
     quiz: String(org?.default_perfect_quiz_points ?? 20),
   };
-
   return (
-    <div className="mb-4 bg-surface border border-line rounded-[10px] p-4">
+    <div className="mb-5">
       <h3 className="font-head text-[13.5px] text-ink mb-1">Default points</h3>
       <p className="text-[11.5px] text-ink-faint mb-3">
-        Applied to every course/module unless it has its own points set below.
+        Applied to any course/activity completion that has no points rule of its own set below.
       </p>
       <div className="grid grid-cols-3 gap-2.5 mb-3">
         <label className="flex flex-col gap-1">
-          <span className="text-[11px] text-ink-faint">Module complete</span>
-          <input type="number" min={0} value={d.module} onChange={(e) => setDefaults({ ...d, module: e.target.value })}
-            className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-paper" />
+          <span className="text-[11px] text-ink-faint">Activity complete</span>
+          <input type="number" min={0} value={d.module} onChange={(e) => setDefaults({ ...d, module: e.target.value })} className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-paper" />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-[11px] text-ink-faint">Course complete</span>
-          <input type="number" min={0} value={d.course} onChange={(e) => setDefaults({ ...d, course: e.target.value })}
-            className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-paper" />
+          <input type="number" min={0} value={d.course} onChange={(e) => setDefaults({ ...d, course: e.target.value })} className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-paper" />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-[11px] text-ink-faint">Perfect quiz</span>
-          <input type="number" min={0} value={d.quiz} onChange={(e) => setDefaults({ ...d, quiz: e.target.value })}
-            className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-paper" />
+          <input type="number" min={0} value={d.quiz} onChange={(e) => setDefaults({ ...d, quiz: e.target.value })} className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-paper" />
         </label>
       </div>
       <button
@@ -101,97 +45,101 @@ function PointsSettingsPanel() {
           { default_module_points: Number(d.module), default_course_points: Number(d.course), default_perfect_quiz_points: Number(d.quiz) },
           { onSuccess: () => setDefaults(null) },
         )}
-        className="px-3.5 py-1.5 bg-primary rounded-[5px] text-[12px] text-white font-medium disabled:opacity-60 mb-4"
+        className="px-3.5 py-1.5 bg-primary rounded-[5px] text-[12px] text-white font-medium disabled:opacity-60"
       >
         Save defaults
       </button>
+    </div>
+  );
+}
 
-      <h3 className="font-head text-[13.5px] text-ink mb-1">Per-course points</h3>
-      <p className="text-[11.5px] text-ink-faint mb-3">
-        Override what a specific course's certificate is worth, or expand it to set points on one of its own modules
-        (e.g. a SCORM package) — leave either blank/default to just use the numbers above.
-      </p>
-      {coursesLoading && <div className="text-[12px] text-ink-faint">Loading courses…</div>}
-      <div className="flex flex-col gap-1.5">
-        {courses.map((c) => {
-          const draft = courseDrafts[c.course_id];
-          const isOpen = expanded === c.course_id;
-          return (
-            <div key={c.course_id} className="border border-line rounded-[8px] overflow-hidden">
-              <div className="flex items-center gap-2 px-2.5 py-2">
-                <button type="button" onClick={() => setExpanded(isOpen ? null : c.course_id)} className="text-ink-faint shrink-0">
-                  {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                </button>
-                <div className="flex-1 min-w-0 text-[12.5px] text-ink truncate">{c.title}</div>
-                <input
-                  type="number" min={0}
-                  value={draft ?? c.points}
-                  onChange={(e) => setCourseDrafts((s) => ({ ...s, [c.course_id]: e.target.value }))}
-                  onBlur={() => {
-                    if (draft === undefined || draft === "") return;
-                    const n = Number(draft);
-                    if (!Number.isNaN(n) && n !== c.points) setCoursePoints.mutate({ courseId: c.course_id, points: n });
-                    setCourseDrafts((s) => { const { [c.course_id]: _, ...rest } = s; return rest; });
-                  }}
-                  className="w-16 text-[12px] text-right border border-line rounded-md px-2 py-1 bg-paper"
-                />
-                {c.is_override && (
-                  <button
-                    type="button" title="Revert to default"
-                    onClick={() => setCoursePoints.mutate({ courseId: c.course_id, points: null })}
-                    className="text-ink-faint active:opacity-60"
-                  >
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-              {isOpen && <ModuleRows courseId={c.course_id} />}
-            </div>
-          );
-        })}
-        {!coursesLoading && courses.length === 0 && <div className="text-[12px] text-ink-faint">No courses yet.</div>}
+function SettingsPanel() {
+  const [tab, setTab] = useState<"defaults" | "rules" | "levels">("rules");
+  return (
+    <div className="mb-4 bg-surface border border-line rounded-[10px] p-4">
+      <div className="flex items-center gap-1 mb-4 border-b border-line pb-2">
+        {([["rules", "Points rules"], ["levels", "Levels/Tiers"], ["defaults", "Defaults"]] as const).map(([id, label]) => (
+          <button
+            key={id} type="button" onClick={() => setTab(id)}
+            className={`px-2.5 py-1 rounded-md text-[12px] font-medium ${tab === id ? "bg-primary/10 text-primary" : "text-ink-soft"}`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
+      {tab === "rules" && <PointsRulesPanel />}
+      {tab === "levels" && <LevelsPanel />}
+      {tab === "defaults" && <DefaultsPanel />}
     </div>
   );
 }
 
 export function LeaderboardTab({ query = "" }: { query?: string }) {
   const { data: rows = [], isLoading } = useAdminLeaderboard();
-  const { data: teams = [], isLoading: teamsLoading } = useTeams();
-  const [teamFilter, setTeamFilter] = useState("All teams");
+  const { data: levels = [] } = usePointLevels();
+  const [tierFilter, setTierFilter] = useState<string | null>(null);
+  const [scope, setScope] = useState<"global" | "country">("global");
+  const [countryFilter, setCountryFilter] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  if (isLoading || teamsLoading) return <PageLoader />;
+  if (isLoading) return <PageLoader />;
+
+  const countries = Array.from(new Set(rows.map((r) => r.country).filter((c): c is string => !!c))).sort();
 
   const ranked = rows
-    .filter((u) => teamFilter === "All teams" || u.team_name === teamFilter)
+    .filter((u) => !tierFilter || u.tier_name === tierFilter)
+    .filter((u) => scope === "global" || !countryFilter || u.country === countryFilter)
     .filter((u) => u.name.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
 
   return (
-    <div className="max-w-[560px]">
-      <div className="flex items-center justify-between gap-3 mb-4">
-        <p className="text-[12.5px] text-ink-faint max-w-[300px]">
-          Ranked by total points — earned from course/module completions and perfect quiz scores, per the points set below.
+    <div className="max-w-[640px]">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <p className="text-[12.5px] text-ink-faint max-w-[280px]">
+          Ranked by total points — earned per the points rules set below.
         </p>
-        <div className="flex items-center gap-2 shrink-0">
-          <select
-            value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}
-            className="text-[12.5px] border border-line rounded-md px-2 py-1.5 bg-surface"
-          >
-            <option>All teams</option>
-            {teams.map((t) => <option key={t.id}>{t.name}</option>)}
-          </select>
-          <button
-            type="button" onClick={() => setSettingsOpen((v) => !v)}
-            className="flex items-center gap-1.5 text-[12px] text-ink-soft border border-line rounded-md px-2.5 py-1.5 active:opacity-70"
-          >
-            <Settings2 size={13} /> Points settings
-          </button>
-        </div>
+        <button
+          type="button" onClick={() => setSettingsOpen((v) => !v)}
+          className="flex items-center gap-1.5 text-[12px] text-ink-soft border border-line rounded-md px-2.5 py-1.5 active:opacity-70 shrink-0"
+        >
+          <Settings2 size={13} /> Points settings
+        </button>
       </div>
 
-      {settingsOpen && <PointsSettingsPanel />}
+      {settingsOpen && <SettingsPanel />}
+
+      {levels.length > 0 && (
+        <div className="flex items-center gap-2 mb-3 overflow-x-auto">
+          {levels.map((lv) => (
+            <button
+              key={lv.id} type="button" onClick={() => setTierFilter(tierFilter === lv.name ? null : lv.name)}
+              className="flex flex-col items-center gap-1 shrink-0"
+              title={lv.name}
+            >
+              <div
+                className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center"
+                style={{ background: lv.color + "22", outline: tierFilter === lv.name ? `2px solid ${lv.color}` : "none" }}
+              >
+                {lv.image_url ? <img src={lv.image_url} alt={lv.name} className="w-full h-full object-cover" /> : <Award size={16} color={lv.color} />}
+              </div>
+              <span className="text-[10px] text-ink-faint">{lv.name}</span>
+            </button>
+          ))}
+          <div className="flex items-center gap-1.5 ml-2 shrink-0">
+            <button type="button" onClick={() => setScope("global")} title="Global" className={`p-1.5 rounded-md ${scope === "global" ? "bg-primary/10 text-primary" : "text-ink-faint"}`}><Globe2 size={14} /></button>
+            <button type="button" onClick={() => setScope("country")} title="Country" className={`p-1.5 rounded-md ${scope === "country" ? "bg-primary/10 text-primary" : "text-ink-faint"}`}><MapPin size={14} /></button>
+            {scope === "country" && (
+              <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} className="text-[11.5px] border border-line rounded-md px-1.5 py-1 bg-surface">
+                <option value="">All countries</option>
+                {countries.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
+            {(tierFilter || (scope === "country" && countryFilter)) && (
+              <button type="button" onClick={() => { setTierFilter(null); setScope("global"); setCountryFilter(""); }} className="text-[11px] text-primary underline">Clear filter</button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         {ranked.map((u, i) => (
@@ -205,9 +153,14 @@ export function LeaderboardTab({ query = "" }: { query?: string }) {
             )}
             <div className="flex-1 min-w-0">
               <div className="text-[13px] text-ink font-medium">{u.name}</div>
-              <div className="text-[11px] text-ink-faint">{u.team_name ?? "No team"}</div>
+              <div className="text-[11px] text-ink-faint">{u.team_name ?? "No team"}{u.country ? ` · ${u.country}` : ""}</div>
             </div>
-            <span className="font-head text-[14px] text-ink">{u.points.toLocaleString()}</span>
+            {u.tier_name && (
+              <span className="text-[10.5px] px-2 py-0.5 rounded-full shrink-0" style={{ background: (u.tier_color ?? "#778899") + "22", color: u.tier_color ?? "#778899" }}>
+                {u.tier_name}
+              </span>
+            )}
+            <span className="font-head text-[14px] text-ink shrink-0">{u.points.toLocaleString()}</span>
           </div>
         ))}
         {ranked.length === 0 && (

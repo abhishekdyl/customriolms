@@ -20,6 +20,7 @@ from app.api.v1.reports import router as reports_router
 from app.api.v1.custom_roles import router as custom_roles_router
 from app.api.v1.billing import router as billing_router
 from app.api.v1.point_rules import router as point_rules_router
+from app.api.v1.point_levels import router as point_levels_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router)
@@ -42,6 +43,7 @@ api_router.include_router(reports_router)
 api_router.include_router(custom_roles_router)
 api_router.include_router(billing_router)
 api_router.include_router(point_rules_router)
+api_router.include_router(point_levels_router)
 
 # As each module is built, its router is added here — main.py never
 # changes again after this point, which keeps that file stable.

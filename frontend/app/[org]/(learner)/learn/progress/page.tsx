@@ -1,10 +1,11 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
-import { Award, ChevronRight, Lock, Sparkles } from "lucide-react";
+import { Award, ChevronRight, Globe2, Lock, MapPin, Sparkles } from "lucide-react";
 import { LearnerPage } from "@/components/learner/shell";
 import { SkillRadar } from "@/components/learner/widgets";
 import { useLearnLeaderboard, useLearnProgress } from "@/lib/hooks/use-learn";
+import { usePointLevels } from "@/lib/hooks/use-point-levels";
 import { badgeCriteriaLabel } from "@/lib/recognition";
 import type { BadgeCriteria } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -129,17 +130,35 @@ function BadgesBlock({ badges }: { badges: { id: string; name: string; criteria:
 
 function LeaderboardTab() {
   const { data: rows = [], isLoading } = useLearnLeaderboard();
+  const { data: levels = [] } = usePointLevels();
   const [teamFilter, setTeamFilter] = useState("All teams");
+  const [tierFilter, setTierFilter] = useState<string | null>(null);
+  const [scope, setScope] = useState<"global" | "country">("global");
+  const [countryFilter, setCountryFilter] = useState("");
+
   const teams = Array.from(new Set(rows.map((r) => r.team_name).filter((t): t is string => !!t)));
+  const countries = Array.from(new Set(rows.map((r) => r.country).filter((c): c is string => !!c))).sort();
+  const me = rows.find((r) => r.is_me);
+  const fullRanked = [...rows].sort((a, b) => (b.points || 0) - (a.points || 0));
+  const myRank = me ? fullRanked.findIndex((r) => r.id === me.id) + 1 : 0;
+
+  // Next tier up from mine — sorted levels ascending by min_points so
+  // "the next one up" is just the first one still above my own total.
+  const sortedLevels = [...levels].sort((a, b) => a.min_points - b.min_points);
+  const nextLevel = sortedLevels.find((lv) => lv.min_points > (me?.points ?? 0));
+  const pointsToNext = nextLevel ? nextLevel.min_points - (me?.points ?? 0) : null;
+
   const ranked = rows
     .filter((r) => teamFilter === "All teams" || r.team_name === teamFilter)
+    .filter((r) => !tierFilter || r.tier_name === tierFilter)
+    .filter((r) => scope === "global" || !countryFilter || r.country === countryFilter)
     .sort((a, b) => (b.points || 0) - (a.points || 0));
 
   return (
     <div className="max-w-[560px]">
       <div className="flex items-center justify-between mb-4 gap-3">
-        <div className="text-[12.5px] text-ink-faint max-w-[340px]">
-          Ranked by total points — earned from course completions, streaks, and quiz performance.
+        <div className="text-[12.5px] text-ink-faint max-w-[300px]">
+          Ranked by total points — earned per your org's points rules.
         </div>
         <select
           value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}
@@ -149,6 +168,56 @@ function LeaderboardTab() {
           {teams.map((t) => <option key={t}>{t}</option>)}
         </select>
       </div>
+
+      {sortedLevels.length > 0 && (
+        <div className="flex items-center gap-2 mb-4 overflow-x-auto">
+          {sortedLevels.map((lv) => (
+            <button
+              key={lv.id} type="button" onClick={() => setTierFilter(tierFilter === lv.name ? null : lv.name)}
+              className="flex flex-col items-center gap-1 shrink-0" title={lv.name}
+            >
+              <div
+                className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center"
+                style={{ background: lv.color + "22", outline: tierFilter === lv.name ? `2px solid ${lv.color}` : "none" }}
+              >
+                {lv.image_url ? <img src={lv.image_url} alt={lv.name} className="w-full h-full object-cover" /> : <Award size={16} color={lv.color} />}
+              </div>
+              <span className="text-[10px] text-ink-faint">{lv.name}</span>
+            </button>
+          ))}
+          <div className="flex items-center gap-1.5 ml-2 shrink-0">
+            <button type="button" onClick={() => setScope("global")} title="Global" className={cn("p-1.5 rounded-md", scope === "global" ? "bg-primary/10 text-primary" : "text-ink-faint")}><Globe2 size={14} /></button>
+            <button type="button" onClick={() => setScope("country")} title="Country" className={cn("p-1.5 rounded-md", scope === "country" ? "bg-primary/10 text-primary" : "text-ink-faint")}><MapPin size={14} /></button>
+            {scope === "country" && (
+              <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} className="text-[11.5px] border border-line rounded-md px-1.5 py-1 bg-surface">
+                <option value="">All countries</option>
+                {countries.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
+            {(tierFilter || (scope === "country" && countryFilter)) && (
+              <button type="button" onClick={() => { setTierFilter(null); setScope("global"); setCountryFilter(""); }} className="text-[11px] text-primary underline">Clear filter</button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {me && (
+        <div className="p-4 bg-surface border border-line rounded-xl mb-4">
+          <div className="flex items-center gap-4 mb-2">
+            <div className="text-[12.5px] text-ink-faint">Your rank: <span className="font-head text-[14px] text-ink">{myRank || "—"}</span></div>
+            <div className="flex items-center gap-1 text-[13px] text-ink"><Award size={13} className="text-[#FFC542]" />{me.points.toLocaleString()} Points</div>
+          </div>
+          {nextLevel && pointsToNext !== null && (
+            <>
+              <div className="text-[11px] text-ink-faint mb-1">Progress: <span className="font-medium text-ink">{pointsToNext}</span> pts to {nextLevel.name}</div>
+              <div className="h-1.5 bg-line-soft rounded-full overflow-hidden">
+                <div className="h-full bg-primary" style={{ width: `${Math.min(100, (me.points / nextLevel.min_points) * 100)}%` }} />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {isLoading && <div className="text-[12.5px] text-ink-faint">Loading…</div>}
       <div className="flex flex-col gap-2">
         {ranked.map((u, i) => (
@@ -167,8 +236,13 @@ function LeaderboardTab() {
             )}
             <div className="flex-1 min-w-0">
               <div className="text-[13px] text-ink font-medium truncate">{u.name}{u.is_me && " (You)"}</div>
-              <div className="text-[11px] text-ink-faint truncate">{u.team_name ?? "—"}</div>
+              <div className="text-[11px] text-ink-faint truncate">{u.team_name ?? "—"}{u.country ? ` · ${u.country}` : ""}</div>
             </div>
+            {u.tier_name && (
+              <span className="text-[10.5px] px-2 py-0.5 rounded-full shrink-0" style={{ background: (u.tier_color ?? "#778899") + "22", color: u.tier_color ?? "#778899" }}>
+                {u.tier_name}
+              </span>
+            )}
             <span className="font-head text-[14px] text-ink shrink-0">{(u.points || 0).toLocaleString()}</span>
           </div>
         ))}

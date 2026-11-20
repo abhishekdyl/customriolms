@@ -29,7 +29,11 @@ export interface LearnProgress {
   streak: number; completed_courses: number; rank: number; points: number;
   skills: { id: string; name: string; value: number }[]; badges: LearnBadge[]; certificates: LearnCert[];
 }
-export interface LeaderRow { id: string; name: string; team_name: string | null; points: number; is_me: boolean }
+export interface LeaderRow {
+  id: string; name: string; team_name: string | null; country: string | null; points: number; is_me: boolean;
+  // This learner's current tier per the org's configured Levels/Tiers — null/Unranked if nothing covers their total yet.
+  tier_name: string | null; tier_color: string | null; tier_image_url: string | null;
+}
 export interface LearnProfile {
   name: string; email: string; team_name: string | null; role: string;
   phone: string | null; job_title: string | null; location: string | null; bio: string | null;
