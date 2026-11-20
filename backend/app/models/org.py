@@ -99,5 +99,24 @@ class Org(Base):
     default_course_points: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
     default_perfect_quiz_points: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
 
+    # This org's OWN Razorpay account — also edited from Org Settings,
+    # same self-service section as everything else above. Deliberately
+    # separate from PlatformSettings.razorpay_* (the Super Admin's own
+    # account, used only for org-subscription billing — see billing.py):
+    # a course's paid enrolment (api/v1/courses.py's enrol/checkout) is
+    # the ORG selling to its own learners, so that money has to land in
+    # the org's own account, not the platform's. None/unconfigured means
+    # an Org Admin simply can't turn paid_enrol_enabled on yet (see
+    # courses.py's update_course validation) — there's no silent
+    # fallback to the platform's account.
+    razorpay_key_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    razorpay_key_secret: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Verifies POST /api/v1/courses/webhook/razorpay/{org_id} — the URL
+    # the Org Admin pastes into THEIR OWN Razorpay dashboard's webhook
+    # settings (shown back to them on the settings page once key_id is
+    # set). Per-org because each org's webhook comes from its own
+    # Razorpay account, unlike the platform's single shared webhook.
+    razorpay_webhook_secret: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
     teams: Mapped[list["Team"]] = relationship(back_populates="org")
     users: Mapped[list["User"]] = relationship(back_populates="org")

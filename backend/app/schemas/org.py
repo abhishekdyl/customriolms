@@ -56,6 +56,14 @@ class OrgOut(BaseModel):
     # it, so it stays accurate to the second without another round trip.
     trial_ends_at: datetime | None = None
     suspension_reason: str | None = None
+    # This org's own Razorpay account (for paid course enrolment) — see
+    # Org model's docstring on these three. Same never-round-trip-the-
+    # secret convention as PlatformSettingsOut below: key_id is plain
+    # (Razorpay Checkout needs it client-side anyway), the two secrets
+    # only ever come back as "is one set", computed by the endpoint.
+    razorpay_key_id: str | None = None
+    razorpay_key_secret_set: bool = False
+    razorpay_webhook_secret_set: bool = False
 
     class Config:
         from_attributes = True
@@ -119,6 +127,14 @@ class OrgProfileUpdateRequest(BaseModel):
     default_module_points: int | None = Field(default=None, ge=0, le=100_000)
     default_course_points: int | None = Field(default=None, ge=0, le=100_000)
     default_perfect_quiz_points: int | None = Field(default=None, ge=0, le=100_000)
+    # This org's own Razorpay account — see Org model's docstring. None
+    # (omitted) leaves the existing value alone, same convention as
+    # PlatformSettingsUpdateRequest's own razorpay_* fields; there's no
+    # separate "clear" signal, since an Org Admin clearing it just means
+    # pasting in blank values, which the frontend sends as "".
+    razorpay_key_id: str | None = None
+    razorpay_key_secret: str | None = None
+    razorpay_webhook_secret: str | None = None
 
 
 class PlatformSettingsOut(BaseModel):

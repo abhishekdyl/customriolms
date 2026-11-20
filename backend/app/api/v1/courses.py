@@ -3,18 +3,18 @@ import mimetypes
 import uuid
 
 import razorpay
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from razorpay.errors import SignatureVerificationError
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_optional_user_via_header_or_query, require_capability
-from app.api.v1.billing import _get_settings, _razorpay_client
 from app.core.database import get_db
 from app.models.category import Category
 from app.models.course import Course
 from app.models.course_enrolment_payment import CourseEnrolmentPayment, CourseEnrolmentPaymentStatus
+from app.models.org import Org
 from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
 from app.schemas.audit_log import AuditLogOut
@@ -90,6 +90,17 @@ async def _get_published_course_or_404(db: AsyncSession, course_id: uuid.UUID, o
     return course
 
 
+def _org_razorpay_client(org: Org) -> razorpay.Client:
+    """A course's paid enrolment is the ORG selling to its own learners —
+    deliberately the org's OWN Razorpay account (Org.razorpay_key_id/
+    secret, set from Org Settings), never the platform's
+    PlatformSettings.razorpay_* (that one's only for org-subscription
+    billing, see billing.py). Mirrors billing.py's _razorpay_client."""
+    if not org.razorpay_key_id or not org.razorpay_key_secret:
+        raise HTTPException(status_code=503, detail="This organization hasn't connected a Razorpay account yet. Contact your Org Admin.")
+    return razorpay.Client(auth=(org.razorpay_key_id, org.razorpay_key_secret))
+
+
 @router.post("/{course_id}/self-enrol", response_model=SelfEnrolOut)
 async def self_enrol_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Learner enrols themselves — every restriction (country, required
@@ -114,8 +125,8 @@ async def create_course_enrol_checkout(
     if current_user.id in (course.assigned_user_ids or []):
         raise HTTPException(status_code=400, detail="You're already enrolled in this course")
 
-    settings_row = await _get_settings(db)
-    client = _razorpay_client(settings_row)
+    org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
+    client = _org_razorpay_client(org)
     try:
         order = client.order.create({"amount": course.paid_enrol_price, "currency": "INR", "payment_capture": 1})
     except Exception:
@@ -130,7 +141,7 @@ async def create_course_enrol_checkout(
     db.add(payment)
     await db.commit()
     return CourseEnrolCheckoutOut(
-        razorpay_order_id=order["id"], razorpay_key_id=settings_row.razorpay_key_id,
+        razorpay_order_id=order["id"], razorpay_key_id=org.razorpay_key_id,
         amount=course.paid_enrol_price, currency="INR", course_id=course.id,
     )
 
@@ -141,8 +152,8 @@ async def verify_course_enrol_payment(
     db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
     """The fast path, same reasoning as billing.py's verify_payment — the
-    webhook (checked by billing.py's razorpay_webhook) is the slower,
-    authoritative backup for when this call never happens."""
+    per-org webhook below is the slower, authoritative backup for when
+    this call never happens."""
     payment = (
         await db.execute(select(CourseEnrolmentPayment).where(CourseEnrolmentPayment.razorpay_order_id == body.razorpay_order_id))
     ).scalar_one_or_none()
@@ -151,8 +162,8 @@ async def verify_course_enrol_payment(
     if payment.status == CourseEnrolmentPaymentStatus.PAID:
         return CourseEnrolVerifyOut(enrolled=True)  # webhook (or an earlier call) already handled it
 
-    settings_row = await _get_settings(db)
-    client = _razorpay_client(settings_row)
+    org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
+    client = _org_razorpay_client(org)
     try:
         client.utility.verify_payment_signature({
             "razorpay_order_id": body.razorpay_order_id,
@@ -168,6 +179,47 @@ async def verify_course_enrol_payment(
     payment.razorpay_signature = body.razorpay_signature
     await activate_course_payment(db, payment)
     return CourseEnrolVerifyOut(enrolled=True)
+
+
+@router.post("/webhook/razorpay/{org_id}", include_in_schema=False)
+async def course_enrol_razorpay_webhook(org_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db)):
+    """The authoritative fallback /enrol/verify's docstring mentions —
+    this exact URL (with the org's own id) is what an Org Admin pastes
+    into THEIR OWN Razorpay dashboard's webhook settings (see Org
+    Settings), so it fires independently of whether the paying learner's
+    browser ever called /enrol/verify. No user auth (Razorpay calls this
+    directly); trust comes entirely from the signature check against
+    THIS org's own razorpay_webhook_secret. Only acts on
+    'payment.captured'; every other event type is acknowledged and
+    ignored. Exact mirror of billing.py's razorpay_webhook, scoped to one
+    org's own account instead of the platform's shared one."""
+    org = (await db.execute(select(Org).where(Org.id == org_id))).scalar_one_or_none()
+    if org is None or not org.razorpay_webhook_secret:
+        raise HTTPException(status_code=503, detail="Webhook isn't configured.")
+
+    body_bytes = await request.body()
+    signature = request.headers.get("X-Razorpay-Signature", "")
+    try:
+        razorpay.Utility().verify_webhook_signature(body_bytes.decode(), signature, org.razorpay_webhook_secret)
+    except SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature.")
+
+    payload = await request.json()
+    if payload.get("event") != "payment.captured":
+        return {"ok": True}  # acknowledged, nothing to do
+
+    order_id = payload["payload"]["payment"]["entity"]["order_id"]
+    payment_id = payload["payload"]["payment"]["entity"]["id"]
+    payment = (
+        await db.execute(select(CourseEnrolmentPayment).where(CourseEnrolmentPayment.razorpay_order_id == order_id, CourseEnrolmentPayment.org_id == org_id))
+    ).scalar_one_or_none()
+    if payment is None:
+        logger.warning("Course-enrolment Razorpay webhook for unknown order_id %s (org %s)", order_id, org_id)
+        return {"ok": True}
+    if payment.status != CourseEnrolmentPaymentStatus.PAID:
+        payment.razorpay_payment_id = payment_id
+        await activate_course_payment(db, payment)
+    return {"ok": True}
 
 
 async def _module_belongs_to_course(module_id: uuid.UUID, course_id: uuid.UUID, db: AsyncSession) -> None:
@@ -407,6 +459,13 @@ async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSessi
     resolved_paid_price = data.get("paid_enrol_price", course.paid_enrol_price)
     if resolved_paid_enabled and not resolved_paid_price:
         raise HTTPException(status_code=400, detail="Set a price before turning paid enrolment on")
+    if resolved_paid_enabled:
+        # Paid enrolment pays into the ORG's own Razorpay account (see
+        # _org_razorpay_client), never the platform's — can't turn it on
+        # until that account is actually connected from Org Settings.
+        org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
+        if not org.razorpay_key_id or not org.razorpay_key_secret:
+            raise HTTPException(status_code=400, detail="Connect your organization's Razorpay account in Org Settings before turning paid enrolment on")
     old_published = course.published
     for key, value in data.items():
         setattr(course, key, value)

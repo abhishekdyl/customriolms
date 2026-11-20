@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, ShieldCheck, AlertCircle, Plus, Trash2, X } from "lucide-react";
+import { Building2, ShieldCheck, AlertCircle, CreditCard, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,8 +9,8 @@ import { useMyOrg, useUpdateMyOrg, useDeactivateMyOrg } from "@/lib/hooks/use-or
 import {
   useProfileFields, useCreateProfileField, useUpdateProfileField, useDeleteProfileField,
 } from "@/lib/hooks/use-profile-fields";
-import type { ProfileFieldType } from "@/lib/types";
-import { ApiError } from "@/lib/api-client";
+import type { Org, ProfileFieldType } from "@/lib/types";
+import { API_URL, ApiError } from "@/lib/api-client";
 
 const fieldTypeOptions: { value: ProfileFieldType; label: string }[] = [
   { value: "input", label: "Short text" },
@@ -150,6 +150,83 @@ function CustomFieldsCard() {
           </div>
         </form>
       )}
+    </section>
+  );
+}
+
+function RazorpayGatewayCard({ org }: { org: Org }) {
+  const updateOrg = useUpdateMyOrg();
+  const [keyId, setKeyId] = useState(org.razorpay_key_id ?? "");
+  const [keySecret, setKeySecret] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  // Secrets never come back from the API, so there's nothing to diff
+  // them against — only the key id (which does round-trip) tells us
+  // whether this card is dirty, plus whichever secret boxes the admin
+  // has actually typed into.
+  const dirty = keyId !== (org.razorpay_key_id ?? "") || keySecret.trim() !== "" || webhookSecret.trim() !== "";
+  const webhookUrl = `${API_URL}/api/v1/courses/webhook/razorpay/${org.id}`;
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dirty) return;
+    setLocalError(null);
+    const body: { razorpay_key_id?: string; razorpay_key_secret?: string; razorpay_webhook_secret?: string } = {
+      razorpay_key_id: keyId.trim(),
+    };
+    if (keySecret.trim() !== "") body.razorpay_key_secret = keySecret.trim();
+    if (webhookSecret.trim() !== "") body.razorpay_webhook_secret = webhookSecret.trim();
+    updateOrg.mutate(body, {
+      onSuccess: () => {
+        setKeySecret("");
+        setWebhookSecret("");
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      },
+      onError: (err) => setLocalError(err instanceof ApiError ? err.message : "Couldn't save."),
+    });
+  };
+
+  return (
+    <section className="mb-6 rounded-[14px] border border-line bg-surface p-5">
+      <div className="mb-1 flex items-center gap-2">
+        <CreditCard size={15} className="text-ink-faint" />
+        <h2 className="font-head text-[14.5px] text-ink">Payment gateway (Razorpay)</h2>
+      </div>
+      <p className="mb-4 text-[12px] text-ink-faint">
+        Your own Razorpay account — paid course enrolment money goes straight here, not to Riosmart. Required before you can
+        turn on paid enrolment for any course.
+      </p>
+
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        <div>
+          <Label className="mb-1 block text-[11.5px] text-ink-soft">Key ID</Label>
+          <Input value={keyId} onChange={(e) => setKeyId(e.target.value)} placeholder="rzp_live_xxxxxxxxxxxx" />
+        </div>
+        <div>
+          <Label className="mb-1 block text-[11.5px] text-ink-soft">
+            Key secret {org.razorpay_key_secret_set && <span className="text-ink-faint">(already set — leave blank to keep it)</span>}
+          </Label>
+          <Input type="password" value={keySecret} onChange={(e) => setKeySecret(e.target.value)} placeholder={org.razorpay_key_secret_set ? "••••••••••••" : ""} />
+        </div>
+        <div>
+          <Label className="mb-1 block text-[11.5px] text-ink-soft">
+            Webhook secret {org.razorpay_webhook_secret_set && <span className="text-ink-faint">(already set — leave blank to keep it)</span>}
+          </Label>
+          <Input type="password" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} placeholder={org.razorpay_webhook_secret_set ? "••••••••••••" : ""} />
+        </div>
+        <div className="rounded-md border border-line-soft bg-bg-soft px-3 py-2.5">
+          <div className="mb-0.5 text-[11px] text-ink-faint">Webhook URL — add this in your Razorpay dashboard, subscribed to "payment.captured"</div>
+          <code className="break-all text-[11.5px] text-ink">{webhookUrl}</code>
+        </div>
+        {localError && <p className="text-[12px] text-danger">{localError}</p>}
+        <div className="flex items-center gap-2">
+          <Button type="submit" disabled={!dirty || updateOrg.isPending}>{updateOrg.isPending ? "Saving…" : "Save"}</Button>
+          {saved && <span className="text-xs text-success">Saved</span>}
+        </div>
+      </form>
     </section>
   );
 }
@@ -377,6 +454,8 @@ export default function OrgSettingsPage() {
       </form>
 
       <CustomFieldsCard />
+
+      <RazorpayGatewayCard org={org} />
 
       {/* Danger zone */}
       <div className="rounded-[10px] border border-danger/20 bg-danger-soft p-5">

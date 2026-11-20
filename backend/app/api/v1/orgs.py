@@ -58,13 +58,17 @@ async def get_my_org(db: AsyncSession = Depends(get_db), current_user: User = De
         raise HTTPException(status_code=404, detail="Org not found")
 
     count_result = await db.execute(select(func.count(User.id)).where(User.org_id == org.id, User.status != "deactivated"))
-    return OrgOut.model_validate({**org.__dict__, "user_count": count_result.scalar_one()})
+    return OrgOut.model_validate({
+        **org.__dict__, "user_count": count_result.scalar_one(),
+        "razorpay_key_secret_set": bool(org.razorpay_key_secret), "razorpay_webhook_secret_set": bool(org.razorpay_webhook_secret),
+    })
 
 
 @router.patch("/me", response_model=OrgOut, dependencies=org_admin_only)
 async def update_my_org(body: OrgProfileUpdateRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """The Org Settings page's Save changes — an Org Admin editing their
-    own org's profile (name, slug, industry, timezone, contact email).
+    own org's profile (name, slug, industry, timezone, contact email,
+    and their own Razorpay account for paid course enrolment).
     Deliberately can't touch plan/user_limit/allowed_domains/status —
     those stay on the Super-Admin-only endpoints above."""
     org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
@@ -77,6 +81,7 @@ async def update_my_org(body: OrgProfileUpdateRequest, db: AsyncSession = Depend
     for field in (
         "name", "slug", "industry", "timezone", "contact_email", "allow_custom_username",
         "default_module_points", "default_course_points", "default_perfect_quiz_points",
+        "razorpay_key_id", "razorpay_key_secret", "razorpay_webhook_secret",
     ):
         value = getattr(body, field)
         if value is not None:
@@ -85,7 +90,10 @@ async def update_my_org(body: OrgProfileUpdateRequest, db: AsyncSession = Depend
     await db.commit()
     await db.refresh(org)
     count_result = await db.execute(select(func.count(User.id)).where(User.org_id == org.id, User.status != "deactivated"))
-    return OrgOut.model_validate({**org.__dict__, "user_count": count_result.scalar_one()})
+    return OrgOut.model_validate({
+        **org.__dict__, "user_count": count_result.scalar_one(),
+        "razorpay_key_secret_set": bool(org.razorpay_key_secret), "razorpay_webhook_secret_set": bool(org.razorpay_webhook_secret),
+    })
 
 
 @router.post("/me/deactivate", response_model=OrgOut, dependencies=org_admin_only)

@@ -4,6 +4,7 @@ import { Info, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useCourses, useUpdateCourse } from "@/lib/hooks/use-courses";
+import { ApiError } from "@/lib/api-client";
 import type { Course } from "@/lib/types";
 
 function rupeesFromPaise(paise: number | null): string {
@@ -69,7 +70,7 @@ export function EnrolmentSettingsPanel({ courseId, course }: { courseId: string;
         paid_enrol_enabled: d.paid_enrol_enabled,
         paid_enrol_price: paiseFromRupees(d.paid_enrol_price),
       },
-      { onSuccess: () => setDraft(null), onError: () => setError("Couldn't save — try again.") },
+      { onSuccess: () => setDraft(null), onError: (err) => setError(err instanceof ApiError ? err.message : "Couldn't save — try again.") },
     );
   };
 

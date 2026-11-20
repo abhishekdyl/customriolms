@@ -551,6 +551,13 @@ export interface Org {
   // client-side rather than the backend precomputing it.
   trial_ends_at: string | null;
   suspension_reason: string | null;
+  // This org's own Razorpay account — for paid course enrolment (the org
+  // selling to its own learners), separate from the platform's own
+  // Razorpay account used for subscription billing. Secrets never
+  // round-trip; only whether one is currently set.
+  razorpay_key_id: string | null;
+  razorpay_key_secret_set: boolean;
+  razorpay_webhook_secret_set: boolean;
 }
 
 export interface PlatformSettings {
