@@ -74,7 +74,10 @@ async def update_my_org(body: OrgProfileUpdateRequest, db: AsyncSession = Depend
         if clash.scalar_one_or_none() is not None:
             raise HTTPException(status_code=409, detail=f"The slug \"{body.slug}\" is already taken")
 
-    for field in ("name", "slug", "industry", "timezone", "contact_email", "allow_custom_username"):
+    for field in (
+        "name", "slug", "industry", "timezone", "contact_email", "allow_custom_username",
+        "default_module_points", "default_course_points", "default_perfect_quiz_points",
+    ):
         value = getattr(body, field)
         if value is not None:
             setattr(org, field, value)

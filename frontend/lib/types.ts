@@ -508,6 +508,12 @@ export interface Org {
   contact_email: string | null;
   logo_url: string | null;
   allow_custom_username: boolean;
+  // Leaderboard point defaults — see Recognition page's Leaderboard tab,
+  // "Points settings". A specific course/module can override these; see
+  // use-point-rules.ts.
+  default_module_points: number;
+  default_course_points: number;
+  default_perfect_quiz_points: number;
   user_count: number;
   admin_id: string | null;
   admin_name: string | null;

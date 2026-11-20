@@ -36,6 +36,12 @@ class OrgOut(BaseModel):
     contact_email: str | None = None
     logo_url: str | None = None
     allow_custom_username: bool = False
+    # Leaderboard point defaults — see Org model's docstring. A specific
+    # course/module can override these via PointRule; see the
+    # /api/v1/point-rules endpoints.
+    default_module_points: int = 10
+    default_course_points: int = 50
+    default_perfect_quiz_points: int = 20
     user_count: int = 0  # filled in by the endpoint, not stored on the row
     # This org's (first) Org Admin — filled in by the endpoint, not stored
     # on the row. See list_orgs' docstring for why "first" rather than
@@ -110,6 +116,9 @@ class OrgProfileUpdateRequest(BaseModel):
     timezone: str | None = None
     contact_email: EmailStr | None = None
     allow_custom_username: bool | None = None
+    default_module_points: int | None = Field(default=None, ge=0, le=100_000)
+    default_course_points: int | None = Field(default=None, ge=0, le=100_000)
+    default_perfect_quiz_points: int | None = Field(default=None, ge=0, le=100_000)
 
 
 class PlatformSettingsOut(BaseModel):

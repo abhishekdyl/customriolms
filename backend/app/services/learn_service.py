@@ -13,6 +13,8 @@ from app.models.certificate import Certificate
 from app.models.course import Course
 from app.models.module import Module, ModuleType
 from app.models.module_progress import ModuleProgress
+from app.models.org import Org
+from app.models.point_rule import PointRule
 from app.models.quiz_attempt import QuizAttempt
 from app.models.scorm_progress import ScormProgress
 from app.models.skill import Skill
@@ -20,10 +22,6 @@ from app.models.team import Team
 from app.models.user import RoleName, User, UserStatus
 from app.models.watch_progress import WatchProgress
 from app.services.certificate_service import issue_certificate
-
-POINTS_PER_MODULE = 10
-POINTS_PER_COURSE = 50
-POINTS_PER_PERFECT_QUIZ = 20
 
 
 # ---------- assignment & progress ----------
@@ -324,23 +322,36 @@ async def trained_week(db: AsyncSession, user_id: uuid.UUID) -> list[bool]:
 
 # ---------- points / leaderboard ----------
 async def points_by_user(db: AsyncSession, org_id: uuid.UUID) -> dict[uuid.UUID, int]:
+    """Each learner's total leaderboard points in this org:
+      - one module completion (any ModuleType, including SCORM) is worth
+        that module's own PointRule.points if the Org Admin set one,
+        else the org's default_module_points;
+      - one course certificate (= that course fully completed) is worth
+        that course's own PointRule.points if set, else the org's
+        default_course_points;
+      - one perfect (100%) quiz attempt on a module is worth the org's
+        flat default_perfect_quiz_points (not per-course/module
+        overridable — same as before this became configurable).
+    See point_rule.py's docstring for why course_id/module_id overrides
+    don't need the `event` discriminator to stay unambiguous."""
+    org = (await db.execute(select(Org).where(Org.id == org_id))).scalar_one()
+    rules = (await db.execute(select(PointRule).where(PointRule.org_id == org_id))).scalars().all()
+    module_overrides = {r.module_id: r.points for r in rules if r.module_id is not None}
+    course_overrides = {r.course_id: r.points for r in rules if r.course_id is not None}
+
     pts: dict[uuid.UUID, int] = {}
-    mods = await db.execute(
-        select(ModuleProgress.user_id, func.count()).where(ModuleProgress.org_id == org_id).group_by(ModuleProgress.user_id)
-    )
-    for uid, n in mods.all():
-        pts[uid] = pts.get(uid, 0) + n * POINTS_PER_MODULE
+    mods = await db.execute(select(ModuleProgress.user_id, ModuleProgress.module_id).where(ModuleProgress.org_id == org_id))
+    for uid, mid in mods.all():
+        pts[uid] = pts.get(uid, 0) + module_overrides.get(mid, org.default_module_points)
     perfect = await db.execute(
         select(QuizAttempt.user_id, func.count(func.distinct(QuizAttempt.module_id)))
         .where(QuizAttempt.org_id == org_id, QuizAttempt.score == 100).group_by(QuizAttempt.user_id)
     )
     for uid, n in perfect.all():
-        pts[uid] = pts.get(uid, 0) + n * POINTS_PER_PERFECT_QUIZ
-    certs = await db.execute(
-        select(Certificate.user_id, func.count()).where(Certificate.org_id == org_id).group_by(Certificate.user_id)
-    )
-    for uid, n in certs.all():
-        pts[uid] = pts.get(uid, 0) + n * POINTS_PER_COURSE
+        pts[uid] = pts.get(uid, 0) + n * org.default_perfect_quiz_points
+    certs = await db.execute(select(Certificate.user_id, Certificate.course_id).where(Certificate.org_id == org_id))
+    for uid, cid in certs.all():
+        pts[uid] = pts.get(uid, 0) + course_overrides.get(cid, org.default_course_points)
     return pts
 
 

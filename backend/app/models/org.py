@@ -87,5 +87,17 @@ class Org(Base):
     # logins keep working regardless of this setting.
     allow_custom_username: Mapped[bool] = mapped_column(default=False, nullable=False)
 
+    # Leaderboard point defaults — also edited from Org Settings (the
+    # Recognition page's Leaderboard tab, "Points settings"). Applied to
+    # every module completion / course completion (= certificate issued)
+    # / perfect quiz attempt in this org, UNLESS a PointRule row exists
+    # overriding that specific course or module (see point_rule.py and
+    # learn_service.points_by_user). Defaults match what used to be
+    # hardcoded, global constants (POINTS_PER_MODULE/COURSE/PERFECT_QUIZ)
+    # before this became per-org configurable.
+    default_module_points: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    default_course_points: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
+    default_perfect_quiz_points: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+
     teams: Mapped[list["Team"]] = relationship(back_populates="org")
     users: Mapped[list["User"]] = relationship(back_populates="org")

@@ -83,6 +83,9 @@ CAPABILITY_CATALOG: dict[str, list[tuple[str, str]]] = {
     "Org Settings": [
         ("org_settings.manage", "Edit org profile settings; deactivate the org"),
     ],
+    "Leaderboard": [
+        ("leaderboard.manage", "Set how many points a course or module is worth towards the leaderboard"),
+    ],
 }
 
 # Flat set of every valid key, for fast membership checks and for

@@ -30,8 +30,10 @@ export function useMyOrg(enabled: boolean = true) {
 export function useUpdateMyOrg() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name?: string; slug?: string; industry?: string; timezone?: string; contact_email?: string | null; allow_custom_username?: boolean }) =>
-      api.patch<Org>("/api/v1/orgs/me", body),
+    mutationFn: (body: {
+      name?: string; slug?: string; industry?: string; timezone?: string; contact_email?: string | null; allow_custom_username?: boolean;
+      default_module_points?: number; default_course_points?: number; default_perfect_quiz_points?: number;
+    }) => api.patch<Org>("/api/v1/orgs/me", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["orgs", "me"] }),
   });
 }
