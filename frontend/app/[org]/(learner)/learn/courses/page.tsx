@@ -28,7 +28,7 @@ export default function MyCoursesPage() {
 
       <div className="mx-auto w-full max-w-[1080px] flex-1 px-4 pb-6 pt-3 md:px-8 md:pt-6">
         <div className="mb-4 flex p-1 bg-line-soft rounded-[10px] w-full md:w-[320px]">
-          {([["mine", "My Courses"], ["catalog", "Browse / Enrol"]] as const).map(([id, label]) => (
+          {([["mine", "My Courses"], ["catalog", "All Courses"]] as const).map(([id, label]) => (
             <button
               key={id} type="button" onClick={() => setView(id)}
               className={cn("flex-1 py-2 rounded-lg", view === id && "bg-surface")}
