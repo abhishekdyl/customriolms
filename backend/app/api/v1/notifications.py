@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_capability
 from app.core.database import get_db
+from app.models.course import Course
 from app.models.notification import NotificationTemplate, ReminderRule
 from app.models.user import User
 from app.schemas.notification import (
@@ -60,8 +61,12 @@ async def list_rules(db: AsyncSession = Depends(get_db), user: User = Depends(ge
 
 @router.post("/rules", response_model=RuleOut, status_code=201)
 async def create_rule(body: RuleIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if body.course_id is not None:
+        await svc.get_owned(db, Course, body.course_id, user.org_id)  # 404s if it's not this org's course
     r = ReminderRule(org_id=user.org_id, **body.model_dump())
     db.add(r)
+    await db.flush()  # assigns created_at (the anchor compute_next_fire's weekly/monthly interval math uses) before it's needed
+    await svc.recompute_next_fire(db, r)
     await db.commit()
     await db.refresh(r)
     return r
@@ -69,9 +74,12 @@ async def create_rule(body: RuleIn, db: AsyncSession = Depends(get_db), user: Us
 
 @router.patch("/rules/{rule_id}", response_model=RuleOut)
 async def update_rule(rule_id: uuid.UUID, body: RuleIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if body.course_id is not None:
+        await svc.get_owned(db, Course, body.course_id, user.org_id)  # 404s if it's not this org's course
     r = await svc.get_owned(db, ReminderRule, rule_id, user.org_id)
     for k, v in body.model_dump().items():
         setattr(r, k, v)
+    await svc.recompute_next_fire(db, r)
     await db.commit()
     await db.refresh(r)
     return r

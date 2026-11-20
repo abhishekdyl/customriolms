@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import ARRAY, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import ARRAY, Boolean, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,16 +24,66 @@ class NotificationTemplate(Base):
 
 
 class ReminderRule(Base):
-    """When a reminder fires (relative to a course due date) and over which channels."""
+    """Two different kinds of rule share this one table:
+
+    - before_due/on_due/overdue — fire relative to a COURSE's own due
+      date (that course's learners only); `days` is the offset. Unaffected
+      by anything below — this is the existing, working behaviour.
+    - on_date/weekly/monthly — a scheduled rule tied to the CALENDAR, not
+      any particular course's due date: "send on 5 Dec", "send every
+      Monday at 9am", "send on the 1st of every month". These are the
+      new types this model grew to support (replacing the old, never-
+      actually-fired weekly_digest trigger). See notification_service's
+      compute_next_fire for how next_fire_at is derived from the fields
+      below, and tick()/fire_rule() for how a due one actually sends.
+
+    target_scope/course_id apply to the calendar-based rules only — who
+    receives it: every active user in the org, or only the learners
+    assigned to one specific course (direct + team assignment, same
+    resolution course_service.list_enrolled uses)."""
     __tablename__ = "reminder_rules"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orgs.id"), nullable=False, index=True)
-    trigger: Mapped[str] = mapped_column(String(30), nullable=False)  # before_due | on_due | overdue | weekly_digest
+    trigger: Mapped[str] = mapped_column(String(30), nullable=False)  # before_due | on_due | overdue | on_date | weekly | monthly
     days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     channels: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)  # email | inapp | push
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # ---- calendar-based rules (on_date / weekly / monthly) ----
+    # "HH:MM", 24-hour, interpreted in the org's own Org.timezone.
+    fire_time: Mapped[str] = mapped_column(String(5), default="09:00", nullable=False)
+    # on_date only — the one calendar date it fires on.
+    fire_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # weekly/monthly only — fire every N weeks/months, not necessarily 1.
+    interval: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # weekly only — 0=Monday .. 6=Sunday; can be more than one day.
+    days_of_week: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list, nullable=False)
+    # monthly only — day-of-month to fire on (1-31; clamped to a shorter
+    # month's last day, e.g. 31 fires on the 28th/29th in February).
+    day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # weekly/monthly only, optional — recursion stops after this date
+    # ("till date"); None = runs indefinitely until disabled by hand.
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # all = every active user in the org; course = only that course's
+    # enrolled learners (direct + team assignment).
+    target_scope: Mapped[str] = mapped_column(String(10), default="all", nullable=False)
+    course_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True)
+    # Sent as-is (no {{variables}}) — kept simple since this isn't tied
+    # to a learner/course context the way the Templates tab's own
+    # {{learner_name}}-style mail-merge is.
+    subject: Mapped[str] = mapped_column(String(300), default="Reminder", nullable=False)
+    message: Mapped[str] = mapped_column(Text, default="This is a scheduled reminder.", nullable=False)
+    # Bookkeeping for the dispatcher (notification_service.tick): the
+    # next time this rule is due to fire, kept precomputed and indexed
+    # so a tick is one cheap "next_fire_at <= now" query, not a per-rule
+    # recurrence calculation on every pass. Recomputed on every create/
+    # update and after each fire. NULL for before_due/on_due/overdue
+    # (those aren't on this clock at all) and for a one-time on_date
+    # rule that has already fired.
+    next_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class OrgSmtpSettings(Base):

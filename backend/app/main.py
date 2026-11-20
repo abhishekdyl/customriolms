@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import traceback
 
@@ -11,6 +12,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
+from app.services import notification_service
 
 if settings.SENTRY_DSN:
     sentry_sdk.init(dsn=settings.SENTRY_DSN, environment=settings.ENV, traces_sample_rate=0.1)
@@ -18,6 +20,41 @@ if settings.SENTRY_DSN:
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.APP_NAME)
+
+# Dispatches due on_date/weekly/monthly reminder rules (Notifications ▸
+# Reminder rules) — a plain in-process asyncio loop rather than a
+# separate worker/broker, since this deployment runs as a single
+# uvicorn process. Ticks every 60s; each tick is cheap (one indexed
+# "next_fire_at <= now" query — see notification_service.tick) even
+# with nothing due. If this process ever runs with multiple workers
+# behind one DB, each worker would tick independently and could double-
+# send — fine for the single-worker deployment this app ships as today,
+# worth revisiting if that changes.
+_reminder_task: asyncio.Task | None = None
+
+
+async def _reminder_loop():
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                fired = await notification_service.tick(db)
+                if fired:
+                    logger.info("Reminder dispatcher fired %d rule(s)", fired)
+        except Exception:
+            logger.exception("Reminder dispatcher tick failed")
+        await asyncio.sleep(60)
+
+
+@app.on_event("startup")
+async def _start_reminder_loop():
+    global _reminder_task
+    _reminder_task = asyncio.create_task(_reminder_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_reminder_loop():
+    if _reminder_task is not None:
+        _reminder_task.cancel()
 
 app.add_middleware(
     CORSMiddleware,

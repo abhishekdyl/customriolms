@@ -1,18 +1,24 @@
 import asyncio
+import logging
 import smtplib
 import ssl
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.course import Course
 from app.models.notification import EmailLog, NotificationTemplate, OrgSmtpSettings, PlatformSmtpSettings, ReminderRule
 from app.models.org import Org
 from app.models.platform_settings import SINGLETON_ID
+from app.models.user import User, UserStatus
 from app.schemas.notification import OrgFallbackRequestOut, PlatformSmtpIn, PlatformSmtpOut, SmtpIn, SmtpOut
+
+logger = logging.getLogger(__name__)
 
 SIGN = "— {{org_name}} Learning"
 DEFAULT_TEMPLATES = [
@@ -31,8 +37,12 @@ DEFAULT_RULES = [
     ("before_due", 3, ["email", "inapp"], True),
     ("on_due", 0, ["email", "inapp"], True),
     ("overdue", 1, ["email", "inapp"], True),
-    ("weekly_digest", 7, ["email"], False),
+    # No default calendar rule (on_date/weekly/monthly) is seeded — those
+    # are opt-in, admin-authored schedules, unlike the three above which
+    # are tied to a course's own due date and make sense as sane
+    # defaults for every org.
 ]
+WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # index = Python's date.weekday()
 
 
 async def list_templates(db: AsyncSession, org_id: uuid.UUID) -> list[NotificationTemplate]:
@@ -58,6 +68,186 @@ async def list_rules(db: AsyncSession, org_id: uuid.UUID) -> list[ReminderRule]:
         await db.commit()
         rows = (await db.execute(q)).scalars().all()
     return list(rows)
+
+
+CALENDAR_TRIGGERS = ("on_date", "weekly", "monthly")
+
+
+def _days_in_month(year: int, month: int) -> int:
+    if month == 12:
+        return (date(year + 1, 1, 1) - date(year, 12, 1)).days
+    return (date(year, month + 1, 1) - date(year, month, 1)).days
+
+
+def compute_next_fire(rule: ReminderRule, after: datetime, tz_name: str = "UTC") -> datetime | None:
+    """The next UTC instant >= `after` that `rule` is due to fire, or
+    None if it's not a calendar-based rule, is missing the field it
+    needs (no fire_date on an on_date rule, no days_of_week on a weekly
+    one, ...), or its recursion has already ended (past end_date, or a
+    one-time on_date rule whose date has passed).
+
+    `after` is "now" when first creating/editing a rule (find the next
+    upcoming occurrence), and "last_fired_at + 1 minute" when called
+    again right after a fire (find the occurrence strictly after the
+    one that just went out) — see fire_rule.
+
+    weekly/monthly's "every N weeks/months" cadence is anchored to the
+    rule's own created_at (week/month 0) — day-by-day (weekly) or
+    month-by-month (monthly) scan is simplest to get right for every
+    interval/day-of-week/day-of-month combination rather than a closed-
+    form formula, and this only ever runs on create/update/fire, never
+    on a request's hot path, so the cost doesn't matter."""
+    try:
+        tz = ZoneInfo(tz_name or "UTC")
+    except Exception:
+        tz = timezone.utc
+    hour, _, minute = rule.fire_time.partition(":")
+    hour, minute = int(hour or 9), int(minute or 0)
+    after_local = after.astimezone(tz)
+    interval = max(1, rule.interval)
+
+    if rule.trigger == "on_date":
+        if rule.fire_date is None:
+            return None
+        candidate = datetime(rule.fire_date.year, rule.fire_date.month, rule.fire_date.day, hour, minute, tzinfo=tz)
+        return candidate.astimezone(timezone.utc) if candidate >= after_local else None
+
+    if rule.trigger == "weekly":
+        if not rule.days_of_week:
+            return None
+        anchor = rule.created_at.astimezone(tz).date() - timedelta(days=rule.created_at.astimezone(tz).date().weekday())
+        for offset in range(0, 366 * 2):  # scan up to 2 years ahead
+            candidate_date = after_local.date() + timedelta(days=offset)
+            if candidate_date.weekday() not in rule.days_of_week:
+                continue
+            week_start = candidate_date - timedelta(days=candidate_date.weekday())
+            if ((week_start - anchor).days // 7) % interval != 0:
+                continue
+            if rule.end_date and candidate_date > rule.end_date:
+                return None
+            candidate = datetime(candidate_date.year, candidate_date.month, candidate_date.day, hour, minute, tzinfo=tz)
+            if candidate >= after_local:
+                return candidate.astimezone(timezone.utc)
+        return None
+
+    if rule.trigger == "monthly":
+        if not rule.day_of_month:
+            return None
+        anchor_ym = rule.created_at.astimezone(tz).date()
+        anchor_index = anchor_ym.year * 12 + (anchor_ym.month - 1)
+        start_ym = after_local.date()
+        start_index = start_ym.year * 12 + (start_ym.month - 1)
+        for offset in range(0, 12 * 10):  # scan up to 10 years ahead
+            month_index = start_index + offset
+            if (month_index - anchor_index) % interval != 0:
+                continue
+            year, month = divmod(month_index, 12)
+            month += 1
+            day = min(rule.day_of_month, _days_in_month(year, month))
+            candidate_date = date(year, month, day)
+            if rule.end_date and candidate_date > rule.end_date:
+                return None
+            candidate = datetime(year, month, day, hour, minute, tzinfo=tz)
+            if candidate >= after_local:
+                return candidate.astimezone(timezone.utc)
+        return None
+
+    return None
+
+
+async def recipients_for_rule(db: AsyncSession, rule: ReminderRule) -> list[User]:
+    """Who a calendar-based rule's email actually goes to: either every
+    active user in the org (target_scope="all" — "sabhi created user"),
+    or only the learners enrolled in one specific course (direct +
+    team assignment, same resolution course_service.list_enrolled
+    uses) when target_scope="course"."""
+    if rule.target_scope == "course" and rule.course_id is not None:
+        course = await db.get(Course, rule.course_id)
+        if course is None or course.org_id != rule.org_id:
+            return []
+        rows = (await db.execute(
+            select(User).where(User.org_id == rule.org_id, User.status == UserStatus.ACTIVE)
+        )).scalars().all()
+        assigned_users = set(course.assigned_user_ids or [])
+        assigned_teams = set(course.assigned_team_ids or [])
+        return [u for u in rows if u.id in assigned_users or (u.team_id is not None and u.team_id in assigned_teams)]
+    rows = (await db.execute(
+        select(User).where(User.org_id == rule.org_id, User.status == UserStatus.ACTIVE)
+    )).scalars().all()
+    return list(rows)
+
+
+async def fire_rule(db: AsyncSession, rule: ReminderRule) -> int:
+    """Sends rule.subject/rule.message to every current recipient (see
+    recipients_for_rule), then advances the rule's own clock: a one-time
+    on_date rule is disabled (it only ever fires once); weekly/monthly
+    get next_fire_at recomputed to the occurrence strictly after this
+    one, or cleared (and the rule disabled) once end_date/the scan
+    window is behind it. Every send attempt is still logged via the
+    normal EmailLog path (send_email_if_configured), so Sent mail log
+    shows these the same as any other transactional mail. Only the
+    "email" channel is actually delivered — "inapp"/"push" are recorded
+    preferences only, same as for before_due/on_due/overdue; no in-app
+    notification inbox exists in this codebase yet for either."""
+    sent = 0
+    if "email" in (rule.channels or []):
+        for user in await recipients_for_rule(db, rule):
+            if await send_email_if_configured(db, rule.org_id, user.email, rule.subject, rule.message):
+                sent += 1
+    now = datetime.now(timezone.utc)
+    rule.last_fired_at = now
+    if rule.trigger == "on_date":
+        rule.next_fire_at = None
+        rule.enabled = False
+    else:
+        org = await db.get(Org, rule.org_id)
+        tz_name = org.timezone if org else "UTC"
+        next_at = compute_next_fire(rule, now + timedelta(minutes=1), tz_name)
+        rule.next_fire_at = next_at
+        if next_at is None:
+            rule.enabled = False
+    await db.commit()
+    return sent
+
+
+async def tick(db: AsyncSession) -> int:
+    """Called on a fixed interval by the in-process scheduler (see
+    main.py's startup hook) — fires every due calendar-based rule
+    across every org in one pass. Deliberately a single global query
+    (ReminderRule has no reason to be scoped per-org for this) rather
+    than per-org dispatch, since there's no separate worker process in
+    this deployment to split the work across."""
+    now = datetime.now(timezone.utc)
+    due = (await db.execute(
+        select(ReminderRule).where(
+            ReminderRule.enabled.is_(True), ReminderRule.trigger.in_(CALENDAR_TRIGGERS),
+            ReminderRule.next_fire_at.is_not(None), ReminderRule.next_fire_at <= now,
+        )
+    )).scalars().all()
+    fired = 0
+    for rule in due:
+        try:
+            await fire_rule(db, rule)
+            fired += 1
+        except Exception:
+            logger.exception("Reminder rule %s failed to fire", rule.id)
+    return fired
+
+
+async def recompute_next_fire(db: AsyncSession, rule: ReminderRule) -> None:
+    """Called right after a calendar-based rule is created/edited/
+    enabled — (re)derives next_fire_at from scratch (as of now), so a
+    freshly-saved rule's schedule reflects whatever was just changed
+    instead of whatever an earlier save had computed."""
+    if rule.trigger not in CALENDAR_TRIGGERS:
+        rule.next_fire_at = None
+        return
+    if not rule.enabled:
+        rule.next_fire_at = None
+        return
+    org = await db.get(Org, rule.org_id)
+    tz_name = org.timezone if org else "UTC"
+    rule.next_fire_at = compute_next_fire(rule, datetime.now(timezone.utc), tz_name)
 
 
 async def get_owned(db: AsyncSession, model, obj_id: uuid.UUID, org_id: uuid.UUID):
