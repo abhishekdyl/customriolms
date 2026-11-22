@@ -1,6 +1,6 @@
 "use client";
 import { BellRing, Clock, Mail, Plus, Smartphone, Trash2 } from "lucide-react";
-import type { ComponentType } from "react";
+import { useEffect, useState, type ComponentType, type InputHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { Switch } from "@/components/ui/switch";
 import { useCreateRule, useDeleteRule, useRules, useUpdateRule } from "@/lib/hooks/use-notifications";
 import { useCourses } from "@/lib/hooks/use-courses";
@@ -21,6 +21,65 @@ const inputCls = "text-[13px] border border-line rounded-md px-2 py-[5px] bg-sur
 function formatNextFire(iso: string | null | undefined) {
   if (!iso) return null;
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** interval/day_of_month/subject/message all used to fire a PATCH on
+ * every keystroke (same as everything else in this tab), but unlike a
+ * click these have a transient invalid state WHILE typing — an empty
+ * subject box, or "" before you've typed the next digit of a number —
+ * and the backend correctly rejects that instant, which (per
+ * useUpdateRule's optimistic rollback) snapped the field's text back
+ * mid-keystroke. These two commit on blur instead: fast to type into,
+ * and only ever sent once the value settled. */
+function LocalInput({ value, onCommit, ...props }: { value: string; onCommit: (v: string) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "onBlur">) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => setLocal(value), [value]);
+  return (
+    <input
+      {...props} value={local} onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => local !== value && onCommit(local)}
+    />
+  );
+}
+
+function LocalTextarea({ value, onCommit, ...props }: { value: string; onCommit: (v: string) => void } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange" | "onBlur">) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => setLocal(value), [value]);
+  return (
+    <textarea
+      {...props} value={local} onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => local !== value && onCommit(local)}
+    />
+  );
+}
+
+/** Every onChange here fires a PATCH immediately (there's no separate
+ * Save button) and the mutation is optimistic — if the backend 422s
+ * (RuleIn requires fire_date on on_date, days_of_week on weekly,
+ * day_of_month on monthly, course_id when target_scope is "course"),
+ * useUpdateRule's onError rolls the row back to whatever it was before
+ * the click. That's what made switching the trigger dropdown to
+ * Monthly visibly "snap back" to Weekly: the row still had no
+ * day_of_month set, the PATCH failed, and the optimistic change got
+ * reverted. This fills in a sane default for whichever field the new
+ * trigger/scope actually needs, so the switch always saves — the
+ * admin still edits the real value right after via the fields below. */
+function withTriggerDefaults(rule: ReminderRule, trigger: Trigger): ReminderRule {
+  const next: ReminderRule = { ...rule, trigger };
+  if (trigger === "on_date" && !next.fire_date) next.fire_date = todayStr();
+  if (trigger === "weekly" && !(next.days_of_week && next.days_of_week.length)) next.days_of_week = [0];
+  if (trigger === "monthly" && !next.day_of_month) next.day_of_month = 1;
+  if (CALENDAR_TRIGGERS.includes(trigger)) {
+    next.fire_time = next.fire_time || "09:00";
+    next.interval = next.interval || 1;
+    next.subject = next.subject || "Reminder";
+    next.message = next.message || "This is a scheduled reminder.";
+  }
+  return next;
 }
 
 /** The before_due/on_due/overdue body — unchanged from before the
@@ -47,6 +106,11 @@ function CalendarFields({ rule, onChange }: { rule: ReminderRule; onChange: (r: 
   const { data: courses = [] } = useCourses();
   const toggleDay = (d: number) => {
     const days = rule.days_of_week ?? [];
+    // Unchecking the last remaining day would leave days_of_week empty,
+    // which the backend rejects (a weekly rule needs at least one day)
+    // — same save-fails-and-reverts problem as the trigger/scope
+    // selects above, so just refuse the click instead of reverting.
+    if (days.includes(d) && days.length === 1) return;
     onChange({ ...rule, days_of_week: days.includes(d) ? days.filter((x) => x !== d) : [...days, d].sort() });
   };
   const nextFire = formatNextFire(rule.next_fire_at);
@@ -57,7 +121,8 @@ function CalendarFields({ rule, onChange }: { rule: ReminderRule; onChange: (r: 
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12.5px] text-ink-soft">On</span>
           <input
-            type="date" value={rule.fire_date ?? ""} onChange={(e) => onChange({ ...rule, fire_date: e.target.value || null })}
+            type="date" value={rule.fire_date ?? ""}
+            onChange={(e) => e.target.value && onChange({ ...rule, fire_date: e.target.value })}
             className={inputCls}
           />
           <span className="text-[12.5px] text-ink-soft">at</span>
@@ -72,9 +137,9 @@ function CalendarFields({ rule, onChange }: { rule: ReminderRule; onChange: (r: 
         <>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[12.5px] text-ink-soft">Every</span>
-            <input
-              type="number" min={1} max={52} value={rule.interval ?? 1}
-              onChange={(e) => onChange({ ...rule, interval: Math.max(1, +e.target.value || 1) })}
+            <LocalInput
+              type="number" min={1} max={52} value={String(rule.interval ?? 1)}
+              onCommit={(v) => onChange({ ...rule, interval: Math.min(52, Math.max(1, parseInt(v, 10) || 1)) })}
               className="w-[50px] text-[13px] border border-line rounded-md px-2 py-[5px] text-center"
             />
             <span className="text-[12.5px] text-ink-soft">{rule.trigger === "weekly" ? "week(s)" : "month(s)"}</span>
@@ -104,9 +169,9 @@ function CalendarFields({ rule, onChange }: { rule: ReminderRule; onChange: (r: 
           ) : (
             <div className="flex items-center gap-2">
               <span className="text-[12.5px] text-ink-soft">Day of month:</span>
-              <input
-                type="number" min={1} max={31} value={rule.day_of_month ?? 1}
-                onChange={(e) => onChange({ ...rule, day_of_month: Math.min(31, Math.max(1, +e.target.value || 1)) })}
+              <LocalInput
+                type="number" min={1} max={31} value={String(rule.day_of_month ?? 1)}
+                onCommit={(v) => onChange({ ...rule, day_of_month: Math.min(31, Math.max(1, parseInt(v, 10) || 1)) })}
                 className="w-[55px] text-[13px] border border-line rounded-md px-2 py-[5px] text-center"
               />
               <span className="text-[11px] text-ink-faint">(clamped to the last day in a shorter month)</span>
@@ -132,11 +197,19 @@ function CalendarFields({ rule, onChange }: { rule: ReminderRule; onChange: (r: 
         <span className="text-[12.5px] text-ink-soft">Send to:</span>
         <select
           value={rule.target_scope ?? "all"}
-          onChange={(e) => onChange({ ...rule, target_scope: e.target.value as TargetScope, course_id: e.target.value === "all" ? null : rule.course_id })}
+          onChange={(e) => {
+            const scope = e.target.value as TargetScope;
+            // Same save-fails-and-snaps-back problem as the trigger
+            // select above: target_scope="course" with no course_id
+            // yet is invalid, so default to the first course rather
+            // than leaving it null and failing the PATCH.
+            const course_id = scope === "all" ? null : (rule.course_id ?? courses[0]?.id ?? null);
+            onChange({ ...rule, target_scope: scope, course_id });
+          }}
           className={inputCls}
         >
           <option value="all">All users in this org</option>
-          <option value="course">Users of a specific course</option>
+          <option value="course" disabled={courses.length === 0}>Users of a specific course{courses.length === 0 ? " (no courses yet)" : ""}</option>
         </select>
         {rule.target_scope === "course" && (
           <select
@@ -150,12 +223,14 @@ function CalendarFields({ rule, onChange }: { rule: ReminderRule; onChange: (r: 
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <input
-          value={rule.subject ?? ""} placeholder="Email subject" onChange={(e) => onChange({ ...rule, subject: e.target.value })}
+        <LocalInput
+          value={rule.subject ?? ""} placeholder="Email subject"
+          onCommit={(v) => onChange({ ...rule, subject: v.trim() || "Reminder" })}
           className="text-[13px] border border-line rounded-md px-2.5 py-[6px] bg-surface"
         />
-        <textarea
-          value={rule.message ?? ""} placeholder="Message" rows={2} onChange={(e) => onChange({ ...rule, message: e.target.value })}
+        <LocalTextarea
+          value={rule.message ?? ""} placeholder="Message" rows={2}
+          onCommit={(v) => onChange({ ...rule, message: v.trim() || "This is a scheduled reminder." })}
           className="text-[13px] border border-line rounded-md px-2.5 py-[6px] bg-surface resize-none"
         />
       </div>
@@ -176,7 +251,7 @@ function RuleRow({ rule, onChange, onDelete }: { rule: ReminderRule; onChange: (
         <div className="flex items-center gap-2 flex-wrap">
           <Clock size={14} className="text-primary" />
           <select
-            value={rule.trigger} onChange={(e) => onChange({ ...rule, trigger: e.target.value as Trigger })}
+            value={rule.trigger} onChange={(e) => onChange(withTriggerDefaults(rule, e.target.value as Trigger))}
             className="text-[13px] border border-line rounded-md px-2 py-[5px] font-medium bg-surface"
           >
             {(Object.keys(triggerLabel) as Trigger[]).map((v) => <option key={v} value={v}>{triggerLabel[v]}</option>)}
