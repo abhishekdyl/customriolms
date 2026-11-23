@@ -454,6 +454,44 @@ export interface Course extends CourseListItem {
   paid_enrol_enabled: boolean;
   /** Paise — null until an admin sets a price. */
   paid_enrol_price: number | null;
+  /** Who created this course — used client-side only to decide whether
+   * to show the ratings-moderation panel (Org Admin always sees it
+   * regardless of this value). */
+  created_by: string | null;
+}
+
+// ---- Course ratings & reviews ----------------------------------------
+
+/** One review as the public list shows it — deliberately no reviewer
+ * identity at all (see backend course_rating_service). */
+export interface CourseRating {
+  id: string;
+  rating: number; // 1-5
+  review_text: string | null;
+  created_at: string;
+}
+
+export interface MyCourseRating extends CourseRating {
+  updated_at: string;
+}
+
+export interface CourseRatingSummary {
+  average: number | null; // null when there are zero ratings yet
+  count: number;
+  distribution: Record<number, number>; // {1: 0, 2: 1, 3: 0, 4: 2, 5: 9}
+}
+
+/** Moderation view only (Org Admin / course creator) — carries who
+ * wrote it, unlike the public CourseRating above. */
+export interface CourseRatingAdmin extends CourseRating {
+  user_id: string;
+  user_name: string;
+  user_email: string;
+}
+
+export interface RatingEligibility {
+  can_rate: boolean;
+  reason: string | null;
 }
 
 /** One course a learner isn't enrolled in yet but could self or paid-enrol

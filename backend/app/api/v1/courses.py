@@ -14,10 +14,15 @@ from app.core.database import get_db
 from app.models.category import Category
 from app.models.course import Course
 from app.models.course_enrolment_payment import CourseEnrolmentPayment, CourseEnrolmentPaymentStatus
+from app.models.course_rating import CourseRating
 from app.models.org import Org
 from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
 from app.schemas.audit_log import AuditLogOut
+from app.schemas.course_rating import (
+    CourseRatingAdminOut, CourseRatingIn, CourseRatingModerateUpdate, CourseRatingOut, CourseRatingSummary, MyCourseRatingOut,
+)
+from app.services import course_rating_service as rating_svc
 from app.schemas.course import (
     AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CatalogCourseOut, CourseAssignRequest, CourseCreate,
     CourseDuplicateRequest, CourseEnrolCheckoutOut, CourseEnrolVerifyOut, CourseEnrolVerifyRequest,
@@ -405,7 +410,7 @@ async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db), 
 
     course = Course(org_id=current_user.org_id, title=body.title, category_id=body.category_id,
                      description=body.description, duration_label=body.duration_label,
-                     opens_at=body.opens_at, closes_at=body.closes_at)
+                     opens_at=body.opens_at, closes_at=body.closes_at, created_by=current_user.id)
     db.add(course)
     await db.commit()
     await audit_log_service.record(
@@ -954,3 +959,124 @@ async def _get_module_or_404(db: AsyncSession, module_id: uuid.UUID, course_id: 
     if module is None:
         raise HTTPException(status_code=404, detail="Module not found on this course")
     return module
+
+
+# ---------------------------------------------------------------- Ratings --
+# See course_rating_service for eligibility/moderation rules. The public
+# list/summary are open to anyone in the org (even browsing a course
+# they're not enrolled in yet — that's the whole point of a rating
+# badge on the catalog); only submitting one requires actually being
+# enrolled + having finished the first module, and only an Org Admin
+# or this course's own creator can moderate someone else's review.
+
+async def _get_rating_or_404(db: AsyncSession, course_id: uuid.UUID, rating_id: uuid.UUID) -> CourseRating:
+    row = (await db.execute(select(CourseRating).where(CourseRating.id == rating_id, CourseRating.course_id == course_id))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Review not found")
+    return row
+
+
+@router.get("/{course_id}/ratings/summary", response_model=CourseRatingSummary)
+async def get_course_rating_summary(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    await get_course_or_404(db, course_id, current_user.org_id)
+    return await rating_svc.summary(db, course_id)
+
+
+@router.get("/{course_id}/ratings", response_model=list[CourseRatingOut])
+async def list_course_ratings(
+    course_id: uuid.UUID, limit: int = 20, offset: int = 0,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    await get_course_or_404(db, course_id, current_user.org_id)
+    rows = (await db.execute(
+        select(CourseRating).where(CourseRating.course_id == course_id)
+        .order_by(CourseRating.created_at.desc()).limit(min(limit, 100)).offset(max(offset, 0))
+    )).scalars().all()
+    return rows
+
+
+@router.get("/{course_id}/ratings/me", response_model=MyCourseRatingOut | None)
+async def get_my_course_rating(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    await get_course_or_404(db, course_id, current_user.org_id)
+    row = (await db.execute(
+        select(CourseRating).where(CourseRating.course_id == course_id, CourseRating.user_id == current_user.id)
+    )).scalar_one_or_none()
+    return row
+
+
+@router.get("/{course_id}/ratings/eligibility")
+async def get_rating_eligibility(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Lets the frontend decide whether to even show "Rate this course"
+    without the learner having to guess by submitting and seeing a 400."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    ok, reason = await rating_svc.can_rate(db, course, current_user)
+    return {"can_rate": ok, "reason": reason}
+
+
+@router.post("/{course_id}/ratings", response_model=MyCourseRatingOut, status_code=201)
+async def submit_course_rating(course_id: uuid.UUID, body: CourseRatingIn, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    ok, reason = await rating_svc.can_rate(db, course, current_user)
+    if not ok:
+        raise HTTPException(status_code=400, detail=reason)
+
+    existing = (await db.execute(
+        select(CourseRating).where(CourseRating.course_id == course_id, CourseRating.user_id == current_user.id)
+    )).scalar_one_or_none()
+    if existing:
+        existing.rating = body.rating
+        existing.review_text = body.review_text
+        row = existing
+    else:
+        row = CourseRating(org_id=current_user.org_id, course_id=course_id, user_id=current_user.id, rating=body.rating, review_text=body.review_text)
+        db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+@router.get("/{course_id}/ratings/admin", response_model=list[CourseRatingAdminOut])
+async def list_course_ratings_admin(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    if not rating_svc.can_moderate(course, current_user):
+        raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own creator can view this")
+    rows = (await db.execute(
+        select(CourseRating, User).join(User, User.id == CourseRating.user_id)
+        .where(CourseRating.course_id == course_id).order_by(CourseRating.created_at.desc())
+    )).all()
+    return [
+        CourseRatingAdminOut(
+            id=r.id, rating=r.rating, review_text=r.review_text, created_at=r.created_at,
+            user_id=u.id, user_name=f"{u.firstname} {u.lastname}".strip(), user_email=u.email,
+        )
+        for r, u in rows
+    ]
+
+
+@router.patch("/{course_id}/ratings/{rating_id}", response_model=CourseRatingAdminOut)
+async def moderate_course_rating(
+    course_id: uuid.UUID, rating_id: uuid.UUID, body: CourseRatingModerateUpdate,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    if not rating_svc.can_moderate(course, current_user):
+        raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own creator can edit this")
+    row = await _get_rating_or_404(db, course_id, rating_id)
+    row.review_text = body.review_text
+    await db.commit()
+    await db.refresh(row)
+    author = await db.get(User, row.user_id)
+    return CourseRatingAdminOut(
+        id=row.id, rating=row.rating, review_text=row.review_text, created_at=row.created_at,
+        user_id=author.id, user_name=f"{author.firstname} {author.lastname}".strip(), user_email=author.email,
+    )
+
+
+@router.delete("/{course_id}/ratings/{rating_id}", status_code=204)
+async def delete_course_rating(course_id: uuid.UUID, rating_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    if not rating_svc.can_moderate(course, current_user):
+        raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own creator can delete this")
+    row = await _get_rating_or_404(db, course_id, rating_id)
+    await db.delete(row)
+    await db.commit()

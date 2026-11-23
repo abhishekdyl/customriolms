@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  ArrowLeft, BookOpen, CheckCircle2, Circle, Clock, HelpCircle, Loader2, Lock, PlayCircle, Sparkles, XCircle,
+  ArrowLeft, BookOpen, CheckCircle2, Circle, Clock, HelpCircle, Loader2, Lock, PlayCircle, Sparkles, Star, XCircle,
 } from "lucide-react";
+import { CourseReviewsPanel } from "@/components/learner/course-rating";
 import { Video, VideoPlayer, VideoSkin } from "@videojs/react/video";
 import {
   useCheckpointScormProgress, useCheckpointWatchProgress, useCompleteModule, useMyCourse, useRetakeScormModule,
@@ -118,6 +119,7 @@ const TABS = [
   { id: "content", label: "Modules", icon: BookOpen },
   { id: "summary", label: "AI summary", icon: Sparkles },
   { id: "quiz", label: "Quiz", icon: HelpCircle },
+  { id: "reviews", label: "Reviews", icon: Star },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -917,6 +919,8 @@ export default function CourseViewPage() {
             ) : (
               <div className="text-[13px] text-ink-faint">No quiz on this course yet.</div>
             ))}
+
+          {tab === "reviews" && <CourseReviewsPanel courseId={course.id} />}
         </div>
       </div>
     </div>

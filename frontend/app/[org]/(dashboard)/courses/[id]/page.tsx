@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Plus, ChevronUp, ChevronDown, Users, Award, Lock, BookOpen, Settings as SettingsIcon,
-  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X, History,
+  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X, History, Star,
 } from "lucide-react";
+import { useCurrentUser } from "@/lib/hooks/use-auth";
+import { CourseReviewsAdminPanel } from "@/components/shell/courses/course-reviews-admin";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -56,6 +58,7 @@ const TABS = [
   { id: "settings", label: "Settings", icon: SettingsIcon },
   { id: "participants", label: "Participants", icon: Users },
   { id: "grades", label: "Grades", icon: BarChart3 },
+  { id: "reviews", label: "Reviews", icon: Star },
   { id: "activity", label: "Activity", icon: History },
   { id: "more", label: "More", icon: MoreHorizontal },
 ] as const;
@@ -67,6 +70,13 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
   const { id, org } = use(params);
   const router = useRouter();
   const { data: course, isLoading } = useCourse(id);
+  const { data: me } = useCurrentUser();
+  // Reviews moderation (editing/deleting someone else's review) is
+  // narrower than the broader courses.manage capability that gates
+  // this whole page — only an Org/Super Admin or this specific
+  // course's own creator, matching the backend's can_moderate.
+  const canModerateReviews = !!me && (me.role === "org_admin" || me.role === "super_admin" || (!!course?.created_by && course.created_by === me.id));
+  const visibleTabs = TABS.filter((t) => t.id !== "reviews" || canModerateReviews);
   const updateCourse = useUpdateCourse(id);
   const deleteCourse = useDeleteCourse();
   const duplicateCourse = useDuplicateCourse();
@@ -361,7 +371,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
       )}
 
       <div className="mb-5 flex items-center gap-5 border-b border-line-soft">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -737,6 +747,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
           <QuizAttemptsSection courseId={id} />
         </div>
       )}
+
+      {tab === "reviews" && canModerateReviews && <CourseReviewsAdminPanel courseId={id} />}
 
       {tab === "activity" && <ActivityPanel courseId={id} />}
 

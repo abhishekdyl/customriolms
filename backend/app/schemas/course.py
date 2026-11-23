@@ -568,6 +568,10 @@ class CourseOut(BaseModel):
     # pattern as ModuleOut above: the storage key is permanent, the
     # presigned URL is regenerated fresh on every read.
     cover_image_key: str | None = Field(default=None, exclude=True)
+    # Who created this course — used client-side only to decide whether
+    # to show the ratings-moderation tab (Org Admin always sees it
+    # regardless of this value; see course_rating_service.can_moderate).
+    created_by: uuid.UUID | None = None
     modules: list[ModuleOut] = []
 
     class Config:
