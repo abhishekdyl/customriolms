@@ -265,6 +265,11 @@ def _settings_out(row: PlatformSettings) -> PlatformSettingsOut:
         gateway_fee_enabled=row.gateway_fee_enabled,
         gateway_fee_percent=row.gateway_fee_percent,
         hsn_sac_code=row.hsn_sac_code,
+        bbb_server_url=row.bbb_server_url,
+        bbb_shared_secret_set=bool(row.bbb_shared_secret),
+        zoom_account_id=row.zoom_account_id,
+        zoom_client_id=row.zoom_client_id,
+        zoom_client_secret_set=bool(row.zoom_client_secret),
     )
 
 
@@ -338,6 +343,16 @@ async def update_platform_settings(body: PlatformSettingsUpdateRequest, db: Asyn
         settings_row.gateway_fee_percent = body.gateway_fee_percent
     if body.hsn_sac_code is not None:
         settings_row.hsn_sac_code = body.hsn_sac_code
+    if body.bbb_server_url is not None:
+        settings_row.bbb_server_url = body.bbb_server_url
+    if body.bbb_shared_secret is not None:
+        settings_row.bbb_shared_secret = body.bbb_shared_secret
+    if body.zoom_account_id is not None:
+        settings_row.zoom_account_id = body.zoom_account_id
+    if body.zoom_client_id is not None:
+        settings_row.zoom_client_id = body.zoom_client_id
+    if body.zoom_client_secret is not None:
+        settings_row.zoom_client_secret = body.zoom_client_secret
     await db.commit()
     await db.refresh(settings_row)
     return _settings_out(settings_row)

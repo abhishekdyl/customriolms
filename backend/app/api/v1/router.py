@@ -9,6 +9,7 @@ from app.api.v1.skills import router as skills_router
 from app.api.v1.badges import router as badges_router
 from app.api.v1.certificates import router as certificates_router
 from app.api.v1.orgs import router as orgs_router
+from app.api.v1.live_classes import router as live_classes_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.platform_smtp import router as platform_smtp_router
 from app.api.v1.learn import router as learn_router
@@ -44,6 +45,7 @@ api_router.include_router(custom_roles_router)
 api_router.include_router(billing_router)
 api_router.include_router(point_rules_router)
 api_router.include_router(point_levels_router)
+api_router.include_router(live_classes_router)
 
 # As each module is built, its router is added here — main.py never
 # changes again after this point, which keeps that file stable.

@@ -339,6 +339,47 @@ export interface CalendarItem {
   overdue: boolean;
 }
 
+export type LiveClassProvider = "bigbluebutton" | "zoom";
+export type LiveClassTargetScope = "all" | "course" | "individual";
+export type LiveClassStatus = "scheduled" | "live" | "ended";
+
+/** A scheduled video session — see backend/app/models/live_class.py for
+ * the full field reasoning. status is derived server-side, never stored. */
+export interface LiveClass {
+  id: string;
+  title: string;
+  description: string;
+  provider: LiveClassProvider;
+  scheduled_start: string;
+  duration_minutes: number;
+  target_scope: LiveClassTargetScope;
+  course_id: string | null;
+  course_title: string | null;
+  user_ids: string[];
+  recording_url: string | null;
+  created_by: string;
+  created_by_name: string | null;
+  created_at: string;
+  status: LiveClassStatus;
+}
+
+export interface LiveClassInput {
+  title: string;
+  description: string;
+  provider: LiveClassProvider;
+  scheduled_start: string;
+  duration_minutes: number;
+  target_scope: LiveClassTargetScope;
+  course_id?: string | null;
+  user_ids?: string[];
+  recording_url?: string | null;
+}
+
+export interface LiveClassJoin {
+  join_url: string;
+  is_host: boolean;
+}
+
 /** One column of the module-progress matrix — just enough to label it. */
 export interface ModuleSummary {
   id: string;
@@ -602,6 +643,13 @@ export interface PlatformSettings {
   gateway_fee_enabled: boolean;
   gateway_fee_percent: number;
   hsn_sac_code: string;
+  // Live Classes — one platform-wide BigBlueButton/Zoom setup, same
+  // secrets-never-round-trip pattern as the Razorpay fields above.
+  bbb_server_url: string | null;
+  bbb_shared_secret_set: boolean;
+  zoom_account_id: string | null;
+  zoom_client_id: string | null;
+  zoom_client_secret_set: boolean;
 }
 
 // ---------- Billing (self-serve trial -> paid license) ----------

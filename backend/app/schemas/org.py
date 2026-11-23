@@ -209,6 +209,15 @@ class PlatformSettingsOut(BaseModel):
     # endpoint from the row, not stored as its own column.
     razorpay_key_secret_set: bool = False
     razorpay_webhook_secret_set: bool = False
+    # Live Classes — same "only show the real URL/account ID, mask the
+    # secret as set/unset" pattern as Razorpay above. A provider only
+    # becomes choosable once its own secret is actually set — see
+    # live_class_service.available_providers.
+    bbb_server_url: str | None = None
+    bbb_shared_secret_set: bool = False
+    zoom_account_id: str | None = None
+    zoom_client_id: str | None = None
+    zoom_client_secret_set: bool = False
 
     class Config:
         from_attributes = True
@@ -244,6 +253,11 @@ class PlatformSettingsUpdateRequest(BaseModel):
     gateway_fee_enabled: bool | None = None
     gateway_fee_percent: float | None = Field(default=None, ge=0, le=100)
     hsn_sac_code: str | None = None
+    bbb_server_url: str | None = None
+    bbb_shared_secret: str | None = None
+    zoom_account_id: str | None = None
+    zoom_client_id: str | None = None
+    zoom_client_secret: str | None = None
 
 
 class PlatformStatusOut(BaseModel):

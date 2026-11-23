@@ -86,6 +86,9 @@ CAPABILITY_CATALOG: dict[str, list[tuple[str, str]]] = {
     "Leaderboard": [
         ("leaderboard.manage", "Set how many points a course or module is worth towards the leaderboard"),
     ],
+    "Live Classes": [
+        ("live_classes.manage", "Schedule, edit, and cancel live classes (BigBlueButton/Zoom)"),
+    ],
 }
 
 # Flat set of every valid key, for fast membership checks and for

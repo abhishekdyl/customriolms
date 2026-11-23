@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Server, ShieldQuestion, Wand2, UserCog, Send, Loader2, CheckCircle2, AlertCircle, Building2, Clock, Check, X, Wrench, Bug, AlertTriangle, Rocket, KeyRound } from "lucide-react";
+import { Server, ShieldQuestion, Wand2, UserCog, Send, Loader2, CheckCircle2, AlertCircle, Building2, Clock, Check, X, Wrench, Bug, AlertTriangle, Rocket, KeyRound, Video } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,12 +15,13 @@ import { ALL_COUNTRIES } from "@/lib/countries";
 
 const PORT_ENCRYPTION_HINTS: Record<string, "TLS" | "SSL"> = { "465": "SSL", "587": "TLS", "25": "TLS", "2525": "TLS" };
 
-type TabId = "email" | "registration" | "licensing" | "ai" | "superadmins" | "system";
+type TabId = "email" | "registration" | "licensing" | "live_classes" | "ai" | "superadmins" | "system";
 
 const tabs: { id: TabId; label: string; icon: typeof Server }[] = [
   { id: "email", label: "Email & Notifications", icon: Server },
   { id: "registration", label: "Registration", icon: ShieldQuestion },
   { id: "licensing", label: "Licensing", icon: Rocket },
+  { id: "live_classes", label: "Live Classes", icon: Video },
   { id: "ai", label: "AI Configuration", icon: Wand2 },
   { id: "superadmins", label: "Super Admins", icon: UserCog },
   { id: "system", label: "System", icon: Wrench },
@@ -795,6 +796,158 @@ function LicensingTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Live Classes — one set of BigBlueButton/Zoom credentials for the whole
+// platform, exactly like Moodle's own site-wide BBB plugin config. Same
+// secrets-never-round-trip pattern as Razorpay above: PlatformSettingsOut
+// only exposes bbb_shared_secret_set/zoom_client_secret_set booleans, and a
+// blank secret field here means "keep whatever's already saved", not
+// "clear it" — only a non-empty value overwrites it.
+// ---------------------------------------------------------------------------
+function LiveClassesCredentialsTab() {
+  const { data: settings, isLoading } = usePlatformSettings();
+  const updateSettings = useUpdatePlatformSettings();
+  const serverValue = settings
+    ? {
+        bbb_server_url: settings.bbb_server_url ?? "",
+        zoom_account_id: settings.zoom_account_id ?? "",
+        zoom_client_id: settings.zoom_client_id ?? "",
+      }
+    : undefined;
+  const { draft, setDraft, dirty: fieldsDirty, cancel: cancelFields } = useDraft(serverValue);
+
+  const [bbbSharedSecret, setBbbSharedSecret] = useState("");
+  const [zoomClientSecret, setZoomClientSecret] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const secretsDirty = bbbSharedSecret !== "" || zoomClientSecret !== "";
+  const dirty = fieldsDirty || secretsDirty;
+
+  const doSave = () => {
+    updateSettings.mutate(
+      {
+        ...draft!,
+        ...(bbbSharedSecret ? { bbb_shared_secret: bbbSharedSecret } : {}),
+        ...(zoomClientSecret ? { zoom_client_secret: zoomClientSecret } : {}),
+      },
+      {
+        onSuccess: () => {
+          setBbbSharedSecret("");
+          setZoomClientSecret("");
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        },
+      }
+    );
+  };
+  const doCancel = () => {
+    cancelFields();
+    setBbbSharedSecret("");
+    setZoomClientSecret("");
+  };
+
+  return (
+    <div className="max-w-2xl">
+      <div className="mb-5 flex items-start gap-3 rounded-lg border-l-[3px] border-primary bg-primary-soft px-4 py-3.5">
+        <Video className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
+        <p className="text-[13px] text-ink">
+          Set these up once here and every org on the platform can schedule BigBlueButton and/or Zoom live classes
+          — there&apos;s no per-org override, same as Moodle&apos;s own site-wide BBB plugin setup. A provider only
+          shows up as choosable on the &quot;Schedule a live class&quot; form once its own credentials below are filled in.
+        </p>
+      </div>
+
+      <section className="mb-5 rounded-xl border border-line bg-surface p-5">
+        <h2 className="mb-1 font-head text-sm text-ink">BigBlueButton</h2>
+        <p className="mb-3.5 text-xs text-ink-faint">
+          Your own BBB server's API endpoint and shared secret. A meeting is created the moment someone first
+          joins, not when the class is scheduled — the join link itself is freshly signed on every click, never a
+          static URL you could share outside the app.
+        </p>
+        {isLoading || !draft ? (
+          <p className="text-sm text-ink-faint">Loading…</p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div>
+              <Label className="mb-1.5 block">Server URL</Label>
+              <Input
+                value={draft.bbb_server_url} placeholder="https://bbb.example.com/bigbluebutton/"
+                onChange={(e) => setDraft((d) => ({ ...d, bbb_server_url: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label className="mb-1.5 block">Shared secret</Label>
+              <Input
+                type="password" value={bbbSharedSecret} onChange={(e) => setBbbSharedSecret(e.target.value)}
+                placeholder={settings?.bbb_shared_secret_set ? "•••••••• (configured)" : "Not configured"}
+              />
+            </div>
+            <div className="flex items-center gap-2 text-xs text-ink-faint">
+              <KeyRound className="h-3 w-3" />
+              {settings?.bbb_shared_secret_set
+                ? "Configured. Leave the secret field blank to keep what's already saved."
+                : "BigBlueButton stays unavailable to schedule until both fields are set."}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="mb-5 rounded-xl border border-line bg-surface p-5">
+        <h2 className="mb-1 font-head text-sm text-ink">Zoom</h2>
+        <p className="mb-3.5 text-xs text-ink-faint">
+          A Zoom Marketplace &quot;Server-to-Server OAuth&quot; app's own credentials (Build App → Server-to-Server
+          OAuth) — not a personal Zoom login. The backend mints its own access token on demand; every meeting is
+          created immediately at schedule time under this app's own Zoom account.
+        </p>
+        {isLoading || !draft ? (
+          <p className="text-sm text-ink-faint">Loading…</p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div>
+              <Label className="mb-1.5 block">Account ID</Label>
+              <Input
+                value={draft.zoom_account_id} placeholder="Zoom account ID"
+                onChange={(e) => setDraft((d) => ({ ...d, zoom_account_id: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="mb-1.5 block">Client ID</Label>
+                <Input
+                  value={draft.zoom_client_id} placeholder="Client ID"
+                  onChange={(e) => setDraft((d) => ({ ...d, zoom_client_id: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Client secret</Label>
+                <Input
+                  type="password" value={zoomClientSecret} onChange={(e) => setZoomClientSecret(e.target.value)}
+                  placeholder={settings?.zoom_client_secret_set ? "•••••••• (configured)" : "Not configured"}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-ink-faint">
+              <KeyRound className="h-3 w-3" />
+              {settings?.zoom_client_secret_set
+                ? "Configured. Leave the secret field blank to keep what's already saved."
+                : "Zoom stays unavailable to schedule until all three fields are set."}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <SaveBar
+        dirty={dirty}
+        saving={updateSettings.isPending}
+        savedFlash={saved}
+        onCancel={doCancel}
+        onSave={doSave}
+        className="rounded-xl border-t-0"
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // AI Configuration — LAYOUT ONLY, same reasoning as Email & Notifications:
 // no AiSettings model/endpoint on the backend yet (the actual Claude API
 // key is currently read from backend env vars, not editable per platform
@@ -977,6 +1130,7 @@ export default function PlatformSettingsPage() {
       {tab === "email" && <EmailNotificationsTab />}
       {tab === "registration" && <RegistrationTab />}
       {tab === "licensing" && <LicensingTab />}
+      {tab === "live_classes" && <LiveClassesCredentialsTab />}
       {tab === "ai" && <AiConfigurationTab />}
       {tab === "superadmins" && <SuperAdminsTab />}
       {tab === "system" && <SystemTab />}

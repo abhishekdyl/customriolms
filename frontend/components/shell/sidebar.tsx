@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3, KeyRound, CreditCard } from "lucide-react";
+import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3, KeyRound, CreditCard, Video } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,7 @@ const navByRole: Record<RoleName, NavItem[]> = {
     { href: "/recognition", label: "Recognition", icon: Sparkles, capability: ["badges.view", "skills.view", "certificates.view"] },
     { href: "/reports", label: "Reports", icon: BarChart3, capability: "reports.view" },
     { href: "/notifications", label: "Notifications", icon: Bell, capability: "notifications.manage" },
+    { href: "/live-classes", label: "Live Classes", icon: Video, capability: "live_classes.manage" },
     { href: "/audit-log", label: "Audit Log", icon: History, capability: "audit_log.view" },
     { href: "/roles", label: "Roles", icon: KeyRound }, // ORG_ADMIN-only, never shown to custom roles
     { href: "/billing", label: "Billing", icon: CreditCard }, // ORG_ADMIN-only, same reasoning as Roles above

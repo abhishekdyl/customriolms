@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Video } from "lucide-react";
 import { Topbar } from "@/components/shell/topbar";
 import { useMyCalendar } from "@/lib/hooks/use-courses";
-import type { CalendarItem } from "@/lib/types";
+import { useJoinLiveClass, useMyLiveClasses } from "@/lib/hooks/use-live-classes";
+import type { CalendarItem, LiveClass } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -121,6 +122,47 @@ function EventCard({ item, now }: { item: CalendarItem; now: Date }) {
   );
 }
 
+/** One live-class on the selected date — a Join/Start button instead of
+ * a link to a course, since there's nothing else to "open". */
+function LiveClassCard({ lc }: { lc: LiveClass }) {
+  const join = useJoinLiveClass();
+  const ended = lc.status === "ended";
+  return (
+    <div className="flex w-full flex-col gap-2 rounded-lg border border-line bg-surface px-3 py-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-1.5">
+          <Video className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-primary" />
+          <p className="min-w-0 truncate text-sm font-medium text-ink">{lc.title}</p>
+        </div>
+        <span className={cn(
+          "flex-shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-medium",
+          lc.status === "live" ? "bg-success-soft text-success" : ended ? "bg-line-soft text-ink-faint" : "bg-amber-soft text-amber",
+        )}>
+          {lc.status === "live" ? "Live now" : ended ? "Ended" : "Scheduled"}
+        </span>
+      </div>
+      <p className="text-[11px] text-ink-faint">
+        {new Date(lc.scheduled_start).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} · {lc.duration_minutes} min
+      </p>
+      {!ended && (
+        <button
+          type="button" disabled={join.isPending}
+          onClick={() => join.mutate(lc.id, { onSuccess: (r) => window.open(r.join_url, "_blank") })}
+          className="flex items-center justify-center gap-1.5 self-start rounded-md bg-primary px-2.5 py-1.5 text-[11.5px] font-medium text-white disabled:opacity-60"
+        >
+          <ExternalLink className="h-3 w-3" /> {join.isPending ? "Opening…" : "Join"}
+        </button>
+      )}
+      {ended && lc.recording_url && (
+        <a href={lc.recording_url} target="_blank" rel="noreferrer" className="self-start text-[11.5px] font-medium text-primary">
+          View recording
+        </a>
+      )}
+      {join.isError && <p className="text-[11px] text-danger">Couldn&apos;t get a join link — it may not have started yet.</p>}
+    </div>
+  );
+}
+
 /** The learner's own Calendar — a real month grid (not just lists):
  * every date with something due gets a colored dot (red = overdue,
  * amber = today, primary = upcoming), and clicking a date shows exactly
@@ -129,6 +171,7 @@ function EventCard({ item, now }: { item: CalendarItem; now: Date }) {
  * [org]/(dashboard) route group (AuthGuard bounces them via roleHome()). */
 export default function CalendarPage() {
   const { data, isLoading } = useMyCalendar();
+  const { data: liveClasses } = useMyLiveClasses();
   const now = new Date();
   const today = startOfDay(now);
   const [cursor, setCursor] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
@@ -145,11 +188,24 @@ export default function CalendarPage() {
     return map;
   }, [data]);
 
+  // Live classes this user can see, grouped the same way — kept separate
+  // from byDate (different shape entirely) and merged only for the dot
+  // and the selected-day list below.
+  const liveByDate = useMemo(() => {
+    const map = new Map<string, LiveClass[]>();
+    for (const lc of liveClasses ?? []) {
+      const key = dateKey(startOfDay(new Date(lc.scheduled_start)));
+      map.set(key, [...(map.get(key) ?? []), lc]);
+    }
+    return map;
+  }, [liveClasses]);
+
   const noDueDate = (data ?? []).filter((i) => !i.due_at && !i.completed);
   const overdueCount = (data ?? []).filter((i) => i.due_at && !i.completed && new Date(i.due_at) < today).length;
 
   const grid = useMemo(() => buildMonthGrid(cursor.getFullYear(), cursor.getMonth()), [cursor]);
   const selectedItems = byDate.get(dateKey(selected)) ?? [];
+  const selectedLiveClasses = liveByDate.get(dateKey(selected)) ?? [];
   const monthLabel = cursor.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
   function dotColor(d: Date, items: CalendarItem[]): string | null {
@@ -215,6 +271,7 @@ export default function CalendarPage() {
                 {grid.map(({ date, inMonth }) => {
                   const items = byDate.get(dateKey(date)) ?? [];
                   const dot = dotColor(date, items);
+                  const hasLive = (liveByDate.get(dateKey(date)) ?? []).length > 0;
                   const isToday = startOfDay(date).getTime() === today.getTime();
                   const isSelected = startOfDay(date).getTime() === startOfDay(selected).getTime();
                   return (
@@ -229,7 +286,10 @@ export default function CalendarPage() {
                       )}
                     >
                       <span>{date.getDate()}</span>
-                      {dot && <span className={cn("h-1.5 w-1.5 rounded-full", isSelected ? "bg-white" : dot)} />}
+                      <span className="flex items-center gap-0.5">
+                        {dot && <span className={cn("h-1.5 w-1.5 rounded-full", isSelected ? "bg-white" : dot)} />}
+                        {hasLive && <Video className={cn("h-2.5 w-2.5", isSelected ? "text-white" : "text-success")} />}
+                      </span>
                     </button>
                   );
                 })}
@@ -241,7 +301,13 @@ export default function CalendarPage() {
               <p className="text-xs font-medium text-ink-faint">
                 {selected.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}
               </p>
-              {selectedItems.length === 0 ? (
+              {selectedLiveClasses.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  {selectedLiveClasses.map((lc) => <LiveClassCard key={lc.id} lc={lc} />)}
+                </div>
+              )}
+
+              {selectedItems.length === 0 && selectedLiveClasses.length === 0 ? (
                 <p className="text-[11.5px] text-ink-faint">Nothing due on this date.</p>
               ) : (
                 <div className="flex flex-col gap-2">
