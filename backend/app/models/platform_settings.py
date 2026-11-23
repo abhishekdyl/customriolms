@@ -113,25 +113,7 @@ class PlatformSettings(Base):
     # trusting this blindly.
     hsn_sac_code: Mapped[str] = mapped_column(String(20), default="998316", nullable=False)
 
-    # ---- Live Classes — one set of provider credentials for the whole
-    # platform, exactly like Moodle's own site-wide BigBlueButton plugin
-    # config: every org's live classes go through the same BBB server/
-    # Zoom account, there's no per-org override. A provider only shows up
-    # as choosable on the "Schedule a live class" form once its own
-    # credentials here are filled in (see live_class_service.available_providers).
-    #
-    # BigBlueButton — a meeting is created lazily, on the first join
-    # (see live_class_service.get_join_url), by signing the request with
-    # this shared secret; nothing here is itself a secret the frontend
-    # ever sees.
-    bbb_server_url: Mapped[str | None] = mapped_column(String(300), nullable=True)   # e.g. https://bbb.example.com/bigbluebutton/
-    bbb_shared_secret: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    # Zoom — a "Server-to-Server OAuth" app's own credentials (Zoom
-    # Marketplace → Build App → Server-to-Server OAuth), NOT a personal
-    # Zoom login. These three let the backend mint its own access token
-    # on demand (see live_class_service._zoom_access_token) with no
-    # separate user sign-in step, and every meeting is created under the
-    # Zoom account's own owner user ("me").
-    zoom_account_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    zoom_client_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    zoom_client_secret: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Live Classes' BBB/Zoom credentials live on Org (app/models/org.py),
+    # not here — each org runs its own live classes under its own
+    # BBB server/Zoom account, same reasoning as Org.razorpay_* vs. this
+    # table's own razorpay_* fields above.

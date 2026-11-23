@@ -61,6 +61,7 @@ async def get_my_org(db: AsyncSession = Depends(get_db), current_user: User = De
     return OrgOut.model_validate({
         **org.__dict__, "user_count": count_result.scalar_one(),
         "razorpay_key_secret_set": bool(org.razorpay_key_secret), "razorpay_webhook_secret_set": bool(org.razorpay_webhook_secret),
+        "bbb_shared_secret_set": bool(org.bbb_shared_secret), "zoom_client_secret_set": bool(org.zoom_client_secret),
     })
 
 
@@ -83,6 +84,7 @@ async def update_my_org(body: OrgProfileUpdateRequest, db: AsyncSession = Depend
         "default_module_points", "default_course_points", "default_perfect_quiz_points",
         "razorpay_key_id", "razorpay_key_secret", "razorpay_webhook_secret",
         "gstin", "billing_address", "city", "pincode", "country", "billing_state",
+        "bbb_server_url", "bbb_shared_secret", "zoom_account_id", "zoom_client_id", "zoom_client_secret",
     ):
         value = getattr(body, field)
         if value is not None:
@@ -94,6 +96,7 @@ async def update_my_org(body: OrgProfileUpdateRequest, db: AsyncSession = Depend
     return OrgOut.model_validate({
         **org.__dict__, "user_count": count_result.scalar_one(),
         "razorpay_key_secret_set": bool(org.razorpay_key_secret), "razorpay_webhook_secret_set": bool(org.razorpay_webhook_secret),
+        "bbb_shared_secret_set": bool(org.bbb_shared_secret), "zoom_client_secret_set": bool(org.zoom_client_secret),
     })
 
 
@@ -121,6 +124,7 @@ async def upload_org_logo(
     return OrgOut.model_validate({
         **org.__dict__, "user_count": count_result.scalar_one(),
         "razorpay_key_secret_set": bool(org.razorpay_key_secret), "razorpay_webhook_secret_set": bool(org.razorpay_webhook_secret),
+        "bbb_shared_secret_set": bool(org.bbb_shared_secret), "zoom_client_secret_set": bool(org.zoom_client_secret),
     })
 
 
@@ -135,6 +139,7 @@ async def delete_org_logo(db: AsyncSession = Depends(get_db), current_user: User
     return OrgOut.model_validate({
         **org.__dict__, "user_count": count_result.scalar_one(),
         "razorpay_key_secret_set": bool(org.razorpay_key_secret), "razorpay_webhook_secret_set": bool(org.razorpay_webhook_secret),
+        "bbb_shared_secret_set": bool(org.bbb_shared_secret), "zoom_client_secret_set": bool(org.zoom_client_secret),
     })
 
 
@@ -265,11 +270,6 @@ def _settings_out(row: PlatformSettings) -> PlatformSettingsOut:
         gateway_fee_enabled=row.gateway_fee_enabled,
         gateway_fee_percent=row.gateway_fee_percent,
         hsn_sac_code=row.hsn_sac_code,
-        bbb_server_url=row.bbb_server_url,
-        bbb_shared_secret_set=bool(row.bbb_shared_secret),
-        zoom_account_id=row.zoom_account_id,
-        zoom_client_id=row.zoom_client_id,
-        zoom_client_secret_set=bool(row.zoom_client_secret),
     )
 
 
@@ -343,16 +343,6 @@ async def update_platform_settings(body: PlatformSettingsUpdateRequest, db: Asyn
         settings_row.gateway_fee_percent = body.gateway_fee_percent
     if body.hsn_sac_code is not None:
         settings_row.hsn_sac_code = body.hsn_sac_code
-    if body.bbb_server_url is not None:
-        settings_row.bbb_server_url = body.bbb_server_url
-    if body.bbb_shared_secret is not None:
-        settings_row.bbb_shared_secret = body.bbb_shared_secret
-    if body.zoom_account_id is not None:
-        settings_row.zoom_account_id = body.zoom_account_id
-    if body.zoom_client_id is not None:
-        settings_row.zoom_client_id = body.zoom_client_id
-    if body.zoom_client_secret is not None:
-        settings_row.zoom_client_secret = body.zoom_client_secret
     await db.commit()
     await db.refresh(settings_row)
     return _settings_out(settings_row)

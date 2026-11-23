@@ -1,11 +1,13 @@
 """Live Classes — scheduling (status derivation, audience resolution)
 plus the two provider integrations (BigBlueButton, Zoom). See
-LiveClass's own docstring for the data model and PlatformSettings'
-bbb_*/zoom_* fields for where credentials live.
+LiveClass's own docstring for the data model and Org's bbb_*/zoom_*
+fields for where credentials live — each org configures its OWN
+BigBlueButton server and Zoom account from its own Org Settings page,
+there's no platform-wide shared credential.
 
-Neither provider is contacted unless its own credentials are filled
-in — available_providers() is what the "Schedule a live class" form
-and the create/update endpoints both gate on, so a provider with
+Neither provider is contacted unless that org's own credentials are
+filled in — available_providers() is what the "Schedule a live class"
+form and the create/update endpoints both gate on, so a provider with
 nothing configured never gets this far.
 """
 import base64
@@ -22,25 +24,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.course import Course
 from app.models.live_class import LiveClass, LiveClassProvider, LiveClassTargetScope
-from app.models.platform_settings import SINGLETON_ID, PlatformSettings
+from app.models.org import Org
 from app.models.user import RoleName, User, UserStatus
 from app.schemas.live_class import JoinOut
 
 BBB_TIMEOUT = httpx.Timeout(15.0)
 ZOOM_TIMEOUT = httpx.Timeout(15.0)
 
-# Cached Zoom access token — Server-to-Server OAuth tokens last ~1h and
-# there's exactly one Zoom app for the whole platform (see
-# PlatformSettings.zoom_*), so one process-wide cache slot is enough;
-# no reason to re-mint a token on every single API call.
+# Cached Zoom access token, keyed by org id — each org has its own Zoom
+# Server-to-Server OAuth app now (see Org.zoom_*), and a token lasts
+# ~1h, so caching per org avoids re-minting one on every single call
+# without ever mixing up two orgs' tokens.
 _zoom_token_cache: dict[str, tuple[str, float]] = {}
 
 
-def available_providers(settings: PlatformSettings) -> list[str]:
+def available_providers(org: Org) -> list[str]:
     providers = []
-    if settings.bbb_server_url and settings.bbb_shared_secret:
+    if org.bbb_server_url and org.bbb_shared_secret:
         providers.append(LiveClassProvider.BIGBLUEBUTTON)
-    if settings.zoom_account_id and settings.zoom_client_id and settings.zoom_client_secret:
+    if org.zoom_account_id and org.zoom_client_id and org.zoom_client_secret:
         providers.append(LiveClassProvider.ZOOM)
     return providers
 
@@ -116,7 +118,7 @@ def _bbb_url(server_url: str, secret: str, call: str, params: dict) -> str:
     return f"{base}api/{call}?{query}&checksum={checksum}"
 
 
-async def _ensure_bbb_meeting(db: AsyncSession, lc: LiveClass, settings: PlatformSettings) -> None:
+async def _ensure_bbb_meeting(db: AsyncSession, lc: LiveClass, org: Org) -> None:
     """Idempotent — safe to call every time someone joins, not just the
     first time (BBB's own create API returns the existing meeting's
     info rather than resetting it if it's already running); bbb_created
@@ -128,7 +130,7 @@ async def _ensure_bbb_meeting(db: AsyncSession, lc: LiveClass, settings: Platfor
         lc.bbb_meeting_id = f"riolms-{lc.id.hex}"
         lc.bbb_moderator_pw = uuid.uuid4().hex[:12]
         lc.bbb_attendee_pw = uuid.uuid4().hex[:12]
-    url = _bbb_url(settings.bbb_server_url, settings.bbb_shared_secret, "create", {
+    url = _bbb_url(org.bbb_server_url, org.bbb_shared_secret, "create", {
         "meetingID": lc.bbb_meeting_id,
         "name": lc.title,
         "moderatorPW": lc.bbb_moderator_pw,
@@ -140,17 +142,17 @@ async def _ensure_bbb_meeting(db: AsyncSession, lc: LiveClass, settings: Platfor
         async with httpx.AsyncClient(timeout=BBB_TIMEOUT) as client:
             resp = await client.get(url)
         if resp.status_code != 200 or "<returncode>SUCCESS</returncode>" not in resp.text:
-            raise HTTPException(status_code=502, detail="Couldn't reach the BigBlueButton server — check its URL/shared secret in Platform Settings")
+            raise HTTPException(status_code=502, detail="Couldn't reach your BigBlueButton server — check its URL/shared secret in Org Settings")
     except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="Couldn't reach the BigBlueButton server — check its URL/shared secret in Platform Settings")
+        raise HTTPException(status_code=502, detail="Couldn't reach your BigBlueButton server — check its URL/shared secret in Org Settings")
     lc.bbb_created = True
     await db.commit()
 
 
-def _bbb_join_url(lc: LiveClass, settings: PlatformSettings, user: User, host: bool) -> str:
+def _bbb_join_url(lc: LiveClass, org: Org, user: User, host: bool) -> str:
     password = lc.bbb_moderator_pw if host else lc.bbb_attendee_pw
     full_name = f"{user.firstname} {user.lastname}".strip() or user.email
-    return _bbb_url(settings.bbb_server_url, settings.bbb_shared_secret, "join", {
+    return _bbb_url(org.bbb_server_url, org.bbb_shared_secret, "join", {
         "meetingID": lc.bbb_meeting_id,
         "fullName": full_name,
         "password": password,
@@ -160,34 +162,34 @@ def _bbb_join_url(lc: LiveClass, settings: PlatformSettings, user: User, host: b
 
 # --------------------------------------------------------------- Zoom --
 
-async def _zoom_access_token(settings: PlatformSettings) -> str:
-    cache_key = settings.zoom_account_id or ""
+async def _zoom_access_token(org: Org) -> str:
+    cache_key = str(org.id)
     cached = _zoom_token_cache.get(cache_key)
     if cached and cached[1] > time.time() + 30:
         return cached[0]
-    basic = base64.b64encode(f"{settings.zoom_client_id}:{settings.zoom_client_secret}".encode()).decode()
+    basic = base64.b64encode(f"{org.zoom_client_id}:{org.zoom_client_secret}".encode()).decode()
     try:
         async with httpx.AsyncClient(timeout=ZOOM_TIMEOUT) as client:
             resp = await client.post(
                 "https://zoom.us/oauth/token",
-                params={"grant_type": "account_credentials", "account_id": settings.zoom_account_id},
+                params={"grant_type": "account_credentials", "account_id": org.zoom_account_id},
                 headers={"Authorization": f"Basic {basic}"},
             )
         if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail="Couldn't authenticate with Zoom — check the Server-to-Server OAuth credentials in Platform Settings")
+            raise HTTPException(status_code=502, detail="Couldn't authenticate with Zoom — check the Server-to-Server OAuth credentials in Org Settings")
         data = resp.json()
     except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="Couldn't reach Zoom — check the platform's network access and Zoom credentials")
+        raise HTTPException(status_code=502, detail="Couldn't reach Zoom — check your network access and Zoom credentials")
     token = data["access_token"]
     _zoom_token_cache[cache_key] = (token, time.time() + data.get("expires_in", 3600))
     return token
 
 
-async def create_zoom_meeting(lc: LiveClass, settings: PlatformSettings) -> None:
+async def create_zoom_meeting(lc: LiveClass, org: Org) -> None:
     """Called once, right when a Zoom class is scheduled (not lazily
     like BBB — see LiveClass's docstring for why the two providers
     differ here)."""
-    token = await _zoom_access_token(settings)
+    token = await _zoom_access_token(org)
     try:
         async with httpx.AsyncClient(timeout=ZOOM_TIMEOUT) as client:
             resp = await client.post(
@@ -211,25 +213,25 @@ async def create_zoom_meeting(lc: LiveClass, settings: PlatformSettings) -> None
     lc.zoom_start_url = data["start_url"]
 
 
-async def delete_zoom_meeting(lc: LiveClass, settings: PlatformSettings) -> None:
+async def delete_zoom_meeting(lc: LiveClass, org: Org) -> None:
     """Best-effort — called when a Zoom class is cancelled/deleted so
     it doesn't linger in the host's own Zoom account; a failure here
     (meeting already gone, Zoom unreachable) shouldn't block deleting
     our own row, so callers should swallow this, not propagate it."""
     if not lc.zoom_meeting_id:
         return
-    token = await _zoom_access_token(settings)
+    token = await _zoom_access_token(org)
     async with httpx.AsyncClient(timeout=ZOOM_TIMEOUT) as client:
         await client.delete(f"https://api.zoom.us/v2/meetings/{lc.zoom_meeting_id}", headers={"Authorization": f"Bearer {token}"})
 
 
 # ------------------------------------------------------------- Join API --
 
-async def get_join_url(db: AsyncSession, lc: LiveClass, settings: PlatformSettings, user: User) -> JoinOut:
+async def get_join_url(db: AsyncSession, lc: LiveClass, org: Org, user: User) -> JoinOut:
     host = is_host(lc, user)
     if lc.provider == LiveClassProvider.BIGBLUEBUTTON:
-        await _ensure_bbb_meeting(db, lc, settings)
-        return JoinOut(join_url=_bbb_join_url(lc, settings, user, host), is_host=host)
+        await _ensure_bbb_meeting(db, lc, org)
+        return JoinOut(join_url=_bbb_join_url(lc, org, user, host), is_host=host)
     if lc.provider == LiveClassProvider.ZOOM:
         url = lc.zoom_start_url if host else lc.zoom_join_url
         if not url:

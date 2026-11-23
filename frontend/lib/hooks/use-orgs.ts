@@ -35,6 +35,7 @@ export function useUpdateMyOrg() {
       default_module_points?: number; default_course_points?: number; default_perfect_quiz_points?: number;
       razorpay_key_id?: string; razorpay_key_secret?: string; razorpay_webhook_secret?: string;
       gstin?: string; billing_address?: string; city?: string; pincode?: string; country?: string; billing_state?: string;
+      bbb_server_url?: string; bbb_shared_secret?: string; zoom_account_id?: string; zoom_client_id?: string; zoom_client_secret?: string;
     }) => api.patch<Org>("/api/v1/orgs/me", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["orgs", "me"] }),
   });

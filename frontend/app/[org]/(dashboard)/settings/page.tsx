@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, ShieldCheck, AlertCircle, CreditCard, Plus, Trash2, X } from "lucide-react";
+import { Building2, ShieldCheck, AlertCircle, CreditCard, Plus, Trash2, X, Video, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -313,6 +313,112 @@ function RazorpayGatewayCard({ org }: { org: Org }) {
   );
 }
 
+/** Each org brings its OWN BigBlueButton server and Zoom account for
+ * Live Classes — same self-service pattern as RazorpayGatewayCard
+ * above, same never-round-trips-the-secret convention. There's no
+ * platform-wide shared credential; a provider only becomes choosable
+ * on the "Schedule a live class" form once its own fields here are
+ * filled in (see backend's live_class_service.available_providers). */
+function LiveClassesCredentialsCard({ org }: { org: Org }) {
+  const updateOrg = useUpdateMyOrg();
+  const [bbbServerUrl, setBbbServerUrl] = useState(org.bbb_server_url ?? "");
+  const [bbbSharedSecret, setBbbSharedSecret] = useState("");
+  const [zoomAccountId, setZoomAccountId] = useState(org.zoom_account_id ?? "");
+  const [zoomClientId, setZoomClientId] = useState(org.zoom_client_id ?? "");
+  const [zoomClientSecret, setZoomClientSecret] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const dirty = bbbServerUrl !== (org.bbb_server_url ?? "") || bbbSharedSecret.trim() !== ""
+    || zoomAccountId !== (org.zoom_account_id ?? "") || zoomClientId !== (org.zoom_client_id ?? "") || zoomClientSecret.trim() !== "";
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dirty) return;
+    setLocalError(null);
+    const body: {
+      bbb_server_url?: string; bbb_shared_secret?: string;
+      zoom_account_id?: string; zoom_client_id?: string; zoom_client_secret?: string;
+    } = { bbb_server_url: bbbServerUrl.trim(), zoom_account_id: zoomAccountId.trim(), zoom_client_id: zoomClientId.trim() };
+    if (bbbSharedSecret.trim() !== "") body.bbb_shared_secret = bbbSharedSecret.trim();
+    if (zoomClientSecret.trim() !== "") body.zoom_client_secret = zoomClientSecret.trim();
+    updateOrg.mutate(body, {
+      onSuccess: () => {
+        setBbbSharedSecret("");
+        setZoomClientSecret("");
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      },
+      onError: (err) => setLocalError(err instanceof ApiError ? err.message : "Couldn't save."),
+    });
+  };
+
+  return (
+    <section className="mb-6 rounded-[14px] border border-line bg-surface p-5">
+      <div className="mb-1 flex items-center gap-2">
+        <Video size={15} className="text-ink-faint" />
+        <h2 className="font-head text-[14.5px] text-ink">Live Classes (BigBlueButton / Zoom)</h2>
+      </div>
+      <p className="mb-4 text-[12px] text-ink-faint">
+        Your own video provider credentials — live classes you schedule run on your own BigBlueButton server or
+        Zoom account, not a shared one. A provider only shows up when scheduling a class once its own fields below
+        are filled in.
+      </p>
+
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <div>
+          <h3 className="mb-2 text-[12.5px] font-medium text-ink">BigBlueButton</h3>
+          <div className="flex flex-col gap-3">
+            <div>
+              <Label className="mb-1 block text-[11.5px] text-ink-soft">Server URL</Label>
+              <Input value={bbbServerUrl} onChange={(e) => setBbbServerUrl(e.target.value)} placeholder="https://bbb.example.com/bigbluebutton/" />
+            </div>
+            <div>
+              <Label className="mb-1 block text-[11.5px] text-ink-soft">
+                Shared secret {org.bbb_shared_secret_set && <span className="text-ink-faint">(already set — leave blank to keep it)</span>}
+              </Label>
+              <Input type="password" value={bbbSharedSecret} onChange={(e) => setBbbSharedSecret(e.target.value)} placeholder={org.bbb_shared_secret_set ? "••••••••••••" : ""} />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <h3 className="mb-2 text-[12.5px] font-medium text-ink">Zoom (Server-to-Server OAuth app)</h3>
+          <div className="flex flex-col gap-3">
+            <div>
+              <Label className="mb-1 block text-[11.5px] text-ink-soft">Account ID</Label>
+              <Input value={zoomAccountId} onChange={(e) => setZoomAccountId(e.target.value)} placeholder="Zoom account ID" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="mb-1 block text-[11.5px] text-ink-soft">Client ID</Label>
+                <Input value={zoomClientId} onChange={(e) => setZoomClientId(e.target.value)} placeholder="Client ID" />
+              </div>
+              <div>
+                <Label className="mb-1 block text-[11.5px] text-ink-soft">
+                  Client secret {org.zoom_client_secret_set && <span className="text-ink-faint">(already set — leave blank to keep it)</span>}
+                </Label>
+                <Input type="password" value={zoomClientSecret} onChange={(e) => setZoomClientSecret(e.target.value)} placeholder={org.zoom_client_secret_set ? "••••••••••••" : ""} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 text-[11px] text-ink-faint">
+          <KeyRound className="h-3 w-3" />
+          A provider stays unavailable to schedule until all of its own fields above are set.
+        </div>
+
+        {localError && <p className="text-[12px] text-danger">{localError}</p>}
+        <div className="flex items-center gap-2">
+          <Button type="submit" disabled={!dirty || updateOrg.isPending}>{updateOrg.isPending ? "Saving…" : "Save"}</Button>
+          {saved && <span className="text-xs text-success">Saved</span>}
+        </div>
+      </form>
+    </section>
+  );
+}
+
 const industryOptions = ["Manufacturing", "Automotive", "Logistics", "Retail", "Healthcare", "Technology", "Other"];
 const timezoneOptions = ["Asia/Kolkata", "America/New_York", "America/Sao_Paulo", "Europe/London", "UTC"];
 
@@ -568,6 +674,8 @@ export default function OrgSettingsPage() {
       <BillingDetailsCard org={org} />
 
       <RazorpayGatewayCard org={org} />
+
+      <LiveClassesCredentialsCard org={org} />
 
       {/* Danger zone */}
       <div className="rounded-[10px] border border-danger/20 bg-danger-soft p-5">

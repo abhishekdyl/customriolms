@@ -8,7 +8,7 @@ from app.api.deps import get_current_user, require_capability
 from app.core.database import get_db
 from app.models.course import Course
 from app.models.live_class import LiveClass, LiveClassProvider
-from app.models.platform_settings import SINGLETON_ID, PlatformSettings
+from app.models.org import Org
 from app.models.user import RoleName, User
 from app.schemas.live_class import JoinOut, LiveClassIn, LiveClassOut
 from app.services import live_class_service as svc
@@ -18,13 +18,14 @@ from app.services.permission_service import is_team_scoped
 router = APIRouter(prefix="/api/v1/live-classes", tags=["live-classes"])
 
 
-async def _settings(db: AsyncSession) -> PlatformSettings:
-    settings = await db.get(PlatformSettings, SINGLETON_ID)
-    if settings is None:
-        settings = PlatformSettings(id=SINGLETON_ID)
-        db.add(settings)
-        await db.commit()
-    return settings
+async def _org(db: AsyncSession, org_id: uuid.UUID) -> Org:
+    """Each org's own BBB/Zoom credentials live on its Org row (Org
+    Settings' self-service "Live Classes" section) — no platform-wide
+    singleton here, unlike PlatformSettings."""
+    org = await db.get(Org, org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Org not found")
+    return org
 
 
 async def _to_out(db: AsyncSession, lc: LiveClass) -> LiveClassOut:
@@ -57,9 +58,9 @@ def _enforce_team_scope(body: LiveClassIn, user: User, existing_course_id: uuid.
 @router.get("/providers", response_model=list[str])
 async def list_providers(db: AsyncSession = Depends(get_db), user: User = Depends(require_capability("live_classes.manage"))):
     """Which providers the "Schedule a live class" form should offer —
-    only ones a Super Admin has actually put credentials in for (see
-    Platform Settings' Live Classes section)."""
-    return svc.available_providers(await _settings(db))
+    only ones this org's own Org Admin has actually put credentials in
+    for (see Org Settings' Live Classes section)."""
+    return svc.available_providers(await _org(db, user.org_id))
 
 
 @router.get("", response_model=list[LiveClassOut])
@@ -70,16 +71,16 @@ async def list_live_classes(db: AsyncSession = Depends(get_db), user: User = Dep
 
 @router.post("", response_model=LiveClassOut, status_code=201)
 async def create_live_class(body: LiveClassIn, db: AsyncSession = Depends(get_db), user: User = Depends(require_capability("live_classes.manage"))):
-    settings = await _settings(db)
-    if body.provider not in svc.available_providers(settings):
-        raise HTTPException(status_code=400, detail=f"{body.provider} isn't configured — a Super Admin needs to add its credentials in Platform Settings first")
+    org = await _org(db, user.org_id)
+    if body.provider not in svc.available_providers(org):
+        raise HTTPException(status_code=400, detail=f"{body.provider} isn't configured — add its credentials in Org Settings first")
     if body.course_id is not None:
         await get_owned(db, Course, body.course_id, user.org_id)  # 404s if it's not this org's course
     _enforce_team_scope(body, user)
 
     lc = LiveClass(org_id=user.org_id, created_by=user.id, **body.model_dump())
     if lc.provider == LiveClassProvider.ZOOM:
-        await svc.create_zoom_meeting(lc, settings)
+        await svc.create_zoom_meeting(lc, org)
     db.add(lc)
     await db.commit()
     await db.refresh(lc)
@@ -89,9 +90,9 @@ async def create_live_class(body: LiveClassIn, db: AsyncSession = Depends(get_db
 @router.patch("/{live_class_id}", response_model=LiveClassOut)
 async def update_live_class(live_class_id: uuid.UUID, body: LiveClassIn, db: AsyncSession = Depends(get_db), user: User = Depends(require_capability("live_classes.manage"))):
     lc = await get_owned(db, LiveClass, live_class_id, user.org_id)
-    settings = await _settings(db)
-    if body.provider not in svc.available_providers(settings):
-        raise HTTPException(status_code=400, detail=f"{body.provider} isn't configured — a Super Admin needs to add its credentials in Platform Settings first")
+    org = await _org(db, user.org_id)
+    if body.provider not in svc.available_providers(org):
+        raise HTTPException(status_code=400, detail=f"{body.provider} isn't configured — add its credentials in Org Settings first")
     if body.course_id is not None:
         await get_owned(db, Course, body.course_id, user.org_id)
     _enforce_team_scope(body, user)
@@ -102,7 +103,7 @@ async def update_live_class(live_class_id: uuid.UUID, body: LiveClassIn, db: Asy
     for k, v in body.model_dump().items():
         setattr(lc, k, v)
     if lc.provider == LiveClassProvider.ZOOM and (provider_changed or not lc.zoom_meeting_id or time_changed):
-        await svc.create_zoom_meeting(lc, settings)
+        await svc.create_zoom_meeting(lc, org)
         if provider_changed and old_zoom_id:
             pass  # old BBB fields just go unused; nothing to clean up externally
     if lc.provider == LiveClassProvider.BIGBLUEBUTTON and provider_changed:
@@ -118,9 +119,9 @@ async def update_live_class(live_class_id: uuid.UUID, body: LiveClassIn, db: Asy
 async def delete_live_class(live_class_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(require_capability("live_classes.manage"))):
     lc = await get_owned(db, LiveClass, live_class_id, user.org_id)
     if lc.provider == LiveClassProvider.ZOOM and lc.zoom_meeting_id:
-        settings = await _settings(db)
+        org = await _org(db, user.org_id)
         try:
-            await svc.delete_zoom_meeting(lc, settings)
+            await svc.delete_zoom_meeting(lc, org)
         except Exception:
             pass  # best-effort — see delete_zoom_meeting's docstring
     await db.delete(lc)
@@ -152,5 +153,5 @@ async def join_live_class(live_class_id: uuid.UUID, db: AsyncSession = Depends(g
     host = svc.is_host(lc, user)
     if status == "scheduled" and not host:
         raise HTTPException(status_code=400, detail="This session hasn't started yet — the host needs to join first")
-    settings = await _settings(db)
-    return await svc.get_join_url(db, lc, settings, user)
+    org = await _org(db, user.org_id)
+    return await svc.get_join_url(db, lc, org, user)

@@ -147,5 +147,25 @@ class Org(Base):
     # docstring for how this decides CGST+SGST vs IGST on the invoice.
     billing_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    # Live Classes — this org's OWN BigBlueButton/Zoom credentials, same
+    # self-service section as Razorpay above, and the same reasoning:
+    # each org runs its own live classes under its own BBB server/Zoom
+    # account, not a platform-shared one — see live_class_service.
+    # available_providers() only offers a provider on the "Schedule a
+    # live class" form once that org's own credentials here are set.
+    #
+    # BigBlueButton — a meeting is created lazily, on the first join
+    # (see live_class_service.get_join_url), by signing the request with
+    # this shared secret; nothing here is itself exposed to the browser.
+    bbb_server_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    bbb_shared_secret: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Zoom — a "Server-to-Server OAuth" app's own credentials (Zoom
+    # Marketplace → Build App → Server-to-Server OAuth), NOT a personal
+    # Zoom login — this org's own Zoom account, the same way
+    # razorpay_key_id above is this org's own Razorpay account.
+    zoom_account_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    zoom_client_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    zoom_client_secret: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
     teams: Mapped[list["Team"]] = relationship(back_populates="org")
     users: Mapped[list["User"]] = relationship(back_populates="org")

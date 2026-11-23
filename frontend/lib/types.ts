@@ -607,6 +607,16 @@ export interface Org {
   pincode: string | null;
   country: string | null;
   billing_state: string | null;
+  // This org's own Live Classes provider credentials (BigBlueButton
+  // server + Zoom Server-to-Server OAuth app) — same
+  // never-round-trips-the-secret convention as the Razorpay fields
+  // above. See Org model's docstring; each org brings its own, there's
+  // no platform-wide shared credential.
+  bbb_server_url: string | null;
+  bbb_shared_secret_set: boolean;
+  zoom_account_id: string | null;
+  zoom_client_id: string | null;
+  zoom_client_secret_set: boolean;
 }
 
 export interface PlatformSettings {
@@ -643,13 +653,6 @@ export interface PlatformSettings {
   gateway_fee_enabled: boolean;
   gateway_fee_percent: number;
   hsn_sac_code: string;
-  // Live Classes — one platform-wide BigBlueButton/Zoom setup, same
-  // secrets-never-round-trip pattern as the Razorpay fields above.
-  bbb_server_url: string | null;
-  bbb_shared_secret_set: boolean;
-  zoom_account_id: string | null;
-  zoom_client_id: string | null;
-  zoom_client_secret_set: boolean;
 }
 
 // ---------- Billing (self-serve trial -> paid license) ----------
