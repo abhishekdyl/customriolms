@@ -205,7 +205,8 @@ async def create_org(body: OrgCreateRequest, db: AsyncSession = Depends(get_db))
     """Platform staff onboarding a new customer: creates the org AND its
     first Org Admin in one step (a customer never sees this endpoint —
     they'd use /auth/register instead)."""
-    existing = await db.execute(select(User).where(User.email == body.admin_email))
+    admin_email = body.admin_email.lower()
+    existing = await db.execute(select(User).where(User.email == admin_email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -223,8 +224,8 @@ async def create_org(body: OrgCreateRequest, db: AsyncSession = Depends(get_db))
         org_id=org.id,
         firstname=admin_firstname,
         lastname=admin_lastname,
-        email=body.admin_email,
-        username=body.admin_email,  # default — see Org.allow_custom_username
+        email=admin_email,
+        username=admin_email,  # default — see Org.allow_custom_username
         hashed_password=hash_password(body.admin_password),
         role=RoleName.ORG_ADMIN,
     )

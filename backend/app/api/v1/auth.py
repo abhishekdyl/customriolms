@@ -49,7 +49,8 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
             detail="Self-serve sign-up is currently disabled. Contact your Riosmart representative for access.",
         )
 
-    existing = await db.execute(select(User).where(User.email == body.email))
+    email = body.email.lower()
+    existing = await db.execute(select(User).where(User.email == email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -92,8 +93,8 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         org_id=org.id,
         firstname=firstname,
         lastname=lastname,
-        email=body.email,
-        username=body.email,  # default — see Org.allow_custom_username
+        email=email,
+        username=email,  # default — see Org.allow_custom_username
         hashed_password=hash_password(body.password),
         role=RoleName.ORG_ADMIN,
     )
@@ -140,7 +141,8 @@ async def register_user(body: UserRegisterRequest, db: AsyncSession = Depends(ge
     if org is None or org.status == OrgStatus.SUSPENDED:
         raise HTTPException(status_code=404, detail="Organisation not found. Check the organisation code with your admin.")
 
-    existing = await db.execute(select(User).where(User.email == body.email))
+    email = body.email.lower()
+    existing = await db.execute(select(User).where(User.email == email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -158,7 +160,7 @@ async def register_user(body: UserRegisterRequest, db: AsyncSession = Depends(ge
     # admin-invited user — a visitor can't self-register around an org's
     # domain restriction just because this is a different endpoint.
     if org.allowed_domains:
-        domain = body.email.rsplit("@", 1)[-1].lower()
+        domain = email.rsplit("@", 1)[-1]
         if domain not in [d.lower() for d in org.allowed_domains]:
             raise HTTPException(
                 status_code=400,
@@ -188,8 +190,8 @@ async def register_user(body: UserRegisterRequest, db: AsyncSession = Depends(ge
         org_id=org.id,
         firstname=firstname,
         lastname=lastname,
-        email=body.email,
-        username=body.email,  # default — see Org.allow_custom_username
+        email=email,
+        username=email,  # default — see Org.allow_custom_username
         hashed_password=hash_password(body.password),
         role=RoleName.LEARNER,
         status=UserStatus.INVITED,
@@ -251,7 +253,7 @@ async def google_register(body: GoogleRegisterRequest, db: AsyncSession = Depend
         )
 
     payload = await _verify_google_credential(body.credential)
-    email = payload["email"]
+    email = payload["email"].lower()
     existing = await db.execute(select(User).where(User.email == email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered — log in instead.")
@@ -296,7 +298,7 @@ async def google_login(body: GoogleLoginRequest, db: AsyncSession = Depends(get_
     keeps it; this just gives them a second way in, it doesn't replace
     change-password/forgot-password."""
     payload = await _verify_google_credential(body.credential)
-    email = payload["email"]
+    email = payload["email"].lower()
     result = await db.execute(select(User).where(or_(User.email == email, User.google_sub == payload["sub"])))
     user = result.scalar_one_or_none()
     if user is None:
@@ -341,7 +343,11 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     # user who has customized their username (once their org allows it)
     # can log in with it, while everyone else keeps logging in by email
     # (which is also always what username defaults to at creation).
-    result = await db.execute(select(User).where(or_(User.email == body.email, User.username == body.email)))
+    # Both columns are always stored lowercase (see register/register_user/
+    # update_profile), so lowercase the identifier here too — login can't
+    # be case-sensitive if storage isn't.
+    identifier = body.email.lower()
+    result = await db.execute(select(User).where(or_(User.email == identifier, User.username == identifier)))
     user = result.scalar_one_or_none()
     # hashed_password is null for an invited user who hasn't set one yet,
     # and for a Google-only account (see /auth/google) — verify_password
@@ -416,7 +422,7 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depend
     uses); an org that hasn't configured SMTP has nowhere to send it, so
     this logs the link server-side instead so the flow is still usable/
     testable without real SMTP wired up."""
-    result = await db.execute(select(User).where(User.email == body.email))
+    result = await db.execute(select(User).where(User.email == body.email.lower()))
     user = result.scalar_one_or_none()
     if user is not None and user.status == UserStatus.ACTIVE:
         raw_token = secrets.token_urlsafe(32)
@@ -550,16 +556,17 @@ async def update_me(body: UpdateProfileRequest, current_user: User = Depends(get
     current_user.timezone = body.timezone
     current_user.companyname = body.companyname
 
-    if body.username is not None and body.username != current_user.username:
+    new_username = body.username.lower() if body.username is not None else None
+    if new_username is not None and new_username != current_user.username:
         org = (await db.execute(select(Org).where(Org.id == current_user.org_id))).scalar_one()
         if not org.allow_custom_username:
             raise HTTPException(status_code=403, detail="Your organization doesn't allow custom usernames")
         taken = (await db.execute(
-            select(User.id).where(User.username == body.username, User.id != current_user.id)
+            select(User.id).where(User.username == new_username, User.id != current_user.id)
         )).scalar_one_or_none()
         if taken:
             raise HTTPException(status_code=400, detail="That username is already taken")
-        current_user.username = body.username
+        current_user.username = new_username
 
     await db.commit()
     await db.refresh(current_user)
