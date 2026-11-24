@@ -316,10 +316,13 @@ async def login_as_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), 
     (see _IMPERSONATABLE_ROLES) so this can't be used to take over another
     admin's or platform staff's account, and to active accounts only — a
     suspended/deactivated/not-yet-activated user can't be "seen as" to
-    route around their own lock. The admin's own session is untouched;
-    the frontend keeps the admin's token aside and restores it for
-    "Return to admin" rather than this endpoint doing anything special to
-    end the impersonation itself."""
+    route around their own lock. This issues a brand-new session for the
+    target user only — it doesn't touch or revoke the admin's own
+    session, but the frontend also doesn't keep the admin's token around
+    for a "Return to admin" flow; it simply switches the browser tab
+    over to the new token pair, same as a normal login. To get back, the
+    admin logs out of this session (ending it) and logs back in with
+    their own credentials."""
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="You're already logged in as yourself")
 

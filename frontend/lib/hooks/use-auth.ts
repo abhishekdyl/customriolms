@@ -1,7 +1,7 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { api, ApiError } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
 import { roleHome } from "@/lib/role-home";
 import type { ProfileField, RoleName, TokenResponse, User } from "@/lib/types";
 
@@ -166,6 +166,7 @@ export function useLogout() {
     api.post("/api/v1/auth/logout").catch(() => {});
     localStorage.removeItem("access_token");
     localStorage.removeItem("refresh_token");
+    localStorage.removeItem("viewing_as");
     qc.clear();
     router.push("/login");
   };
@@ -230,60 +231,29 @@ export function useUploadAvatar() {
 }
 
 /** Org Admin's "Login as" — switches this browser tab into the target
- * user's own session (see users.py's login_as_user). The admin's own
- * tokens are stashed under a separate "impersonator_*" key so
- * useReturnToAdmin can restore them without a fresh login; nested
- * impersonation (logging in as someone else while already viewing as
- * someone) is refused client-side so that stash is never overwritten. */
+ * user's own session (see users.py's login_as_user), the same way a
+ * fresh login would. There's no "Return to admin": the admin's own
+ * tokens are simply replaced by the target user's, not stashed anywhere,
+ * so this session is a real, independent login as that user. Getting
+ * back to the admin account is the same normal Logout button every
+ * session already has (useLogout) followed by logging back in with the
+ * admin's own credentials — not a special restore flow. "viewing_as" is
+ * set purely so ImpersonationBanner can tell the admin which account
+ * they're currently in; useLogout clears it along with everything
+ * else. */
 export function useLoginAs() {
   const router = useRouter();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (userId: string) => {
-      if (localStorage.getItem("impersonator_access_token")) {
-        return Promise.reject(new ApiError("Return to admin first before logging in as someone else", 400));
-      }
-      return api.post<TokenResponse>(`/api/v1/users/${userId}/login-as`);
-    },
+    mutationFn: (userId: string) => api.post<TokenResponse>(`/api/v1/users/${userId}/login-as`),
     onSuccess: (data) => {
-      const adminToken = localStorage.getItem("access_token");
-      const adminRefresh = localStorage.getItem("refresh_token");
-      // The admin's own org slug, so "Return to admin" can send them back
-      // to their org's /users page instead of the unprefixed one — read
-      // from cache before qc.clear() wipes it below.
-      const adminOrgSlug = qc.getQueryData<User>(["me"])?.org_slug;
-      if (adminToken) localStorage.setItem("impersonator_access_token", adminToken);
-      if (adminRefresh) localStorage.setItem("impersonator_refresh_token", adminRefresh);
-      if (adminOrgSlug) localStorage.setItem("impersonator_org_slug", adminOrgSlug);
       localStorage.setItem("access_token", data.access_token);
       localStorage.setItem("refresh_token", data.refresh_token);
+      localStorage.setItem("viewing_as", "1");
       qc.clear();
       router.push(data.role ? roleHome(data.role as RoleName, data.org_slug) : "/dashboard");
     },
   });
-}
-
-/** Switches back from an impersonated session to the admin's own —
- * the "Return to admin" button in ImpersonationBanner. Best-effort logs
- * out the impersonated session server-side first, same as a normal
- * logout, then restores the stashed admin tokens. */
-export function useReturnToAdmin() {
-  const router = useRouter();
-  const qc = useQueryClient();
-  return () => {
-    const adminToken = localStorage.getItem("impersonator_access_token");
-    const adminRefresh = localStorage.getItem("impersonator_refresh_token");
-    const adminOrgSlug = localStorage.getItem("impersonator_org_slug");
-    if (!adminToken) return;
-    api.post("/api/v1/auth/logout").catch(() => {});
-    localStorage.setItem("access_token", adminToken);
-    if (adminRefresh) localStorage.setItem("refresh_token", adminRefresh);
-    localStorage.removeItem("impersonator_access_token");
-    localStorage.removeItem("impersonator_refresh_token");
-    localStorage.removeItem("impersonator_org_slug");
-    qc.clear();
-    router.push(adminOrgSlug ? `/${adminOrgSlug}/users` : "/users");
-  };
 }
 
 /** Ends every session on every device, including this one. */
@@ -295,6 +265,7 @@ export function useLogoutAll() {
     onSuccess: () => {
       localStorage.removeItem("access_token");
       localStorage.removeItem("refresh_token");
+      localStorage.removeItem("viewing_as");
       qc.clear();
       router.push("/login");
     },
