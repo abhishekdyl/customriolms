@@ -607,6 +607,13 @@ class CourseListItem(BaseModel):
     # already has storage_service's presigned URL in hand when it
     # constructs each list row; no need to recompute it per-field here).
     cover_image_url: str | None = None
+    # Shown on the course card as a rating badge — only once at least 3
+    # people (teacher/course-creator included) have rated the course (see
+    # course_rating_service.summary's min-raters gate); None before that,
+    # so the frontend only has to check "is this null", not re-derive the
+    # threshold itself.
+    rating_average: float | None = None
+    rating_count: int = 0
 
     class Config:
         from_attributes = True

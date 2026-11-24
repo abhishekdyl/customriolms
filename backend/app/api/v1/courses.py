@@ -20,7 +20,7 @@ from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
 from app.schemas.audit_log import AuditLogOut
 from app.schemas.course_rating import (
-    CourseRatingAdminOut, CourseRatingIn, CourseRatingModerateUpdate, CourseRatingOut, CourseRatingSummary, MyCourseRatingOut,
+    CourseRatingAdminOut, CourseRatingIn, CourseRatingModerateUpdate, CourseRatingSummary, MyCourseRatingOut,
 )
 from app.services import course_rating_service as rating_svc
 from app.schemas.course import (
@@ -963,11 +963,15 @@ async def _get_module_or_404(db: AsyncSession, module_id: uuid.UUID, course_id: 
 
 # ---------------------------------------------------------------- Ratings --
 # See course_rating_service for eligibility/moderation rules. The public
-# list/summary are open to anyone in the org (even browsing a course
-# they're not enrolled in yet — that's the whole point of a rating
-# badge on the catalog); only submitting one requires actually being
-# enrolled + having finished the first module, and only an Org Admin
-# or this course's own creator can moderate someone else's review.
+# summary (average/count/distribution) is open to anyone in the org —
+# that's the whole point of a rating badge on the catalog — but a plain
+# learner never gets the individual reviews, not even anonymized: they
+# see only their own rating (GET /ratings/me) plus the aggregate. The
+# full list, WITH reviewer identity, is for an Org Admin or this
+# course's own creator only (GET /ratings/admin). Submitting a rating
+# requires actually being enrolled + having finished the first module;
+# moderating someone else's review requires the same admin/creator
+# check as viewing the list.
 
 async def _get_rating_or_404(db: AsyncSession, course_id: uuid.UUID, rating_id: uuid.UUID) -> CourseRating:
     row = (await db.execute(select(CourseRating).where(CourseRating.id == rating_id, CourseRating.course_id == course_id))).scalar_one_or_none()
@@ -980,19 +984,6 @@ async def _get_rating_or_404(db: AsyncSession, course_id: uuid.UUID, rating_id: 
 async def get_course_rating_summary(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     await get_course_or_404(db, course_id, current_user.org_id)
     return await rating_svc.summary(db, course_id)
-
-
-@router.get("/{course_id}/ratings", response_model=list[CourseRatingOut])
-async def list_course_ratings(
-    course_id: uuid.UUID, limit: int = 20, offset: int = 0,
-    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
-):
-    await get_course_or_404(db, course_id, current_user.org_id)
-    rows = (await db.execute(
-        select(CourseRating).where(CourseRating.course_id == course_id)
-        .order_by(CourseRating.created_at.desc()).limit(min(limit, 100)).offset(max(offset, 0))
-    )).scalars().all()
-    return rows
 
 
 @router.get("/{course_id}/ratings/me", response_model=MyCourseRatingOut | None)

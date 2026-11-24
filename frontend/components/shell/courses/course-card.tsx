@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Link2, Pencil, Trash2, Check, Square, CheckSquare, Copy, Download, Loader2 } from "lucide-react";
+import { Link2, Pencil, Trash2, Check, Square, CheckSquare, Copy, Download, Loader2, Star } from "lucide-react";
 import { useUpdateCourse, useDeleteCourse, useDuplicateCourse, useExportCourse } from "@/lib/hooks/use-courses";
 import { ApiError } from "@/lib/api-client";
 import type { Category, CourseListItem } from "@/lib/types";
@@ -164,6 +164,12 @@ export function CourseCard({
         <div className="mb-1.5 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <span className="text-[11.5px] text-ink-faint">{c.category_name ?? "Uncategorized"}</span>
+            {c.rating_average != null && (
+              <span className="inline-flex items-center gap-0.5 text-[11.5px] font-medium text-ink-faint">
+                <Star size={11} className="fill-amber text-amber" />
+                {c.rating_average.toFixed(1)}
+              </span>
+            )}
             {!c.published && (
               <span
                 title="Not visible to any learner yet, even if already assigned — publish it from the Settings tab"

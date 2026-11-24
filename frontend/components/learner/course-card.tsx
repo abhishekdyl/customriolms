@@ -1,10 +1,22 @@
 "use client";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Lock } from "lucide-react";
+import { Lock, Star } from "lucide-react";
 import { ProgressRing } from "@/components/learner/progress-ring";
 import { cn } from "@/lib/utils";
 import type { MyCourse } from "@/lib/types";
+
+/** Small inline rating badge — only rendered once the course has reached
+ * the backend's min-raters threshold (rating_average is null until then,
+ * see CourseListItem.rating_average's docstring in lib/types.ts). */
+function RatingBadge({ average }: { average: number }) {
+  return (
+    <span className="inline-flex items-center gap-0.5 text-[11.5px] font-medium text-ink-faint">
+      <Star size={11} className="fill-amber text-amber" />
+      {average.toFixed(1)}
+    </span>
+  );
+}
 
 // Cover colours cycle through the same four as the prototype's coverPalette.
 const COVER_BG = ["bg-primary", "bg-amber", "bg-violet", "bg-cyan"];
@@ -51,7 +63,10 @@ export function CourseCard({
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] text-ink-faint">{course.category_name}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-ink-faint">{course.category_name}</span>
+            {course.rating_average != null && <RatingBadge average={course.rating_average} />}
+          </div>
           <div className="text-[13.5px] font-medium text-ink">{course.title}</div>
           {locked ? (
             <div className="mt-0.5 flex items-center gap-1 text-[11.5px] text-ink-faint">
@@ -81,7 +96,10 @@ export function CourseCard({
         <div className="p-4">
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
-              <div className="text-[11px] text-ink-faint">{course.category_name}</div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-ink-faint">{course.category_name}</span>
+                {course.rating_average != null && <RatingBadge average={course.rating_average} />}
+              </div>
               <div className="mt-px font-head text-[14.5px] text-ink">{course.title}</div>
             </div>
             {locked ? <Lock size={18} color="var(--color-ink-faint)" /> : <ProgressRing pct={course.progress_pct} color={ringColor} />}

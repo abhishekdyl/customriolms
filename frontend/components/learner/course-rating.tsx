@@ -3,10 +3,9 @@ import { useEffect, useState } from "react";
 import { Star, X } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
-  useCourseRatingSummary, useCourseRatings, useMyCourseRating, useRatingEligibility, useSubmitCourseRating,
+  useCourseRatingSummary, useMyCourseRating, useRatingEligibility, useSubmitCourseRating,
 } from "@/lib/hooks/use-course-ratings";
 import { ApiError } from "@/lib/api-client";
-import { cn } from "@/lib/utils";
 
 /** Read-only star display — average rating badges, review rows. */
 export function StarRating({ value, size = 14 }: { value: number; size?: number }) {
@@ -131,12 +130,14 @@ export function RateCourseBanner({ courseId }: { courseId: string }) {
   );
 }
 
-/** The Reviews tab's content — average + distribution + anonymized
- * review list. No reviewer identity anywhere here (see CourseRating's
- * own doc comment in lib/types.ts). */
+/** The Reviews tab's content, for a learner — their own rating (with an
+ * edit affordance) plus the course-wide average/distribution. Per this
+ * feature's own scope, a learner never sees anyone else's individual
+ * review, only the aggregate — the full list with reviewer identity is
+ * CourseReviewsAdminPanel, for the org admin / course creator only. */
 export function CourseReviewsPanel({ courseId }: { courseId: string }) {
   const { data: summary } = useCourseRatingSummary(courseId);
-  const { data: reviews = [] } = useCourseRatings(courseId);
+  const { data: mine } = useMyCourseRating(courseId);
 
   const maxCount = Math.max(1, ...Object.values(summary?.distribution ?? {}));
 
@@ -167,18 +168,15 @@ export function CourseReviewsPanel({ courseId }: { courseId: string }) {
         </div>
       </div>
 
-      <div className="flex flex-col gap-3">
-        {reviews.length === 0 && <p className="text-[12.5px] text-ink-faint">No reviews yet.</p>}
-        {reviews.map((r) => (
-          <div key={r.id} className={cn("rounded-lg border border-line-soft bg-surface px-4 py-3")}>
-            <div className="flex items-center justify-between">
-              <StarRating value={r.rating} size={13} />
-              <span className="text-[11px] text-ink-faint">{new Date(r.created_at).toLocaleDateString()}</span>
-            </div>
-            {r.review_text && <p className="mt-1.5 text-[12.5px] text-ink">{r.review_text}</p>}
+      {mine && (
+        <div className="rounded-lg border border-line-soft bg-surface px-4 py-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11.5px] font-medium text-ink-faint">Your rating</span>
+            <StarRating value={mine.rating} size={13} />
           </div>
-        ))}
-      </div>
+          {mine.review_text && <p className="mt-1.5 text-[12.5px] text-ink">{mine.review_text}</p>}
+        </div>
+      )}
     </div>
   );
 }

@@ -273,6 +273,11 @@ export interface CourseListItem {
    * every learner, even one it's already assigned to) until the admin
    * explicitly publishes it. See backend Course.published's docstring. */
   published: boolean;
+  /** Rating badge for the course card — null until at least 3 people
+   * (teacher/course-creator included) have rated the course; see
+   * course_rating_service.MIN_RATERS_FOR_BADGE. */
+  rating_average: number | null;
+  rating_count: number;
 }
 
 /** One learner enrolled in a course — via their team or assigned directly —

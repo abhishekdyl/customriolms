@@ -23,6 +23,12 @@ from app.models.module_progress import ModuleProgress
 from app.models.user import RoleName, User
 from app.schemas.course_rating import CourseRatingSummary
 
+# A course's average only shows on its catalog/course card once at least
+# this many people have rated it (teacher/course-creator's own rating
+# counts the same as a learner's) — below that, one or two ratings would
+# swing the badge wildly and read as misleading.
+MIN_RATERS_FOR_BADGE = 3
+
 
 def is_enrolled(course: Course, user: User) -> bool:
     via_direct = user.id in (course.assigned_user_ids or [])
@@ -72,3 +78,20 @@ async def summary(db: AsyncSession, course_id: uuid.UUID) -> CourseRatingSummary
         weighted += rating * count
     average = round(weighted / total, 2) if total else None
     return CourseRatingSummary(average=average, count=total, distribution=distribution)
+
+
+async def badge_averages(db: AsyncSession, course_ids: list[uuid.UUID]) -> dict[uuid.UUID, tuple[float, int]]:
+    """Bulk version of `summary`'s average, for a course list/catalog page
+    (one query for every card instead of one per card). Only returns an
+    entry for a course that has reached MIN_RATERS_FOR_BADGE — a course
+    below that simply isn't in the returned dict, so callers can do
+    `by_id.get(course.id)` and leave the badge off entirely."""
+    if not course_ids:
+        return {}
+    rows = (await db.execute(
+        select(CourseRating.course_id, func.avg(CourseRating.rating), func.count())
+        .where(CourseRating.course_id.in_(course_ids))
+        .group_by(CourseRating.course_id)
+        .having(func.count() >= MIN_RATERS_FOR_BADGE)
+    )).all()
+    return {course_id: (round(float(avg), 2), count) for course_id, avg, count in rows}

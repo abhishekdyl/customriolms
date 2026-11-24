@@ -28,7 +28,7 @@ from app.schemas.question import QuestionLearnerOut
 # learn_service — reused here rather than reimplemented so the
 # course list/detail views and the /api/v1/learn/* endpoints never
 # disagree about what "completed" means.
-from app.services import learn_service as progress_svc
+from app.services import course_rating_service, learn_service as progress_svc
 from app.services import scorm_service, storage_service
 from app.services.permission_service import is_team_scoped
 
@@ -72,14 +72,18 @@ async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListIt
         .where(Course.org_id == org_id)
         .group_by(Course.id, Category.name)
     )
+    rows = result.all()
+    ratings_by_id = await course_rating_service.badge_averages(db, [r[0].id for r in rows])
     items = []
-    for course, category_name, module_count in result.all():
+    for course, category_name, module_count in rows:
+        rating_average, rating_count = ratings_by_id.get(course.id, (None, 0))
         items.append(CourseListItem(
             id=course.id, title=course.title, category_id=course.category_id, category_name=category_name,
             duration_label=course.duration_label, module_count=module_count,
             assigned_team_count=len(course.assigned_team_ids or []),
             opens_at=course.opens_at, closes_at=course.closes_at, published=course.published,
             cover_image_url=storage_service.presigned_get_url(course.cover_image_key) if course.cover_image_key else None,
+            rating_average=rating_average, rating_count=rating_count,
         ))
     return items
 
@@ -141,11 +145,14 @@ async def list_my_courses(db: AsyncSession, user: User) -> list[MyCourseItem]:
         extra = (await db.execute(select(Course).where(Course.id.in_(missing_prereq_ids)))).scalars().all()
         prereq_by_id.update({c.id: c for c in extra})
 
+    ratings_by_id = await course_rating_service.badge_averages(db, [r[0].id for r in rows])
+
     out = []
     for course, category_name, module_count in rows:
         pct, _, _ = progress_svc.course_progress(courses_by_id[course.id], done)
         prereqs = [prereq_by_id[pid] for pid in (course.prerequisite_course_ids or []) if pid in prereq_by_id]
         locked, locked_reason = progress_svc.course_locked(course, prereqs, done)
+        rating_average, rating_count = ratings_by_id.get(course.id, (None, 0))
         out.append(MyCourseItem(
             id=course.id, title=course.title, category_id=course.category_id, category_name=category_name,
             duration_label=course.duration_label, module_count=module_count,
@@ -153,6 +160,7 @@ async def list_my_courses(db: AsyncSession, user: User) -> list[MyCourseItem]:
             opens_at=course.opens_at, closes_at=course.closes_at,
             cover_image_url=storage_service.presigned_get_url(course.cover_image_key) if course.cover_image_key else None,
             progress_pct=pct, locked=locked, locked_reason=locked_reason,
+            rating_average=rating_average, rating_count=rating_count,
         ))
     return out
 
