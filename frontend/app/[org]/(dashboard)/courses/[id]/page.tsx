@@ -7,7 +7,6 @@ import {
   BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X, History, Star, Eye,
 } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
-import { useUsers } from "@/lib/hooks/use-users";
 import { CourseReviewsAdminPanel } from "@/components/shell/courses/course-reviews-admin";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   useCourse, useCourses, useAddModule, useUpdateModule, useDeleteModule, useDeleteCourse, useReorderModules, useUpdateCourse,
   useEnrolledLearners, useUploadCourseCoverImage, useRemoveCourseCoverImage, useSetDueOverride, useCourseGroups,
-  useDuplicateCourse, useExportCourse,
+  useDuplicateCourse, useExportCourse, useSetParticipantRole,
 } from "@/lib/hooks/use-courses";
 import { useCategories } from "@/lib/hooks/use-categories";
 import { useBadges } from "@/lib/hooks/use-badges";
@@ -74,16 +73,17 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
   const { data: me } = useCurrentUser();
   // Reviews moderation (editing/deleting someone else's review) is
   // narrower than the broader courses.manage capability that gates
-  // this whole page — only an Org/Super Admin or this specific
-  // course's own creator, matching the backend's can_moderate.
-  const canModerateReviews = !!me && (me.role === "org_admin" || me.role === "super_admin" || (!!course?.created_by && course.created_by === me.id));
-  const visibleTabs = TABS.filter((t) => t.id !== "reviews" || canModerateReviews);
-  // Only an Org/Super Admin may (re)assign this course's "Course Teacher"
-  // — matches the backend's update_course check (courses.manage alone
-  // isn't enough, since this field also controls who can moderate the
-  // course's reviews).
+  // this whole page — only an Org/Super Admin or one of this course's
+  // own Teachers (Course.teacher_user_ids), matching the backend's
+  // can_moderate.
   const isOrgAdmin = !!me && (me.role === "org_admin" || me.role === "super_admin");
-  const { data: orgUsers } = useUsers();
+  const isCourseTeacher = !!me && !!course?.teacher_user_ids?.includes(me.id);
+  const canModerateReviews = isOrgAdmin || isCourseTeacher;
+  const visibleTabs = TABS.filter((t) => t.id !== "reviews" || canModerateReviews);
+  // Who may change a Participants row's Teacher/Learner label — same
+  // population as canModerateReviews (mirrors the backend's
+  // can_manage_participant_roles).
+  const canManageParticipantRoles = canModerateReviews;
   const updateCourse = useUpdateCourse(id);
   const deleteCourse = useDeleteCourse();
   const duplicateCourse = useDuplicateCourse();
@@ -100,6 +100,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
   const { data: enrolled, isLoading: enrolledLoading } = useEnrolledLearners(id);
   const { data: groups } = useCourseGroups(id);
   const setDueOverride = useSetDueOverride(id);
+  const setParticipantRole = useSetParticipantRole(id);
   const [editingDueFor, setEditingDueFor] = useState<string | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
@@ -173,7 +174,6 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
         category_id: course.category_id ?? "",
         opens_at: isoToLocal(course.opens_at) || nowLocal(),
         closes_at: isoToLocal(course.closes_at),
-        created_by: course.created_by ?? "",
       }
     : undefined;
   const { draft: settingsDraftRaw, setDraft: setSettingsDraft, dirty: settingsDirty, cancel: cancelSettingsRaw } = useDraft(settingsServerValue);
@@ -259,10 +259,6 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
           category_id: settingsDraft.category_id || null,
           opens_at: localToIso(settingsDraft.opens_at),
           closes_at: settingsDraft.closes_at ? localToIso(settingsDraft.closes_at) : null,
-          // Only sent when this admin is actually allowed to change it —
-          // the backend 403s a non-admin anyway, but there's no reason to
-          // even try from a dropdown they can't see.
-          ...(isOrgAdmin ? { created_by: settingsDraft.created_by || null } : {}),
         });
       }
 
@@ -589,25 +585,10 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
                 ))}
               </select>
             </div>
-
-            {isOrgAdmin && (
-              <div className="mt-3">
-                <p className="mb-1 text-[10.5px] text-ink-faint">Course Teacher</p>
-                <select
-                  value={settingsDraft.created_by}
-                  onChange={(e) => setSettingsDraft((d) => ({ ...d, created_by: e.target.value }))}
-                  className="h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-sm outline-none focus-visible:border-primary"
-                >
-                  <option value="">No teacher assigned</option>
-                  {orgUsers?.filter((u) => u.role !== "learner").map((u) => (
-                    <option key={u.id} value={u.id}>{u.full_name} ({u.role === "custom" ? u.custom_role_name : u.role})</option>
-                  ))}
-                </select>
-                <p className="mt-1 text-[11px] text-ink-faint">
-                  Besides an Org Admin, only this person can moderate this course's reviews/ratings.
-                </p>
-              </div>
-            )}
+            <p className="mt-3 text-[11px] text-ink-faint">
+              This course's Teacher(s) are set from the Participants tab, not here — see the Teacher/Learner toggle
+              next to each person's name.
+            </p>
           </div>
 
           <div className="rounded-xl border border-line bg-surface p-4">
@@ -713,13 +694,29 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
                       <p className="truncate text-sm text-ink">{e.name}</p>
-                      <span
-                        className={`rounded-full px-1.5 py-0.5 text-[9.5px] font-medium ${
-                          e.as_role === "teacher" ? "bg-primary-soft text-primary" : "bg-line-soft text-ink-faint"
-                        }`}
-                      >
-                        {e.as_role === "teacher" ? "Teacher" : "Learner"}
-                      </span>
+                      {canManageParticipantRoles ? (
+                        <select
+                          value={e.as_role}
+                          disabled={setParticipantRole.isPending}
+                          onChange={(ev) =>
+                            setParticipantRole.mutate({ userId: e.user_id, asRole: ev.target.value as "learner" | "teacher" })
+                          }
+                          className={`rounded-full border-0 px-1.5 py-0.5 text-[9.5px] font-medium outline-none ${
+                            e.as_role === "teacher" ? "bg-primary-soft text-primary" : "bg-line-soft text-ink-faint"
+                          }`}
+                        >
+                          <option value="learner">Learner</option>
+                          <option value="teacher">Teacher</option>
+                        </select>
+                      ) : (
+                        <span
+                          className={`rounded-full px-1.5 py-0.5 text-[9.5px] font-medium ${
+                            e.as_role === "teacher" ? "bg-primary-soft text-primary" : "bg-line-soft text-ink-faint"
+                          }`}
+                        >
+                          {e.as_role === "teacher" ? "Teacher" : "Learner"}
+                        </span>
+                      )}
                     </div>
                     <p className="truncate text-[11px] text-ink-faint">
                       {e.email} ·{" "}

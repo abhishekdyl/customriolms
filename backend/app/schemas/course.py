@@ -291,14 +291,6 @@ class CourseUpdate(BaseModel):
     # validated against this org's own courses (and "not itself") in the
     # endpoint, same as prerequisite_course_ids above.
     self_enrol_required_course_id: uuid.UUID | None = None
-    # "Course Teacher" — Settings tab, Org Admin only (enforced in the
-    # endpoint, not here: PATCH as a whole is gated by the broader
-    # courses.manage capability, but reassigning who can moderate this
-    # course's reviews — see course_rating_service.can_moderate — and
-    # who it's attributed to is narrower than that). Explicit null
-    # clears it (course goes back to having no assigned teacher, same as
-    # any course created before this field existed).
-    created_by: uuid.UUID | None = None
     paid_enrol_enabled: bool | None = None
     paid_enrol_price: int | None = Field(default=None, ge=1)
 
@@ -320,10 +312,12 @@ class EnrolledLearnerOut(BaseModel):
     email: str
     team_name: str | None
     via: str  # "team" | "direct" | "admin" | "teacher" — how they ended up listed
-    # "learner" for everyone except this course's own Course Teacher
-    # (Course.created_by), including an Org Admin listed here by default —
-    # they keep their own admin/teacher capabilities everywhere else, this
-    # just labels their row on this list. See course_service._course_participants.
+    # "learner" for everyone except a user in this course's own
+    # Course.teacher_user_ids, including an Org Admin listed here by
+    # default — they keep their own admin/teacher capabilities everywhere
+    # else, this just labels their row on this list. Settable directly
+    # from this list — see the participant-role endpoint. See
+    # course_service._course_participants.
     as_role: str = "learner"
     progress_pct: int
     completed: bool
@@ -335,6 +329,12 @@ class EnrolledLearnerOut(BaseModel):
     # to, by name — just for display on the Participants list; membership
     # itself is only ever edited through the group endpoints below.
     group_names: list[str] = []
+
+
+class ParticipantRoleUpdate(BaseModel):
+    """Promotes/demotes one participant between "teacher" and "learner"
+    on a course — see course_service.set_participant_role."""
+    as_role: Literal["learner", "teacher"]
 
 
 class CourseGroupIn(BaseModel):
@@ -581,10 +581,11 @@ class CourseOut(BaseModel):
     # pattern as ModuleOut above: the storage key is permanent, the
     # presigned URL is regenerated fresh on every read.
     cover_image_key: str | None = Field(default=None, exclude=True)
-    # Who created this course — used client-side only to decide whether
-    # to show the ratings-moderation tab (Org Admin always sees it
-    # regardless of this value; see course_rating_service.can_moderate).
-    created_by: uuid.UUID | None = None
+    # This course's Teacher(s) — used client-side to decide whether to
+    # show the ratings-moderation tab and the Participants per-row
+    # Teacher/Learner toggle (Org Admin always sees both regardless of
+    # this value; see course_rating_service.can_moderate).
+    teacher_user_ids: list[uuid.UUID] = []
     modules: list[ModuleOut] = []
 
     class Config:
@@ -627,10 +628,10 @@ class CourseListItem(BaseModel):
     # threshold itself.
     rating_average: float | None = None
     rating_count: int = 0
-    # The course's "Course Teacher" (see Course.created_by) — lets the
-    # frontend show the "View Course" action on this card to the teacher
-    # themselves, not just an Org Admin.
-    created_by: uuid.UUID | None = None
+    # This course's Teacher(s) (see Course.teacher_user_ids) — lets the
+    # frontend show the "View Course" action on this card to any of the
+    # course's teachers themselves, not just an Org Admin.
+    teacher_user_ids: list[uuid.UUID] = []
 
     class Config:
         from_attributes = True

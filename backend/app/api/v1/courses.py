@@ -30,7 +30,7 @@ from app.schemas.course import (
     CourseEnrolmentPaymentOut, CourseGroupIn, CourseGroupOut, CourseGroupUpdate, CourseImportRequest,
     CourseImportResult, CourseListItem, CourseModuleProgressOut, CourseOut, CourseUpdate, DueOverrideOut,
     DueOverrideSet, EnrolledLearnerOut, GradebookOut, LearnerCourseOut, ModuleCreate, ModuleOut,
-    ModuleReorderRequest, ModuleUpdate, MyCourseItem, QuizAttemptOut, SelfEnrolOut,
+    ModuleReorderRequest, ModuleUpdate, MyCourseItem, ParticipantRoleUpdate, QuizAttemptOut, SelfEnrolOut,
 )
 from app.schemas.learn import (
     CompleteRequest, CompleteResult, QuizResult, QuizSubmit, ScormCheckpointIn, ScormProgressOut, WatchCheckpointIn,
@@ -38,11 +38,11 @@ from app.schemas.learn import (
 )
 from app.services.course_service import (
     _assigned_to, _validate_ids_belong_to_org, _would_create_cycle, activate_course_payment, add_module,
-    assign_course, create_course_group, delete_course_group, get_course_or_404, get_my_course,
-    list_attempt_overrides, list_calendar, list_course_groups, list_courses, list_enrolable_courses, list_enrolled,
-    list_gradebook, list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content,
-    reorder_modules, self_enrol, set_attempt_override, set_due_override, update_course_group, update_module,
-    upload_module_content, upload_scorm_package,
+    assign_course, can_manage_participant_roles, create_course_group, delete_course_group, get_course_or_404,
+    get_my_course, list_attempt_overrides, list_calendar, list_course_groups, list_courses, list_enrolable_courses,
+    list_enrolled, list_gradebook, list_module_progress, list_my_courses, list_quiz_attempts, remove_module_content,
+    reorder_modules, self_enrol, set_attempt_override, set_due_override, set_participant_role, update_course_group,
+    update_module, upload_module_content, upload_scorm_package,
 )
 from app.services.invoice_service import compose_address, render_invoice_pdf
 from app.services.course_transfer_service import duplicate_course, export_course_snapshot, import_course_snapshot
@@ -512,7 +512,11 @@ async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db), 
 
     course = Course(org_id=current_user.org_id, title=body.title, category_id=body.category_id,
                      description=body.description, duration_label=body.duration_label,
-                     opens_at=body.opens_at, closes_at=body.closes_at, created_by=current_user.id)
+                     opens_at=body.opens_at, closes_at=body.closes_at, created_by=current_user.id,
+                     # The creator starts as this course's Teacher — they can
+                     # add/remove others (or themselves) from the Participants
+                     # list afterward; see Course.teacher_user_ids.
+                     teacher_user_ids=[current_user.id])
     db.add(course)
     await db.commit()
     await audit_log_service.record(
@@ -609,18 +613,6 @@ async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSessi
         cat = await db.execute(select(Category).where(Category.id == data["category_id"], Category.org_id == current_user.org_id))
         if cat.scalar_one_or_none() is None:
             raise HTTPException(status_code=400, detail="Category not found in this organization")
-    if "created_by" in data:
-        # "Course Teacher" — narrower than the courses.manage capability
-        # that gates this whole endpoint (a Team Lead with courses.manage
-        # could otherwise hand themselves ratings-moderation rights on
-        # any course by reassigning this — see course_rating_service.
-        # can_moderate). Fixes existing courses too: one created before
-        # this field existed has no teacher at all until an Org Admin
-        # sets one here.
-        if current_user.role not in (RoleName.ORG_ADMIN, RoleName.SUPER_ADMIN):
-            raise HTTPException(status_code=403, detail="Only an Org Admin can set this course's teacher")
-        if data["created_by"] is not None:
-            await _validate_ids_belong_to_org(db, User, [data["created_by"]], current_user.org_id, "user")
     if "completion_module_ids" in data:
         ids = data["completion_module_ids"] or []
         # completion_module_ids isn't a real FK array (see Course model's
@@ -729,6 +721,25 @@ async def delete_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 async def assign(course_id: uuid.UUID, body: CourseAssignRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     course = await get_course_or_404(db, course_id, current_user.org_id)
     return await assign_course(db, course, body.team_ids, body.user_ids)
+
+
+@router.patch("/{course_id}/participants/{user_id}/role", status_code=204)
+async def update_participant_role(
+    course_id: uuid.UUID, user_id: uuid.UUID, body: ParticipantRoleUpdate,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Promotes/demotes a row on the Participants list between "Teacher"
+    and "Learner" — see course_service.set_participant_role. Deliberately
+    no blanket capability dependency here (not even courses.assign) —
+    permission is entirely can_manage_participant_roles's own call: an
+    Org Admin, or any of this course's EXISTING teachers, even one who
+    only holds courses.manage/courses.view and nothing else — same scope
+    as course_rating_service.can_moderate."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    if not can_manage_participant_roles(course, current_user):
+        raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own Teacher can change participant roles")
+    await _validate_ids_belong_to_org(db, User, [user_id], current_user.org_id, "user")
+    await set_participant_role(db, course, user_id, body.as_role)
 
 
 @router.get(

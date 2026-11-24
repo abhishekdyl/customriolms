@@ -278,10 +278,9 @@ export interface CourseListItem {
    * course_rating_service.MIN_RATERS_FOR_BADGE. */
   rating_average: number | null;
   rating_count: number;
-  /** This course's "Course Teacher" (see backend Course.created_by) — lets
-   * the frontend show "View Course" on this card to the teacher too, not
-   * just an Org Admin. */
-  created_by: string | null;
+  /** This course's Teacher(s) — lets the frontend show "View Course" on
+   * this card to any of them, not just an Org Admin. */
+  teacher_user_ids: string[];
 }
 
 /** One learner enrolled in a course — via their team or assigned directly —
@@ -467,10 +466,11 @@ export interface Course extends CourseListItem {
   paid_enrol_enabled: boolean;
   /** Paise — null until an admin sets a price. */
   paid_enrol_price: number | null;
-  /** Who created this course — used client-side only to decide whether
-   * to show the ratings-moderation panel (Org Admin always sees it
-   * regardless of this value). */
-  created_by: string | null;
+  /** This course's Teacher(s) — used client-side to decide whether to
+   * show the ratings-moderation panel and the Participants per-row
+   * Teacher/Learner toggle (Org Admin always sees both regardless of
+   * this value). Settable directly from the Participants list. */
+  teacher_user_ids: string[];
 }
 
 // ---- Course ratings & reviews ----------------------------------------

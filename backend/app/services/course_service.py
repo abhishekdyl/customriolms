@@ -83,7 +83,7 @@ async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListIt
             assigned_team_count=len(course.assigned_team_ids or []),
             opens_at=course.opens_at, closes_at=course.closes_at, published=course.published,
             cover_image_url=storage_service.presigned_get_url(course.cover_image_key) if course.cover_image_key else None,
-            rating_average=rating_average, rating_count=rating_count, created_by=course.created_by,
+            rating_average=rating_average, rating_count=rating_count, teacher_user_ids=course.teacher_user_ids or [],
         ))
     return items
 
@@ -568,14 +568,15 @@ async def _course_participants(db: AsyncSession, course: Course) -> list[tuple[U
       "View Course" access to every course (see course_preview_service),
       and that access should be visible here too, as_role "learner" even
       though they keep their own admin capabilities everywhere else;
-    - this course's own Course Teacher (Course.created_by), as_role
-      "teacher".
+    - any of this course's own Teachers (Course.teacher_user_ids — set
+      per-participant from the Participants list itself, by an Org Admin
+      or by any existing member of teacher_user_ids), as_role "teacher".
 
     Returns (user, team_name, via, as_role) rows, via in
     {"direct", "team", "admin", "teacher"} (how they ended up listed),
     as_role in {"learner", "teacher"} (how they're labeled) — as_role is
-    "teacher" only for the course's own created_by; every other row,
-    Org Admins included, is "learner"."""
+    "teacher" only for a user in teacher_user_ids; every other row, Org
+    Admins included, is "learner"."""
     rows = await db.execute(
         select(User, Team.name).outerjoin(Team, Team.id == User.team_id)
         .where(User.org_id == course.org_id)
@@ -585,7 +586,7 @@ async def _course_participants(db: AsyncSession, course: Course) -> list[tuple[U
         via_direct = user.id in (course.assigned_user_ids or [])
         via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
         is_admin = user.role in (RoleName.ORG_ADMIN, RoleName.SUPER_ADMIN)
-        is_teacher = course.created_by is not None and user.id == course.created_by
+        is_teacher = user.id in (course.teacher_user_ids or [])
         if not (via_direct or via_team or is_admin or is_teacher):
             continue
         via = "direct" if via_direct else "team" if via_team else ("teacher" if is_teacher else "admin")
@@ -617,6 +618,36 @@ async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[
         ))
     out.sort(key=lambda r: r.name.lower())
     return out
+
+
+def can_manage_participant_roles(course: Course, user: User) -> bool:
+    """Who may promote/demote a Teacher/Learner row on the Participants
+    list: an Org/Super Admin, or any existing member of this course's
+    own teacher_user_ids — not the broader courses.manage capability
+    alone (same scope as course_rating_service.can_moderate, which this
+    mirrors deliberately: whoever can moderate this course's reviews can
+    also say who else teaches it)."""
+    if user.role in (RoleName.ORG_ADMIN, RoleName.SUPER_ADMIN):
+        return True
+    return user.id in (course.teacher_user_ids or [])
+
+
+async def set_participant_role(db: AsyncSession, course: Course, target_user_id: uuid.UUID, as_role: str) -> None:
+    """Promotes/demotes one participant between "teacher" and "learner"
+    on this course — i.e. adds/removes them from Course.teacher_user_ids.
+    Doesn't touch assigned_user_ids/assigned_team_ids at all: a learner
+    promoted to teacher stays enrolled the same way they always were,
+    and demoting a teacher back to learner never un-assigns them from
+    the course — this only changes the Teacher/Learner label (and
+    everything that label gates: ratings moderation, rating eligibility,
+    role-management itself)."""
+    current = set(course.teacher_user_ids or [])
+    if as_role == "teacher":
+        current.add(target_user_id)
+    else:
+        current.discard(target_user_id)
+    course.teacher_user_ids = list(current)
+    await db.commit()
 
 
 async def set_due_override(db: AsyncSession, course: Course, user_id: uuid.UUID, due_at: datetime | None) -> DueOverrideOut | None:

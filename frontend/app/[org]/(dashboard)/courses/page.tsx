@@ -315,7 +315,7 @@ export default function CoursesPage() {
             categories={categories ?? []}
             canManage={canManageCourses}
             canAssign={canAssignCourses}
-            canPreview={isOrgAdmin || (canManageCourses && c.created_by === currentUser?.id)}
+            canPreview={isOrgAdmin || (!!currentUser && c.teacher_user_ids.includes(currentUser.id))}
             selected={selected.includes(c.id)}
             onToggleSelect={selectMode ? toggleSelect : null}
             onAssign={setAssigningCourseId}

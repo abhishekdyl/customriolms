@@ -254,6 +254,22 @@ export function useEnrolledLearners(courseId: string) {
   });
 }
 
+/** Promotes/demotes one Participants row between "teacher" and "learner" —
+ * see backend course_service.set_participant_role. Invalidates both the
+ * enrolled list (the row's own badge) and the course itself (its
+ * teacher_user_ids, which gates the ratings tab and this very toggle). */
+export function useSetParticipantRole(courseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, asRole }: { userId: string; asRole: "learner" | "teacher" }) =>
+      api.patch(`/api/v1/courses/${courseId}/participants/${userId}/role`, { as_role: asRole }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", courseId, "enrolled"] });
+      qc.invalidateQueries({ queryKey: ["courses", courseId] });
+    },
+  });
+}
+
 /** Every quiz submission on this course — pass or fail — with exactly what
  * each learner answered. Org Admin sees everyone; Team Lead sees only their
  * own team. From GET /courses/{id}/quiz-attempts. */

@@ -1,15 +1,19 @@
 """Course ratings & reviews.
 
-Eligibility (can_rate): enrolled in the course (same assigned_user_ids/
-assigned_team_ids check used everywhere else) AND has completed the
-course's first module (lowest Module.position) — not "enrolled", not
-"fully completed the course", specifically the first module, per this
-feature's own scope.
+Eligibility (can_rate): enrolled in the course (assigned_user_ids/
+assigned_team_ids), OR an Org/Super Admin, OR one of this course's own
+Teachers (Course.teacher_user_ids) — both of the latter two get there
+via "View Course" rather than real assignment, and their rating counts
+toward the course's real public average same as a real learner's (see
+MIN_RATERS_FOR_BADGE's docstring). On top of being eligible, must also
+have completed the course's first module (lowest Module.position) —
+not "enrolled", not "fully completed the course", specifically the
+first module, per this feature's own scope.
 
-Moderation (can_moderate): Org/Super Admin, or the course's own
-creator (Course.created_by) — nobody else, not even a Team Lead with
-courses.manage, matches this feature's own scope (vs. course CRUD
-itself, which is the broader courses.manage capability).
+Moderation (can_moderate): Org/Super Admin, or one of this course's own
+Teachers (Course.teacher_user_ids) — nobody else, not even a Team Lead
+with courses.manage alone, matches this feature's own scope (vs. course
+CRUD itself, which is the broader courses.manage capability).
 """
 import uuid
 
@@ -33,7 +37,9 @@ MIN_RATERS_FOR_BADGE = 3
 def is_enrolled(course: Course, user: User) -> bool:
     via_direct = user.id in (course.assigned_user_ids or [])
     via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
-    return via_direct or via_team
+    is_admin = user.role in (RoleName.SUPER_ADMIN, RoleName.ORG_ADMIN)
+    is_teacher = user.id in (course.teacher_user_ids or [])
+    return via_direct or via_team or is_admin or is_teacher
 
 
 async def _first_module_id(db: AsyncSession, course_id: uuid.UUID) -> uuid.UUID | None:
@@ -62,7 +68,7 @@ async def can_rate(db: AsyncSession, course: Course, user: User) -> tuple[bool, 
 def can_moderate(course: Course, user: User) -> bool:
     if user.role in (RoleName.SUPER_ADMIN, RoleName.ORG_ADMIN):
         return True
-    return course.created_by is not None and course.created_by == user.id
+    return user.id in (course.teacher_user_ids or [])
 
 
 async def summary(db: AsyncSession, course_id: uuid.UUID) -> CourseRatingSummary:

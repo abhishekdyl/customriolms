@@ -4,13 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  ArrowLeft, BookOpen, CheckCircle2, Circle, Clock, HelpCircle, Loader2, Lock, PlayCircle, RotateCcw, Sparkles, XCircle,
+  ArrowLeft, BookOpen, CheckCircle2, Circle, Clock, HelpCircle, Loader2, Lock, PlayCircle, RotateCcw, Sparkles, Star, XCircle,
 } from "lucide-react";
 import { Video, VideoPlayer, VideoSkin } from "@videojs/react/video";
 import {
   useCheckpointScormProgress, useCheckpointWatchProgress, useCompleteModule, usePreviewCourse, useResetCoursePreview,
   useRetakeScormModule, useRetakeWatchModule, useSubmitQuiz,
 } from "@/lib/hooks/use-course-preview";
+import { CourseReviewsPanel } from "@/components/learner/course-rating";
 import { MODULE_TYPE_LABEL } from "@/lib/learner-courses";
 import { cn } from "@/lib/utils";
 import { ScormPlayer } from "@/components/shell/courses/scorm-player";
@@ -18,14 +19,19 @@ import type { CompleteResult, LearnerModule, QuizAnswer, QuizResult } from "@/li
 
 // This page is a deliberate near-exact mirror of the learner-facing
 // (learner)/learn/courses/[id]/page.tsx — same module rendering, same
-// video/quiz/SCORM components — just reading/writing through the
-// /preview endpoints (use-course-preview.ts) instead of /mine, so an
-// Org Admin / course teacher gets the EXACT learner flow (locks,
-// completion checkmarks, retake gates, certificates) without being
-// enrolled. The only two real differences: no Reviews tab (moderating
-// your own course's reviews lives on the admin course page already),
-// and a "Reset my progress" action up top so it can be walked through
-// again from module 1 as many times as needed while testing.
+// video/quiz/SCORM components, same Reviews tab (CourseReviewsPanel) —
+// just reading/writing progress through the /preview endpoints
+// (use-course-preview.ts) instead of /mine, so an Org Admin / course
+// teacher gets the EXACT learner flow (locks, completion checkmarks,
+// retake gates, certificates, and now leaving a rating too) without
+// being enrolled. Submitting a rating here goes through the real
+// /ratings endpoint directly (not a /preview one) — course_rating_
+// service.is_enrolled treats an Org Admin and this course's own
+// Teacher(s) as eligible, so their rating counts toward the course's
+// real public average same as a real learner's; see that service's
+// docstring. The one real difference from the learner page is a
+// "Reset my progress" action up top so it can be walked through again
+// from module 1 as many times as needed while testing.
 
 // One question's working answer while it's on screen — same shape as the
 // quiz panel's own Answer below, kept local to each component since they
@@ -127,6 +133,7 @@ const TABS = [
   { id: "content", label: "Modules", icon: BookOpen },
   { id: "summary", label: "AI summary", icon: Sparkles },
   { id: "quiz", label: "Quiz", icon: HelpCircle },
+  { id: "reviews", label: "Reviews", icon: Star },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -855,6 +862,8 @@ export default function CoursePreviewPage() {
             ) : (
               <div className="text-[13px] text-ink-faint">No quiz on this course yet.</div>
             ))}
+
+          {tab === "reviews" && <CourseReviewsPanel courseId={course.id} />}
         </div>
       </div>
     </div>

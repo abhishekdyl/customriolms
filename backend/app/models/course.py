@@ -27,11 +27,22 @@ class Course(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orgs.id"), nullable=False, index=True)
     category_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("categories.id"), nullable=True)
     # Who created this course — nullable because every course that
-    # existed before this column shipped has no recorded creator.
-    # Used only by course_rating_service's moderation check (an admin
-    # OR this specific creator can moderate the course's reviews); it
-    # isn't shown anywhere and doesn't gate anything else.
+    # existed before this column shipped has no recorded creator. Purely
+    # a historical/audit field now (who made it); it isn't shown anywhere
+    # and doesn't gate anything — see teacher_user_ids below for who can
+    # actually act as this course's teacher.
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    # This course's Teacher(s) — plural, unlike created_by: any number of
+    # users can hold this course's "Teacher" row on Participants, ratings
+    # moderation (course_rating_service.can_moderate), and the rating
+    # they leave while using "View Course" counts toward the course's
+    # real public rating average, same as a real learner's. Set/changed
+    # directly from the Participants list (per-row Teacher/Learner
+    # toggle) by an Org Admin or by any existing member of this very
+    # list — not a single Settings-tab field anymore. The course's
+    # creator is seeded in here at creation time (see create_course) but
+    # isn't otherwise special once here.
+    teacher_user_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)
 
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
