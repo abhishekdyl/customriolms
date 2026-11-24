@@ -217,7 +217,7 @@ export function CourseCard({
         </div>
         <div className="mb-0.5 font-head text-[15.5px] text-ink">{c.title}</div>
         <div className="mb-2.5 text-[11.5px] text-ink-faint">
-          {c.module_count} module{c.module_count !== 1 ? "s" : ""} · Assigned to {c.assigned_team_count} team{c.assigned_team_count !== 1 ? "s" : ""}
+          {c.module_count} module{c.module_count !== 1 ? "s" : ""} · {c.enrolled_count} enrolled
         </div>
         {exportError && <p onClick={stop} className="mb-2 text-[10.5px] text-danger">{exportError}</p>}
         <div className="flex items-center gap-3">

@@ -607,6 +607,12 @@ class CourseListItem(BaseModel):
     duration_label: str
     module_count: int = 0
     assigned_team_count: int = 0
+    # Everyone who'd show up on this course's own Participants list — see
+    # course_service._course_participants: directly/team-assigned
+    # learners, every Org/Super Admin, and this course's own teachers.
+    # Shown on the admin course card in place of the raw team count,
+    # which told the admin nothing about who's actually enrolled.
+    enrolled_count: int = 0
     opens_at: datetime | None = None
     closes_at: datetime | None = None
     # Draft/published gate — see Course.published's docstring. Shown on

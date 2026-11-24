@@ -266,6 +266,9 @@ export interface CourseListItem {
   duration_label: string;
   module_count: number;
   assigned_team_count: number;
+  /** Everyone enrolled — direct/team assignment, Org Admins, and this
+   * course's own teachers (same population as the Participants tab). */
+  enrolled_count: number;
   opens_at: string | null;
   closes_at: string | null;
   cover_image_url: string | null;

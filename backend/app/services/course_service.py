@@ -64,6 +64,28 @@ async def _would_create_cycle(db: AsyncSession, course_id: uuid.UUID, candidate_
     return False
 
 
+async def _participant_counts(db: AsyncSession, org_id: uuid.UUID, courses: list[Course]) -> dict[uuid.UUID, int]:
+    """How many people would show up on each course's own Participants list
+    (see _course_participants) — direct/team assignment, every Org/Super
+    Admin in the org, and this course's own teachers — computed in one
+    query for every course in the list rather than one query per course,
+    since the admin course-list card is a hot path."""
+    users = (await db.execute(select(User.id, User.team_id, User.role).where(User.org_id == org_id))).all()
+    counts: dict[uuid.UUID, int] = {}
+    for course in courses:
+        assigned_users = set(course.assigned_user_ids or [])
+        assigned_teams = set(course.assigned_team_ids or [])
+        teachers = set(course.teacher_user_ids or [])
+        counts[course.id] = sum(
+            1 for user_id, team_id, role in users
+            if user_id in assigned_users
+            or (team_id is not None and team_id in assigned_teams)
+            or role in (RoleName.ORG_ADMIN, RoleName.SUPER_ADMIN)
+            or user_id in teachers
+        )
+    return counts
+
+
 async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListItem]:
     result = await db.execute(
         select(Course, Category.name.label("category_name"), func.count(Module.id).label("module_count"))
@@ -74,6 +96,7 @@ async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListIt
     )
     rows = result.all()
     ratings_by_id = await course_rating_service.badge_averages(db, [r[0].id for r in rows])
+    enrolled_by_id = await _participant_counts(db, org_id, [r[0] for r in rows])
     items = []
     for course, category_name, module_count in rows:
         rating_average, rating_count = ratings_by_id.get(course.id, (None, 0))
@@ -81,6 +104,7 @@ async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListIt
             id=course.id, title=course.title, category_id=course.category_id, category_name=category_name,
             duration_label=course.duration_label, module_count=module_count,
             assigned_team_count=len(course.assigned_team_ids or []),
+            enrolled_count=enrolled_by_id.get(course.id, 0),
             opens_at=course.opens_at, closes_at=course.closes_at, published=course.published,
             cover_image_url=storage_service.presigned_get_url(course.cover_image_key) if course.cover_image_key else None,
             rating_average=rating_average, rating_count=rating_count, teacher_user_ids=course.teacher_user_ids or [],

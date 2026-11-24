@@ -101,6 +101,11 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
   const { data: groups } = useCourseGroups(id);
   const setDueOverride = useSetDueOverride(id);
   const setParticipantRole = useSetParticipantRole(id);
+  // Staged Teacher/Learner picks, keyed by user_id — the dropdown only
+  // edits this draft; nothing is sent to the server until that row's
+  // own Save button is clicked, so a role never changes by accident
+  // from one click on the <select>.
+  const [roleDrafts, setRoleDrafts] = useState<Record<string, "learner" | "teacher">>({});
   const [editingDueFor, setEditingDueFor] = useState<string | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
@@ -695,22 +700,53 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
                     <div className="flex items-center gap-1.5">
                       <p className="min-w-0 flex-1 truncate text-sm text-ink">{e.name}</p>
                       {canManageParticipantRoles ? (
-                        <div className="relative flex-shrink-0">
-                          <select
-                            value={e.as_role}
-                            disabled={setParticipantRole.isPending}
-                            onChange={(ev) =>
-                              setParticipantRole.mutate({ userId: e.user_id, asRole: ev.target.value as "learner" | "teacher" })
-                            }
-                            className={`h-5 appearance-none rounded-full border-0 py-0 pl-2 pr-5 text-[9.5px] font-medium leading-5 outline-none disabled:opacity-60 ${
-                              e.as_role === "teacher" ? "bg-primary-soft text-primary" : "bg-line-soft text-ink-faint"
-                            }`}
-                          >
-                            <option value="learner">Learner</option>
-                            <option value="teacher">Teacher</option>
-                          </select>
-                          <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-2.5 w-2.5 -translate-y-1/2 opacity-60" />
-                        </div>
+                        (() => {
+                          const draft = roleDrafts[e.user_id] ?? e.as_role;
+                          const dirty = draft !== e.as_role;
+                          const saving = setParticipantRole.isPending && setParticipantRole.variables?.userId === e.user_id;
+                          return (
+                            <>
+                              <div className="relative flex-shrink-0">
+                                <select
+                                  value={draft}
+                                  disabled={saving}
+                                  onChange={(ev) => {
+                                    const v = ev.target.value as "learner" | "teacher";
+                                    setRoleDrafts((d) => {
+                                      if (v === e.as_role) {
+                                        const { [e.user_id]: _drop, ...rest } = d;
+                                        return rest;
+                                      }
+                                      return { ...d, [e.user_id]: v };
+                                    });
+                                  }}
+                                  className={`h-5 appearance-none rounded-full border-0 py-0 pl-2 pr-5 text-[9.5px] font-medium leading-5 outline-none disabled:opacity-60 ${
+                                    draft === "teacher" ? "bg-primary-soft text-primary" : "bg-line-soft text-ink-faint"
+                                  }`}
+                                >
+                                  <option value="learner">Learner</option>
+                                  <option value="teacher">Teacher</option>
+                                </select>
+                                <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-2.5 w-2.5 -translate-y-1/2 opacity-60" />
+                              </div>
+                              {dirty && (
+                                <button
+                                  type="button"
+                                  disabled={saving}
+                                  onClick={() =>
+                                    setParticipantRole.mutate(
+                                      { userId: e.user_id, asRole: draft },
+                                      { onSuccess: () => setRoleDrafts((d) => { const { [e.user_id]: _drop, ...rest } = d; return rest; }) }
+                                    )
+                                  }
+                                  className="flex-shrink-0 rounded-full bg-primary px-2 py-0.5 text-[9.5px] font-medium text-white disabled:opacity-60"
+                                >
+                                  {saving ? "Saving…" : "Save"}
+                                </button>
+                              )}
+                            </>
+                          );
+                        })()
                       ) : (
                         <span
                           className={`flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9.5px] font-medium ${
