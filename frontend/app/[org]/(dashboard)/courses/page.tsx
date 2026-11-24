@@ -214,6 +214,11 @@ export default function CoursesPage() {
   const canManageCourses = hasCapability(currentUser, "courses.manage");
   const canManageCategories = hasCapability(currentUser, "categories.manage");
   const canAssignCourses = hasCapability(currentUser, "courses.assign");
+  // "View Course" on a card: an Org Admin can preview any course; anyone
+  // else needs courses.manage AND to be that specific course's own
+  // Course Teacher — same population course_preview_service.require_preview_access
+  // enforces server-side, just resolved per-card here.
+  const isOrgAdmin = !!currentUser && (currentUser.role === "org_admin" || currentUser.role === "super_admin");
 
   const [filter, setFilter] = useState("All");
   const [managingCats, setManagingCats] = useState(false);
@@ -310,6 +315,7 @@ export default function CoursesPage() {
             categories={categories ?? []}
             canManage={canManageCourses}
             canAssign={canAssignCourses}
+            canPreview={isOrgAdmin || (canManageCourses && c.created_by === currentUser?.id)}
             selected={selected.includes(c.id)}
             onToggleSelect={selectMode ? toggleSelect : null}
             onAssign={setAssigningCourseId}

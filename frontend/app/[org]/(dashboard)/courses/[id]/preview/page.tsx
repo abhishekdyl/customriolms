@@ -791,7 +791,7 @@ export default function CoursePreviewPage() {
 
       <div className="mx-4 mb-1 flex items-center gap-2 rounded-lg bg-primary-soft px-3 py-2 md:mx-0">
         <span className="text-[11.5px] text-ink">
-          Previewing as admin/teacher — this is exactly what a learner sees, but your progress here is yours alone and never affects any real learner's gradebook, leaderboard or certificates.
+          Viewing as admin/teacher — this is exactly what a learner sees, but your progress here is yours alone and never affects any real learner's gradebook, leaderboard or certificates.
         </span>
       </div>
 

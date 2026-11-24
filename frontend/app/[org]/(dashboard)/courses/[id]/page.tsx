@@ -368,7 +368,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
             title="Walk through this course exactly like a learner would — module completion, quizzes, locks, certificates — without needing to be assigned. Your own progress never affects any real learner's gradebook or leaderboard."
             className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[11.5px] font-medium text-ink-soft"
           >
-            <Eye className="h-3.5 w-3.5" /> Preview as learner
+            <Eye className="h-3.5 w-3.5" /> View Course
           </Link>
           <div className="flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5">
             <div className="text-right">
@@ -711,9 +711,25 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
               {enrolled!.map((e) => (
                 <div key={e.user_id} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
                   <div className="min-w-0">
-                    <p className="truncate text-sm text-ink">{e.name}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="truncate text-sm text-ink">{e.name}</p>
+                      <span
+                        className={`rounded-full px-1.5 py-0.5 text-[9.5px] font-medium ${
+                          e.as_role === "teacher" ? "bg-primary-soft text-primary" : "bg-line-soft text-ink-faint"
+                        }`}
+                      >
+                        {e.as_role === "teacher" ? "Teacher" : "Learner"}
+                      </span>
+                    </div>
                     <p className="truncate text-[11px] text-ink-faint">
-                      {e.email} · {e.via === "team" ? (e.team_name ?? "via team") : "assigned directly"}
+                      {e.email} ·{" "}
+                      {e.via === "team"
+                        ? (e.team_name ?? "via team")
+                        : e.via === "admin"
+                          ? "Org Admin"
+                          : e.via === "teacher"
+                            ? "Course Teacher"
+                            : "assigned directly"}
                     </p>
                     {e.group_names.length > 0 && (
                       <div className="mt-0.5 flex flex-wrap gap-1">

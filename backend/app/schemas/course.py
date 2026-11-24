@@ -319,7 +319,12 @@ class EnrolledLearnerOut(BaseModel):
     name: str
     email: str
     team_name: str | None
-    via: str  # "team" | "direct" — how they ended up enrolled
+    via: str  # "team" | "direct" | "admin" | "teacher" — how they ended up listed
+    # "learner" for everyone except this course's own Course Teacher
+    # (Course.created_by), including an Org Admin listed here by default —
+    # they keep their own admin/teacher capabilities everywhere else, this
+    # just labels their row on this list. See course_service._course_participants.
+    as_role: str = "learner"
     progress_pct: int
     completed: bool
     # Effective due date — their own CourseDueOverride if one is set,
@@ -622,6 +627,10 @@ class CourseListItem(BaseModel):
     # threshold itself.
     rating_average: float | None = None
     rating_count: int = 0
+    # The course's "Course Teacher" (see Course.created_by) — lets the
+    # frontend show the "View Course" action on this card to the teacher
+    # themselves, not just an Org Admin.
+    created_by: uuid.UUID | None = None
 
     class Config:
         from_attributes = True

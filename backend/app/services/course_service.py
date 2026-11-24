@@ -83,7 +83,7 @@ async def list_courses(db: AsyncSession, org_id: uuid.UUID) -> list[CourseListIt
             assigned_team_count=len(course.assigned_team_ids or []),
             opens_at=course.opens_at, closes_at=course.closes_at, published=course.published,
             cover_image_url=storage_service.presigned_get_url(course.cover_image_key) if course.cover_image_key else None,
-            rating_average=rating_average, rating_count=rating_count,
+            rating_average=rating_average, rating_count=rating_count, created_by=course.created_by,
         ))
     return items
 
@@ -556,23 +556,55 @@ def _effective_due(course: Course, overrides: dict[uuid.UUID, datetime], user_id
     return course.closes_at, False
 
 
-async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[EnrolledLearnerOut]:
-    """Resolves a course's team + individual assignment into the actual
-    list of enrolled learners, each with their own progress — the "who's
-    actually enrolled" view a count badge can't answer. A Team Lead only
-    sees their own team's members; an Org Admin sees everyone."""
+async def _course_participants(db: AsyncSession, course: Course) -> list[tuple[User, str | None, str, str]]:
+    """Every user who should show up on this course's admin-facing lists
+    (Participants / module-completion matrix / gradebook) — the shared
+    resolution all three use:
+
+    - a learner assigned to the course, directly or via their team
+      (the Assign flow's "Individuals"/"Teams" — assigned_user_ids /
+      assigned_team_ids);
+    - every Org Admin / Super Admin in the org — they always have full
+      "View Course" access to every course (see course_preview_service),
+      and that access should be visible here too, as_role "learner" even
+      though they keep their own admin capabilities everywhere else;
+    - this course's own Course Teacher (Course.created_by), as_role
+      "teacher".
+
+    Returns (user, team_name, via, as_role) rows, via in
+    {"direct", "team", "admin", "teacher"} (how they ended up listed),
+    as_role in {"learner", "teacher"} (how they're labeled) — as_role is
+    "teacher" only for the course's own created_by; every other row,
+    Org Admins included, is "learner"."""
     rows = await db.execute(
         select(User, Team.name).outerjoin(Team, Team.id == User.team_id)
-        .where(User.org_id == course.org_id, User.role == RoleName.LEARNER)
+        .where(User.org_id == course.org_id)
     )
-    overrides = await _due_overrides_map(db, course.id)
-    out: list[EnrolledLearnerOut] = []
+    out: list[tuple[User, str | None, str, str]] = []
     for user, team_name in rows.all():
-        if is_team_scoped(viewer) and user.team_id != viewer.team_id:
-            continue
         via_direct = user.id in (course.assigned_user_ids or [])
         via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
-        if not via_direct and not via_team:
+        is_admin = user.role in (RoleName.ORG_ADMIN, RoleName.SUPER_ADMIN)
+        is_teacher = course.created_by is not None and user.id == course.created_by
+        if not (via_direct or via_team or is_admin or is_teacher):
+            continue
+        via = "direct" if via_direct else "team" if via_team else ("teacher" if is_teacher else "admin")
+        as_role = "teacher" if is_teacher else "learner"
+        out.append((user, team_name, via, as_role))
+    return out
+
+
+async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[EnrolledLearnerOut]:
+    """Resolves a course's team + individual assignment (plus every Org
+    Admin and the course's own teacher — see _course_participants) into
+    the actual list of enrolled participants, each with their own
+    progress — the "who's actually enrolled" view a count badge can't
+    answer. A Team Lead only sees their own team's members; an Org Admin
+    sees everyone."""
+    overrides = await _due_overrides_map(db, course.id)
+    out: list[EnrolledLearnerOut] = []
+    for user, team_name, via, as_role in await _course_participants(db, course):
+        if is_team_scoped(viewer) and user.team_id != viewer.team_id:
             continue
         done = await progress_svc.completed_map(db, user.id)
         pct, _, _ = progress_svc.course_progress(course, done)
@@ -580,8 +612,8 @@ async def list_enrolled(db: AsyncSession, course: Course, viewer: User) -> list[
         group_names = [g.name for g in (course.groups or []) if user.id in (g.member_user_ids or [])]
         out.append(EnrolledLearnerOut(
             user_id=user.id, name=user.full_name, email=user.email, team_name=team_name,
-            via="direct" if via_direct else "team", progress_pct=pct, completed=pct >= 100,
-            due_at=due_at, due_overridden=overridden, group_names=group_names,
+            via=via, progress_pct=pct, completed=pct >= 100,
+            due_at=due_at, due_overridden=overridden, group_names=group_names, as_role=as_role,
         ))
     out.sort(key=lambda r: r.name.lower())
     return out
@@ -711,17 +743,9 @@ async def list_module_progress(db: AsyncSession, course: Course, viewer: User) -
         ModuleSummaryOut(id=m.id, title=m.title, type=m.type.value, required=m.required) for m in modules
     ]
 
-    rows = await db.execute(
-        select(User, Team.name).outerjoin(Team, Team.id == User.team_id)
-        .where(User.org_id == course.org_id, User.role == RoleName.LEARNER)
-    )
     learners: list[LearnerModuleProgressOut] = []
-    for user, team_name in rows.all():
+    for user, team_name, _via, _as_role in await _course_participants(db, course):
         if is_team_scoped(viewer) and user.team_id != viewer.team_id:
-            continue
-        via_direct = user.id in (course.assigned_user_ids or [])
-        via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
-        if not via_direct and not via_team:
             continue
         done = await progress_svc.completed_map(db, user.id)
         pct, _, _ = progress_svc.course_progress(course, done)
@@ -799,17 +823,9 @@ async def list_gradebook(db: AsyncSession, course: Course, viewer: User) -> Grad
         for user_id, module_id, best_score in best_rows.all():
             best_by_user.setdefault(user_id, {})[module_id] = best_score
 
-    rows = await db.execute(
-        select(User, Team.name).outerjoin(Team, Team.id == User.team_id)
-        .where(User.org_id == course.org_id, User.role == RoleName.LEARNER)
-    )
     learners: list[GradebookRowOut] = []
-    for user, team_name in rows.all():
+    for user, team_name, _via, _as_role in await _course_participants(db, course):
         if is_team_scoped(viewer) and user.team_id != viewer.team_id:
-            continue
-        via_direct = user.id in (course.assigned_user_ids or [])
-        via_team = user.team_id is not None and user.team_id in (course.assigned_team_ids or [])
-        if not via_direct and not via_team:
             continue
         grade, graded_count = _weighted_grade(gradable, best_by_user.get(user.id, {}))
         learners.append(GradebookRowOut(

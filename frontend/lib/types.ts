@@ -278,6 +278,10 @@ export interface CourseListItem {
    * course_rating_service.MIN_RATERS_FOR_BADGE. */
   rating_average: number | null;
   rating_count: number;
+  /** This course's "Course Teacher" (see backend Course.created_by) — lets
+   * the frontend show "View Course" on this card to the teacher too, not
+   * just an Org Admin. */
+  created_by: string | null;
 }
 
 /** One learner enrolled in a course — via their team or assigned directly —
@@ -287,7 +291,11 @@ export interface EnrolledLearner {
   name: string;
   email: string;
   team_name: string | null;
-  via: "team" | "direct";
+  via: "team" | "direct" | "admin" | "teacher";
+  /** "learner" for everyone except this course's own Course Teacher —
+   * an Org Admin listed here by default is still "learner" (they keep
+   * their admin capabilities everywhere else; this just labels the row). */
+  as_role: "learner" | "teacher";
   progress_pct: number;
   completed: boolean;
   /** Effective due date — their own override if one is set, else the

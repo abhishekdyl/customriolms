@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Link2, Pencil, Trash2, Check, Square, CheckSquare, Copy, Download, Loader2, Star } from "lucide-react";
 import { useUpdateCourse, useDeleteCourse, useDuplicateCourse, useExportCourse } from "@/lib/hooks/use-courses";
@@ -17,6 +18,7 @@ export function CourseCard({
   categories,
   canManage,
   canAssign,
+  canPreview,
   selected,
   onToggleSelect,
   onAssign,
@@ -28,6 +30,9 @@ export function CourseCard({
   // custom role can be granted either one independently.
   canManage: boolean;
   canAssign: boolean;
+  // Org Admin, or this specific course's own Course Teacher — same
+  // population as the "View Course" button on the course detail page.
+  canPreview: boolean;
   selected: boolean;
   onToggleSelect: ((id: string) => void) | null;
   onAssign: (id: string) => void;
@@ -219,6 +224,16 @@ export function CourseCard({
           <span className="text-[12.5px] font-medium text-ink-soft">Manage</span>
           {canAssign && (
             <button onClick={(e) => { stop(e); onAssign(c.id); }} className="text-[12.5px] font-medium text-ink-soft">Assign</button>
+          )}
+          {canPreview && (
+            <Link
+              href={`/${org}/courses/${c.id}/preview`}
+              onClick={stop}
+              title="Walk through this course exactly like a learner would"
+              className="text-[12.5px] font-medium text-ink-soft"
+            >
+              View Course
+            </Link>
           )}
         </div>
       </div>
