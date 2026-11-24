@@ -468,11 +468,13 @@ async def _get_or_create_scorm_progress(db: AsyncSession, user: User, module: Mo
     return sp
 
 
-async def checkpoint_scorm_progress(db: AsyncSession, user: User, module_id: uuid.UUID, cmi: dict) -> ScormProgress:
+async def checkpoint_scorm_progress(
+    db: AsyncSession, user: User, module_id: uuid.UUID, cmi: dict, course_override: Course | None = None,
+) -> ScormProgress:
     """Called every time the SCORM package's own JS calls LMSCommit/Commit
     — exact mirror of checkpoint_watch_progress. Never gated: a commit is
     not an attempt, only submitting the module via complete_module is."""
-    module, _course = await _module_in_assigned_course(db, user, module_id)
+    module, _course = await _module_in_assigned_course(db, user, module_id, course_override)
     if module.type != ModuleType.SCORM:
         raise HTTPException(status_code=400, detail="This module isn't a SCORM module")
     sp = await _get_or_create_scorm_progress(db, user, module)
@@ -483,17 +485,20 @@ async def checkpoint_scorm_progress(db: AsyncSession, user: User, module_id: uui
     return sp
 
 
-async def retake_scorm_module(db: AsyncSession, user: User, module_id: uuid.UUID) -> ScormProgress:
+async def retake_scorm_module(
+    db: AsyncSession, user: User, module_id: uuid.UUID, course_override: Course | None = None,
+) -> ScormProgress:
     """Explicit "retake" for a SCORM module — same attempts gate as a quiz
     retake (module's retake_enabled/retake_limit plus any per-learner
     ModuleAttemptOverride), exact mirror of retake_watch_module. Resets
     the persisted CMI blob (attempt_number bumped) so the package starts
     fresh next time instead of resuming where the last attempt left off."""
-    module, course = await _module_in_assigned_course(db, user, module_id)
+    module, course = await _module_in_assigned_course(db, user, module_id, course_override)
     if module.type != ModuleType.SCORM:
         raise HTTPException(status_code=400, detail="This module isn't a SCORM module")
-    assert_course_open(course)
-    await assert_prerequisites_met(db, user, course)
+    if course_override is None:
+        assert_course_open(course)
+        await assert_prerequisites_met(db, user, course)
 
     attempts_so_far = (await db.execute(
         select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
@@ -532,6 +537,7 @@ class _CollectedAnswer:
 
 async def checkpoint_watch_progress(
     db: AsyncSession, user: User, module_id: uuid.UUID, watched_pct: int | None, answer,
+    course_override: Course | None = None,
 ) -> WatchProgress:
     """Called continuously during playback (on an interval for pct, and
     immediately whenever the learner submits an in-video question) so a
@@ -539,7 +545,7 @@ async def checkpoint_watch_progress(
     the whole point of this feature. Never gated: checkpointing is not an
     attempt, only submitting the module via complete_module is, so there's
     nothing here to block even on a module with no attempts left."""
-    module, _course = await _module_in_assigned_course(db, user, module_id)
+    module, _course = await _module_in_assigned_course(db, user, module_id, course_override)
     if module.type != ModuleType.WATCH:
         raise HTTPException(status_code=400, detail="This module isn't a WATCH module")
     wp = await _get_or_create_watch_progress(db, user, module)
@@ -553,7 +559,9 @@ async def checkpoint_watch_progress(
     return wp
 
 
-async def retake_watch_module(db: AsyncSession, user: User, module_id: uuid.UUID) -> WatchProgress:
+async def retake_watch_module(
+    db: AsyncSession, user: User, module_id: uuid.UUID, course_override: Course | None = None,
+) -> WatchProgress:
     """Explicit "retake" action for a WATCH module's in-video questions —
     mirrors submit_quiz's retake gate exactly (same _retake_gate, same
     attempts-used count, same per-learner ModuleAttemptOverride), since the
@@ -562,11 +570,12 @@ async def retake_watch_module(db: AsyncSession, user: User, module_id: uuid.UUID
     playthrough asks every in-video question again instead of skipping the
     ones already answered in the just-finished attempt. The video itself
     was always freely replayable — this only resets which QUESTIONS show."""
-    module, course = await _module_in_assigned_course(db, user, module_id)
+    module, course = await _module_in_assigned_course(db, user, module_id, course_override)
     if module.type != ModuleType.WATCH:
         raise HTTPException(status_code=400, detail="This module isn't a WATCH module")
-    assert_course_open(course)
-    await assert_prerequisites_met(db, user, course)
+    if course_override is None:
+        assert_course_open(course)
+        await assert_prerequisites_met(db, user, course)
 
     attempts_so_far = (await db.execute(
         select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user.id, QuizAttempt.module_id == module.id)
@@ -595,12 +604,19 @@ async def retake_watch_module(db: AsyncSession, user: User, module_id: uuid.UUID
 async def complete_module(
     db: AsyncSession, user: User, module_id: uuid.UUID, watched_pct: int | None = None, answers: list | None = None,
     scorm_score: int | None = None, scorm_passed: bool | None = None, scorm_status: str | None = None,
+    course_override: Course | None = None,
 ) -> tuple[int, bool, str | None, list[dict], int | None, int | None, int, int | None, bool]:
-    module, course = await _module_in_assigned_course(db, user, module_id)
+    module, course = await _module_in_assigned_course(db, user, module_id, course_override)
     if module.type == ModuleType.QUIZ:
         raise HTTPException(status_code=400, detail="Quiz modules are completed by passing the quiz")
-    assert_course_open(course)
-    await assert_prerequisites_met(db, user, course)
+    # The open/close window and course-level prerequisites are a real-
+    # enrolment concept — a preview (course_override set) skips both, so
+    # an Org Admin/teacher can walk the flow before the course is even
+    # open. Module-level unlock (sequential_unlock/restrictions) stays
+    # enforced either way — that IS the flow being tested.
+    if course_override is None:
+        assert_course_open(course)
+        await assert_prerequisites_met(db, user, course)
     await _assert_module_unlocked(db, user, course, module)
 
     score = None
@@ -806,7 +822,20 @@ async def complete_module(
     return pct, completed, code, video_question_results, video_earned_points, video_total_points, attempts_used, attempts_remaining, retake_allowed
 
 
-async def _module_in_assigned_course(db: AsyncSession, user: User, module_id: uuid.UUID) -> tuple[Module, Course]:
+async def _module_in_assigned_course(
+    db: AsyncSession, user: User, module_id: uuid.UUID, course_override: Course | None = None,
+) -> tuple[Module, Course]:
+    # course_override is set only by course_preview_service — an Org
+    # Admin / course teacher walking through their OWN course in its
+    # learner-facing flow, not a real enrolment. Org-scoped only (already
+    # checked by the caller that fetched course_override), not
+    # assignment-gated, and a still-draft module IS reachable here — the
+    # whole point of previewing before publishing.
+    if course_override is not None:
+        for m in course_override.modules:
+            if m.id == module_id:
+                return m, course_override
+        raise HTTPException(status_code=404, detail="Module not found")
     for course in await assigned_courses(db, user):
         for m in course.modules:
             # A still-draft module (see Module.published) is treated as
@@ -873,7 +902,9 @@ def _score_questions(questions: list, answers: list) -> tuple[list[dict], list[d
     return results, snapshot, right, earned_points, total_points
 
 
-async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answers: list) -> dict:
+async def submit_quiz(
+    db: AsyncSession, user: User, module_id: uuid.UUID, answers: list, course_override: Course | None = None,
+) -> dict:
     """`answers` is a list of QuizAnswerIn (schemas/learn.py) — each keyed by
     question_id rather than position, so scoring doesn't depend on the
     client sending questions back in the same order it received them.
@@ -881,11 +912,12 @@ async def submit_quiz(db: AsyncSession, user: User, module_id: uuid.UUID, answer
     MCQ/TRUE_FALSE: correct iff the picked option_id matches the question's
     correct_option_id. SHORT_ANSWER: correct iff the picked text
     case-insensitively matches one of accepted_answers."""
-    module, course = await _module_in_assigned_course(db, user, module_id)
+    module, course = await _module_in_assigned_course(db, user, module_id, course_override)
     if module.type != ModuleType.QUIZ or not module.questions:
         raise HTTPException(status_code=400, detail="This module has no quiz")
-    assert_course_open(course)
-    await assert_prerequisites_met(db, user, course)
+    if course_override is None:
+        assert_course_open(course)
+        await assert_prerequisites_met(db, user, course)
     await _assert_module_unlocked(db, user, course, module)
 
     attempts_so_far = (await db.execute(

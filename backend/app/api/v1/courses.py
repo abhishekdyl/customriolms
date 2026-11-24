@@ -22,6 +22,7 @@ from app.schemas.audit_log import AuditLogOut
 from app.schemas.course_rating import (
     CourseRatingAdminOut, CourseRatingIn, CourseRatingModerateUpdate, CourseRatingSummary, MyCourseRatingOut,
 )
+from app.services import course_preview_service as preview_svc
 from app.services import course_rating_service as rating_svc
 from app.schemas.course import (
     AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CatalogCourseOut, CourseAssignRequest, CourseCreate,
@@ -399,6 +400,107 @@ async def submit_my_quiz(
     return result
 
 
+# ---------------------------------------------------------- Preview as learner --
+# An Org Admin / course teacher walking through a course exactly like a
+# real learner would (module completion, video/SCORM progress, quizzes,
+# locks, certificates) — WITHOUT being enrolled. See course_preview_
+# service's module docstring for why this is safe to build straight on
+# top of the real learner tables. Access is capability-gated (courses.
+# manage), not assignment-gated, and works on a draft course too (so it
+# can be tried before publishing or assigning anyone).
+
+@router.get("/{course_id}/preview", response_model=LearnerCourseOut)
+async def get_course_preview(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    preview_svc.require_preview_access(current_user)
+    return await preview_svc.get_preview_course(db, course_id, current_user)
+
+
+@router.post("/{course_id}/preview/modules/{module_id}/complete", response_model=CompleteResult)
+async def complete_preview_module(
+    course_id: uuid.UUID, module_id: uuid.UUID, body: CompleteRequest | None = None,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    preview_svc.require_preview_access(current_user)
+    await _module_belongs_to_course(module_id, course_id, db)
+    pct, completed, code, video_question_results, video_earned_points, video_total_points, attempts_used, attempts_remaining, retake_allowed = (
+        await preview_svc.complete_module(
+            db, current_user, course_id, module_id, (body.watched_pct if body else None), (body.answers if body else None),
+            (body.scorm_score if body else None), (body.scorm_passed if body else None), (body.scorm_status if body else None),
+        )
+    )
+    return CompleteResult(progress=pct, course_completed=completed, certificate_code=code,
+                           video_question_results=video_question_results,
+                           video_earned_points=video_earned_points, video_total_points=video_total_points,
+                           attempts_used=attempts_used, attempts_remaining=attempts_remaining, retake_allowed=retake_allowed)
+
+
+@router.patch("/{course_id}/preview/modules/{module_id}/watch-progress", response_model=WatchProgressOut)
+async def checkpoint_preview_watch_progress(
+    course_id: uuid.UUID, module_id: uuid.UUID, body: WatchCheckpointIn,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    preview_svc.require_preview_access(current_user)
+    await _module_belongs_to_course(module_id, course_id, db)
+    wp = await preview_svc.checkpoint_watch_progress(db, current_user, course_id, module_id, body.watched_pct, body.answer)
+    return WatchProgressOut(
+        furthest_pct=wp.furthest_pct, attempt_number=wp.attempt_number,
+        answered_question_ids=[uuid.UUID(qid) for qid in wp.answers_json.keys()],
+    )
+
+
+@router.post("/{course_id}/preview/modules/{module_id}/watch-retake", response_model=WatchProgressOut)
+async def retake_preview_watch_module(
+    course_id: uuid.UUID, module_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    preview_svc.require_preview_access(current_user)
+    await _module_belongs_to_course(module_id, course_id, db)
+    wp = await preview_svc.retake_watch_module(db, current_user, course_id, module_id)
+    return WatchProgressOut(furthest_pct=wp.furthest_pct, attempt_number=wp.attempt_number, answered_question_ids=[])
+
+
+@router.patch("/{course_id}/preview/modules/{module_id}/scorm-progress", response_model=ScormProgressOut)
+async def checkpoint_preview_scorm_progress(
+    course_id: uuid.UUID, module_id: uuid.UUID, body: ScormCheckpointIn,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    preview_svc.require_preview_access(current_user)
+    await _module_belongs_to_course(module_id, course_id, db)
+    sp = await preview_svc.checkpoint_scorm_progress(db, current_user, course_id, module_id, body.cmi)
+    return ScormProgressOut(cmi=sp.cmi_data, attempt_number=sp.attempt_number)
+
+
+@router.post("/{course_id}/preview/modules/{module_id}/scorm-retake", response_model=ScormProgressOut)
+async def retake_preview_scorm_module(
+    course_id: uuid.UUID, module_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    preview_svc.require_preview_access(current_user)
+    await _module_belongs_to_course(module_id, course_id, db)
+    sp = await preview_svc.retake_scorm_module(db, current_user, course_id, module_id)
+    return ScormProgressOut(cmi=sp.cmi_data, attempt_number=sp.attempt_number)
+
+
+@router.post("/{course_id}/preview/modules/{module_id}/quiz", response_model=QuizResult)
+async def submit_preview_quiz(
+    course_id: uuid.UUID, module_id: uuid.UUID, body: QuizSubmit,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    preview_svc.require_preview_access(current_user)
+    await _module_belongs_to_course(module_id, course_id, db)
+    return await preview_svc.submit_quiz(db, current_user, course_id, module_id, body.answers)
+
+
+@router.post("/{course_id}/preview/reset", status_code=204)
+async def reset_course_preview(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Wipes the caller's OWN progress on this one course (their
+    ModuleProgress/WatchProgress/ScormProgress/QuizAttempt rows and any
+    certificate earned while previewing), so they can restart from
+    module 1 — see course_preview_service.reset_preview_progress."""
+    preview_svc.require_preview_access(current_user)
+    await preview_svc.reset_preview_progress(db, current_user, course_id)
+
+
 @router.post("", response_model=CourseOut, status_code=201, dependencies=[Depends(require_capability("courses.manage"))])
 async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     if body.category_id:
@@ -507,6 +609,18 @@ async def update_course(course_id: uuid.UUID, body: CourseUpdate, db: AsyncSessi
         cat = await db.execute(select(Category).where(Category.id == data["category_id"], Category.org_id == current_user.org_id))
         if cat.scalar_one_or_none() is None:
             raise HTTPException(status_code=400, detail="Category not found in this organization")
+    if "created_by" in data:
+        # "Course Teacher" — narrower than the courses.manage capability
+        # that gates this whole endpoint (a Team Lead with courses.manage
+        # could otherwise hand themselves ratings-moderation rights on
+        # any course by reassigning this — see course_rating_service.
+        # can_moderate). Fixes existing courses too: one created before
+        # this field existed has no teacher at all until an Org Admin
+        # sets one here.
+        if current_user.role not in (RoleName.ORG_ADMIN, RoleName.SUPER_ADMIN):
+            raise HTTPException(status_code=403, detail="Only an Org Admin can set this course's teacher")
+        if data["created_by"] is not None:
+            await _validate_ids_belong_to_org(db, User, [data["created_by"]], current_user.org_id, "user")
     if "completion_module_ids" in data:
         ids = data["completion_module_ids"] or []
         # completion_module_ids isn't a real FK array (see Course model's

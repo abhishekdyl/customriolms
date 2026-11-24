@@ -291,6 +291,14 @@ class CourseUpdate(BaseModel):
     # validated against this org's own courses (and "not itself") in the
     # endpoint, same as prerequisite_course_ids above.
     self_enrol_required_course_id: uuid.UUID | None = None
+    # "Course Teacher" — Settings tab, Org Admin only (enforced in the
+    # endpoint, not here: PATCH as a whole is gated by the broader
+    # courses.manage capability, but reassigning who can moderate this
+    # course's reviews — see course_rating_service.can_moderate — and
+    # who it's attributed to is narrower than that). Explicit null
+    # clears it (course goes back to having no assigned teacher, same as
+    # any course created before this field existed).
+    created_by: uuid.UUID | None = None
     paid_enrol_enabled: bool | None = None
     paid_enrol_price: int | None = Field(default=None, ge=1)
 

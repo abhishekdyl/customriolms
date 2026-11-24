@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Plus, ChevronUp, ChevronDown, Users, Award, Lock, BookOpen, Settings as SettingsIcon,
-  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X, History, Star,
+  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X, History, Star, Eye,
 } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
+import { useUsers } from "@/lib/hooks/use-users";
 import { CourseReviewsAdminPanel } from "@/components/shell/courses/course-reviews-admin";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,6 +78,12 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
   // course's own creator, matching the backend's can_moderate.
   const canModerateReviews = !!me && (me.role === "org_admin" || me.role === "super_admin" || (!!course?.created_by && course.created_by === me.id));
   const visibleTabs = TABS.filter((t) => t.id !== "reviews" || canModerateReviews);
+  // Only an Org/Super Admin may (re)assign this course's "Course Teacher"
+  // — matches the backend's update_course check (courses.manage alone
+  // isn't enough, since this field also controls who can moderate the
+  // course's reviews).
+  const isOrgAdmin = !!me && (me.role === "org_admin" || me.role === "super_admin");
+  const { data: orgUsers } = useUsers();
   const updateCourse = useUpdateCourse(id);
   const deleteCourse = useDeleteCourse();
   const duplicateCourse = useDuplicateCourse();
@@ -166,6 +173,7 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
         category_id: course.category_id ?? "",
         opens_at: isoToLocal(course.opens_at) || nowLocal(),
         closes_at: isoToLocal(course.closes_at),
+        created_by: course.created_by ?? "",
       }
     : undefined;
   const { draft: settingsDraftRaw, setDraft: setSettingsDraft, dirty: settingsDirty, cancel: cancelSettingsRaw } = useDraft(settingsServerValue);
@@ -251,6 +259,10 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
           category_id: settingsDraft.category_id || null,
           opens_at: localToIso(settingsDraft.opens_at),
           closes_at: settingsDraft.closes_at ? localToIso(settingsDraft.closes_at) : null,
+          // Only sent when this admin is actually allowed to change it —
+          // the backend 403s a non-admin anyway, but there's no reason to
+          // even try from a dropdown they can't see.
+          ...(isOrgAdmin ? { created_by: settingsDraft.created_by || null } : {}),
         });
       }
 
@@ -350,17 +362,26 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
           <h1 className="font-head text-xl text-ink">{course.title}</h1>
           <p className="text-[11px] text-ink-faint">Rename it, change its description, category or cover image under the Settings tab.</p>
         </div>
-        <div className="flex flex-shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5">
-          <div className="text-right">
-            <p className="text-[11px] font-medium text-ink">{course.published ? "Published" : "Draft"}</p>
-            <p className="text-[10px] text-ink-faint">
-              {course.published ? "Visible to assigned learners" : "Hidden from every learner"}
-            </p>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <Link
+            href={`/${org}/courses/${id}/preview`}
+            title="Walk through this course exactly like a learner would — module completion, quizzes, locks, certificates — without needing to be assigned. Your own progress never affects any real learner's gradebook or leaderboard."
+            className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[11.5px] font-medium text-ink-soft"
+          >
+            <Eye className="h-3.5 w-3.5" /> Preview as learner
+          </Link>
+          <div className="flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5">
+            <div className="text-right">
+              <p className="text-[11px] font-medium text-ink">{course.published ? "Published" : "Draft"}</p>
+              <p className="text-[10px] text-ink-faint">
+                {course.published ? "Visible to assigned learners" : "Hidden from every learner"}
+              </p>
+            </div>
+            <Switch
+              checked={course.published}
+              onCheckedChange={(v) => updateCourse.mutate({ published: v })}
+            />
           </div>
-          <Switch
-            checked={course.published}
-            onCheckedChange={(v) => updateCourse.mutate({ published: v })}
-          />
         </div>
       </div>
 
@@ -568,6 +589,25 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
                 ))}
               </select>
             </div>
+
+            {isOrgAdmin && (
+              <div className="mt-3">
+                <p className="mb-1 text-[10.5px] text-ink-faint">Course Teacher</p>
+                <select
+                  value={settingsDraft.created_by}
+                  onChange={(e) => setSettingsDraft((d) => ({ ...d, created_by: e.target.value }))}
+                  className="h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-sm outline-none focus-visible:border-primary"
+                >
+                  <option value="">No teacher assigned</option>
+                  {orgUsers?.filter((u) => u.role !== "learner").map((u) => (
+                    <option key={u.id} value={u.id}>{u.full_name} ({u.role === "custom" ? u.custom_role_name : u.role})</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-ink-faint">
+                  Besides an Org Admin, only this person can moderate this course's reviews/ratings.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="rounded-xl border border-line bg-surface p-4">

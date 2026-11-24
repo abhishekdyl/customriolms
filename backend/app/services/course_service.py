@@ -178,7 +178,15 @@ async def get_my_course(db: AsyncSession, course_id: uuid.UUID, user: User) -> L
     course = result.scalar_one_or_none()
     if course is None:
         raise HTTPException(status_code=404, detail="Course not found")
+    return await _build_learner_course_out(db, course, user)
 
+
+async def _build_learner_course_out(db: AsyncSession, course: Course, user: User) -> LearnerCourseOut:
+    """Shared by get_my_course (a real learner, already assignment- and
+    published-gated by the caller) and course_preview_service's preview
+    (an Org Admin/teacher walking through ANY course in their org, draft
+    or not, regardless of assignment) — same learner-facing shape either
+    way, built off whichever `user` it's asked for."""
     done = await progress_svc.completed_map(db, user.id)
     attempts = await progress_svc.attempts_used_map(db, user.id)
     overrides = await progress_svc.attempt_overrides_map(db, user.id)
