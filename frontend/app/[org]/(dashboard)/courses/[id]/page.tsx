@@ -693,24 +693,27 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
                 <div key={e.user_id} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <p className="truncate text-sm text-ink">{e.name}</p>
+                      <p className="min-w-0 flex-1 truncate text-sm text-ink">{e.name}</p>
                       {canManageParticipantRoles ? (
-                        <select
-                          value={e.as_role}
-                          disabled={setParticipantRole.isPending}
-                          onChange={(ev) =>
-                            setParticipantRole.mutate({ userId: e.user_id, asRole: ev.target.value as "learner" | "teacher" })
-                          }
-                          className={`rounded-full border-0 px-1.5 py-0.5 text-[9.5px] font-medium outline-none ${
-                            e.as_role === "teacher" ? "bg-primary-soft text-primary" : "bg-line-soft text-ink-faint"
-                          }`}
-                        >
-                          <option value="learner">Learner</option>
-                          <option value="teacher">Teacher</option>
-                        </select>
+                        <div className="relative flex-shrink-0">
+                          <select
+                            value={e.as_role}
+                            disabled={setParticipantRole.isPending}
+                            onChange={(ev) =>
+                              setParticipantRole.mutate({ userId: e.user_id, asRole: ev.target.value as "learner" | "teacher" })
+                            }
+                            className={`h-5 appearance-none rounded-full border-0 py-0 pl-2 pr-5 text-[9.5px] font-medium leading-5 outline-none disabled:opacity-60 ${
+                              e.as_role === "teacher" ? "bg-primary-soft text-primary" : "bg-line-soft text-ink-faint"
+                            }`}
+                          >
+                            <option value="learner">Learner</option>
+                            <option value="teacher">Teacher</option>
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-2.5 w-2.5 -translate-y-1/2 opacity-60" />
+                        </div>
                       ) : (
                         <span
-                          className={`rounded-full px-1.5 py-0.5 text-[9.5px] font-medium ${
+                          className={`flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9.5px] font-medium ${
                             e.as_role === "teacher" ? "bg-primary-soft text-primary" : "bg-line-soft text-ink-faint"
                           }`}
                         >
