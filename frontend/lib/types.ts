@@ -355,7 +355,7 @@ export interface CalendarItem {
 }
 
 export type LiveClassProvider = "bigbluebutton" | "zoom";
-export type LiveClassTargetScope = "all" | "course" | "individual";
+export type LiveClassTargetScope = "all" | "team" | "course" | "individual";
 export type LiveClassStatus = "scheduled" | "live" | "ended";
 
 /** A scheduled video session — see backend/app/models/live_class.py for
@@ -370,6 +370,8 @@ export interface LiveClass {
   target_scope: LiveClassTargetScope;
   course_id: string | null;
   course_title: string | null;
+  team_id: string | null;
+  team_name: string | null;
   user_ids: string[];
   recording_url: string | null;
   created_by: string;
@@ -386,6 +388,7 @@ export interface LiveClassInput {
   duration_minutes: number;
   target_scope: LiveClassTargetScope;
   course_id?: string | null;
+  team_id?: string | null;
   user_ids?: string[];
   recording_url?: string | null;
 }

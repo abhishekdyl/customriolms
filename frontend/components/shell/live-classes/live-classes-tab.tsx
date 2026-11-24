@@ -1,12 +1,14 @@
 "use client";
 import { useState } from "react";
-import { Plus, Trash2, Video, Pencil, ExternalLink } from "lucide-react";
+import { Plus, Trash2, Video, Pencil, ExternalLink, MessageCircle } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { IconBtn, ConfirmRow } from "@/components/shell/recognition/ui";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import {
   useCreateLiveClass, useDeleteLiveClass, useJoinLiveClass, useLiveClasses, useUpdateLiveClass,
 } from "@/lib/hooks/use-live-classes";
+import { usePreviewWebinarNotify, useSendWebinarNotify } from "@/lib/hooks/use-notifications";
+import { WhatsAppNotifyModal } from "@/components/shell/notifications/whatsapp-notify-modal";
 import type { LiveClass, LiveClassInput, LiveClassStatus } from "@/lib/types";
 import { LiveClassForm } from "./live-class-form";
 import { ApiError } from "@/lib/api-client";
@@ -20,14 +22,18 @@ const statusLabel: Record<LiveClassStatus, string> = { scheduled: "Scheduled", l
 
 function targetLabel(lc: LiveClass): string {
   if (lc.target_scope === "all") return "All users";
+  if (lc.target_scope === "team") return lc.team_name ? `Team: ${lc.team_name}` : "A team's users";
   if (lc.target_scope === "course") return lc.course_title ? `Course: ${lc.course_title}` : "A course's users";
   return `${lc.user_ids.length} hand-picked user(s)`;
 }
 
 function LiveClassRow({ lc, onEdit, onDelete }: { lc: LiveClass; onEdit: () => void; onDelete: () => void }) {
   const [confirming, setConfirming] = useState(false);
+  const [notifying, setNotifying] = useState(false);
   const join = useJoinLiveClass();
   const remove = useDeleteLiveClass();
+  const preview = usePreviewWebinarNotify(lc.id);
+  const send = useSendWebinarNotify(lc.id);
   return (
     <div className="bg-surface border border-line rounded-[10px] p-4">
       <div className="flex items-start justify-between gap-2">
@@ -65,11 +71,24 @@ function LiveClassRow({ lc, onEdit, onDelete }: { lc: LiveClass; onEdit: () => v
             <a href={lc.recording_url} target="_blank" rel="noreferrer" className="text-[12px] text-primary">View recording</a>
           )}
           <div className="flex-1" />
+          <IconBtn icon={MessageCircle} label="Notify via WhatsApp" onClick={() => setNotifying(true)} />
           <IconBtn icon={Pencil} label="Edit" onClick={onEdit} />
           <IconBtn icon={Trash2} danger label="Delete" onClick={() => setConfirming(true)} />
         </div>
       )}
       {join.isError && <p className="text-[11.5px] text-danger mt-2">{(join.error as ApiError)?.message || "Couldn't get a join link."}</p>}
+
+      <WhatsAppNotifyModal
+        open={notifying}
+        onClose={() => setNotifying(false)}
+        heading={`Notify about "${lc.title}"`}
+        helperText="Tells recipients this session is scheduled, with its date/time and a link to the Calendar page to join."
+        courseOptionLabel={lc.course_title ? `This session's course: ${lc.course_title}` : undefined}
+        individualOption={lc.target_scope === "individual" ? { label: `This session's hand-picked list (${lc.user_ids.length} users)`, user_ids: lc.user_ids } : null}
+        defaultScope={lc.target_scope === "team" ? "team" : lc.target_scope === "course" ? "course" : lc.target_scope === "individual" ? "individual" : "all"}
+        preview={preview}
+        send={send}
+      />
     </div>
   );
 }

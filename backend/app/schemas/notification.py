@@ -154,3 +154,83 @@ class EmailLogOut(BaseModel):
 class PlatformEmailLogOut(EmailLogOut):
     org_id: uuid.UUID
     org_name: str
+
+
+# ---------- WhatsApp ----------
+WhatsAppKind = Literal["certificate_earned", "course_launch", "webinar_scheduled"]
+# Shared by the Course Launch / Webinar "Notify via WhatsApp" actions —
+# not the same TargetScope as ReminderRule's (that one's "all"/"course"
+# only); this one adds "team", mirroring LiveClassTargetScope.
+BroadcastScope = Literal["all", "team", "course", "individual"]
+
+
+class WhatsAppSettingsIn(BaseModel):
+    enabled: bool = False
+    api_key: str | None = None  # None = keep the stored key
+    from_number: str = ""
+
+
+class WhatsAppSettingsOut(BaseModel):
+    enabled: bool
+    has_api_key: bool
+    from_number: str
+
+
+class WhatsAppTestResult(BaseModel):
+    ok: bool
+    detail: str
+
+
+class WhatsAppTemplateIn(BaseModel):
+    kind: WhatsAppKind
+    template_name: str = Field(default="", max_length=120)
+    lang_code: str = Field(default="en_US", max_length=10)
+
+
+class WhatsAppTemplateOut(WhatsAppTemplateIn):
+    id: uuid.UUID
+
+    class Config:
+        from_attributes = True
+
+
+class WhatsAppLogOut(BaseModel):
+    id: uuid.UUID
+    to_phone: str
+    kind: WhatsAppKind
+    status: Literal["sent", "failed", "skipped"]
+    detail: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BroadcastTargetIn(BaseModel):
+    """Who a Course Launch / Webinar WhatsApp notification goes to —
+    shared shape for both POST .../notify-whatsapp endpoints."""
+    scope: BroadcastScope = "all"
+    team_id: uuid.UUID | None = None
+    user_ids: list[uuid.UUID] = []
+
+    @model_validator(mode="after")
+    def _validate(self):
+        if self.scope == "team" and self.team_id is None:
+            raise ValueError("Pick a team when the target is one team's members")
+        if self.scope == "individual" and not self.user_ids:
+            raise ValueError("Pick at least one user when the target is a hand-picked list")
+        return self
+
+
+class BroadcastPreviewOut(BaseModel):
+    """Shown before the admin actually commits to sending — so "23 users,
+    5 without a phone on file" is known up front, not discovered one
+    skipped row at a time in the log afterwards."""
+    recipient_count: int
+    without_phone_count: int
+
+
+class BroadcastResultOut(BaseModel):
+    sent: int
+    failed: int
+    skipped: int

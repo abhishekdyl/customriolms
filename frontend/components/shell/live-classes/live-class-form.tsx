@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useCourses } from "@/lib/hooks/use-courses";
 import { useUsers } from "@/lib/hooks/use-users";
+import { useTeams } from "@/lib/hooks/use-teams";
 import { useLiveClassProviders } from "@/lib/hooks/use-live-classes";
 import type { LiveClass, LiveClassInput, LiveClassProvider, LiveClassTargetScope } from "@/lib/types";
 
@@ -25,7 +26,7 @@ function fromIso(iso: string): string {
 
 const emptyForm = (providers: LiveClassProvider[]): LiveClassInput => ({
   title: "", description: "", provider: providers[0] ?? "zoom", scheduled_start: "", duration_minutes: 60,
-  target_scope: "all", course_id: null, user_ids: [], recording_url: null,
+  target_scope: "all", course_id: null, team_id: null, user_ids: [], recording_url: null,
 });
 
 export function LiveClassForm({
@@ -41,6 +42,7 @@ export function LiveClassForm({
   const { data: providers = [] } = useLiveClassProviders();
   const { data: courses = [] } = useCourses();
   const { data: users = [] } = useUsers();
+  const { data: teams = [] } = useTeams();
   const [form, setForm] = useState<LiveClassInput>(emptyForm(providers));
   const [localStart, setLocalStart] = useState("");
   const [userFilter, setUserFilter] = useState("");
@@ -50,8 +52,8 @@ export function LiveClassForm({
       setForm({
         title: existing.title, description: existing.description, provider: existing.provider,
         scheduled_start: existing.scheduled_start, duration_minutes: existing.duration_minutes,
-        target_scope: existing.target_scope, course_id: existing.course_id, user_ids: existing.user_ids,
-        recording_url: existing.recording_url,
+        target_scope: existing.target_scope, course_id: existing.course_id, team_id: existing.team_id,
+        user_ids: existing.user_ids, recording_url: existing.recording_url,
       });
       setLocalStart(fromIso(existing.scheduled_start));
     } else {
@@ -65,6 +67,7 @@ export function LiveClassForm({
     setForm((f) => ({
       ...f, target_scope: scope,
       course_id: scope === "course" ? (f.course_id ?? courses[0]?.id ?? null) : null,
+      team_id: scope === "team" ? (f.team_id ?? teams[0]?.id ?? null) : null,
       user_ids: scope === "individual" ? f.user_ids : [],
     }));
   };
@@ -77,6 +80,7 @@ export function LiveClassForm({
 
   const canSubmit = form.title.trim() && form.provider && localStart
     && (form.target_scope !== "course" || form.course_id)
+    && (form.target_scope !== "team" || form.team_id)
     && (form.target_scope !== "individual" || (form.user_ids && form.user_ids.length > 0));
 
   return (
@@ -118,10 +122,18 @@ export function LiveClassForm({
         <label className={labelCls}>Send to</label>
         <select className={inputCls} value={form.target_scope} onChange={(e) => setScope(e.target.value as LiveClassTargetScope)}>
           <option value="all" disabled={!allowAllScope}>All users in this org{!allowAllScope ? " (Org Admin only)" : ""}</option>
+          <option value="team" disabled={teams.length === 0}>One team's members{teams.length === 0 ? " (no teams yet)" : ""}</option>
           <option value="course" disabled={courses.length === 0}>Users of a specific course{courses.length === 0 ? " (no courses yet)" : ""}</option>
           <option value="individual">A hand-picked list of users</option>
         </select>
       </div>
+
+      {form.target_scope === "team" && (
+        <select className={inputCls} value={form.team_id ?? ""} onChange={(e) => setForm({ ...form, team_id: e.target.value || null })}>
+          <option value="" disabled>Choose a team…</option>
+          {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      )}
 
       {form.target_scope === "course" && (
         <select className={inputCls} value={form.course_id ?? ""} onChange={(e) => setForm({ ...form, course_id: e.target.value || null })}>

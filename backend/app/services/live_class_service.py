@@ -69,14 +69,20 @@ def is_host(lc: LiveClass, user: User) -> bool:
 
 
 async def recipients_for_class(db: AsyncSession, lc: LiveClass) -> list[User]:
-    """Same split as ReminderRule's recipients_for_rule, plus
-    "individual" — a hand-picked user_ids list, which is the one
-    audience shape a course/all split can't express on its own."""
+    """Same split as ReminderRule's recipients_for_rule, plus "individual"
+    (a hand-picked user_ids list) and "team" (one team's members
+    directly, not via any course's own assigned_team_ids) — two audience
+    shapes a plain course/all split can't express on its own."""
     if lc.target_scope == LiveClassTargetScope.INDIVIDUAL:
         if not lc.user_ids:
             return []
         rows = (await db.execute(
             select(User).where(User.id.in_(lc.user_ids), User.org_id == lc.org_id, User.status == UserStatus.ACTIVE)
+        )).scalars().all()
+        return list(rows)
+    if lc.target_scope == LiveClassTargetScope.TEAM and lc.team_id is not None:
+        rows = (await db.execute(
+            select(User).where(User.team_id == lc.team_id, User.org_id == lc.org_id, User.status == UserStatus.ACTIVE)
         )).scalars().all()
         return list(rows)
     if lc.target_scope == LiveClassTargetScope.COURSE and lc.course_id is not None:

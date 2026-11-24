@@ -66,6 +66,57 @@ export interface PlatformEmailLogEntry extends EmailLogEntry {
   org_id: string; org_name: string;
 }
 
+// ----- WhatsApp -----
+export type WhatsAppKind = "certificate_earned" | "course_launch" | "webinar_scheduled";
+/** Shared by Course Launch / Webinar "Notify via WhatsApp" — adds "team"
+ * on top of ReminderRule's own all/course split (see backend's
+ * BroadcastScope), the one audience shape neither a course nor "all"
+ * can express on its own. */
+export type BroadcastScope = "all" | "team" | "course" | "individual";
+
+export const whatsappKindLabel: Record<WhatsAppKind, string> = {
+  certificate_earned: "Certificate earned",
+  course_launch: "Course launch",
+  webinar_scheduled: "Webinar / live session scheduled",
+};
+
+export interface WhatsAppSettings {
+  enabled: boolean;
+  has_api_key: boolean;
+  from_number: string;
+}
+
+export interface WhatsAppTemplate {
+  kind: WhatsAppKind;
+  template_name: string;
+  lang_code: string;
+}
+
+/** One row of the "kis ko kab kaunsa WhatsApp gaya" audit trail — see
+ * whatsapp_service.log_send on the backend. */
+export interface WhatsAppLogEntry {
+  id: string; to_phone: string; kind: WhatsAppKind;
+  status: "sent" | "failed" | "skipped";
+  detail: string; created_at: string;
+}
+
+export interface BroadcastTarget {
+  scope: BroadcastScope;
+  team_id?: string | null;
+  user_ids?: string[];
+}
+
+export interface BroadcastPreview {
+  recipient_count: number;
+  without_phone_count: number;
+}
+
+export interface BroadcastResult {
+  sent: number;
+  failed: number;
+  skipped: number;
+}
+
 export const triggerLabel: Record<Trigger, string> = {
   before_due: "Before due date",
   on_due: "On due date",

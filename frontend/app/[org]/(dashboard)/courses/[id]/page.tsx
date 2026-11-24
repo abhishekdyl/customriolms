@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Plus, ChevronUp, ChevronDown, Users, Award, Lock, BookOpen, Settings as SettingsIcon,
-  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X, History, Star, Eye,
+  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X, History, Star, Eye, MessageCircle,
 } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { CourseReviewsAdminPanel } from "@/components/shell/courses/course-reviews-admin";
@@ -26,6 +26,8 @@ import { EnrolmentSettingsPanel } from "@/components/shell/courses/enrolment-set
 import { GroupsPanel } from "@/components/shell/courses/groups-panel";
 import { ActivityPanel } from "@/components/shell/courses/activity-panel";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
+import { WhatsAppNotifyModal } from "@/components/shell/notifications/whatsapp-notify-modal";
+import { usePreviewCourseLaunch, useSendCourseLaunch } from "@/lib/hooks/use-notifications";
 import { QuizAttemptsSection } from "@/components/shell/courses/quiz-attempts";
 import { ModuleProgressMatrix } from "@/components/shell/courses/module-progress-matrix";
 import { GradebookTable } from "@/components/shell/courses/gradebook-table";
@@ -117,6 +119,9 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
   // Save → then-finally-upload detour.
   const [newModuleType, setNewModuleType] = useState<keyof typeof MODULE_TYPE_LABEL>("watch");
   const [assigning, setAssigning] = useState(false);
+  const [notifying, setNotifying] = useState(false);
+  const previewNotify = usePreviewCourseLaunch(id);
+  const sendNotify = useSendCourseLaunch(id);
 
   // Local module state is the editor's working draft — every field edit
   // (including a brand-new module's) only lands here, never the server,
@@ -684,9 +689,16 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
               </p>
               <p className="text-[10.5px] text-ink-faint">Click a due date to set a personal one for that learner · * = personal override</p>
             </div>
-            <Button size="sm" variant="secondary" onClick={() => setAssigning(true)}>
-              <Users className="h-3.5 w-3.5" /> Assign ({course.assigned_team_count} teams)
-            </Button>
+            <div className="flex items-center gap-2">
+              {canManageParticipantRoles && (
+                <Button size="sm" variant="secondary" onClick={() => setNotifying(true)}>
+                  <MessageCircle className="h-3.5 w-3.5" /> Notify via WhatsApp
+                </Button>
+              )}
+              <Button size="sm" variant="secondary" onClick={() => setAssigning(true)}>
+                <Users className="h-3.5 w-3.5" /> Assign ({course.assigned_team_count} teams)
+              </Button>
+            </div>
           </div>
           {enrolledLoading && <p className="text-xs text-ink-faint">Loading…</p>}
           {!enrolledLoading && (enrolled?.length ?? 0) === 0 && (
@@ -1036,6 +1048,16 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
       )}
 
       {assigning && <AssignModal courseId={id} onClose={() => setAssigning(false)} />}
+      <WhatsAppNotifyModal
+        open={notifying}
+        onClose={() => setNotifying(false)}
+        heading={`Notify about "${course.title}"`}
+        helperText="Tells recipients this course has launched, with a link to view it."
+        courseOptionLabel="This course's enrolled users"
+        defaultScope="course"
+        preview={previewNotify}
+        send={sendNotify}
+      />
     </div>
   );
 }

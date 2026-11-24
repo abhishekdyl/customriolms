@@ -1,7 +1,10 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { EmailLogEntry, NotifTemplate, ReminderRule, SmtpSettings } from "@/lib/notifications";
+import type {
+  BroadcastPreview, BroadcastResult, BroadcastTarget, EmailLogEntry, NotifTemplate, ReminderRule, SmtpSettings,
+  WhatsAppLogEntry, WhatsAppSettings, WhatsAppTemplate,
+} from "@/lib/notifications";
 
 const base = "/api/v1/notifications";
 
@@ -89,4 +92,46 @@ export function useRequestPlatformFallback() {
 }
 export function useEmailLog() {
   return useQuery({ queryKey: ["notif-email-log"], queryFn: () => api.get<EmailLogEntry[]>(`${base}/smtp/log`) });
+}
+
+// ----- WhatsApp -----
+export function useWhatsAppSettings() {
+  return useQuery({ queryKey: ["notif-whatsapp"], queryFn: () => api.get<WhatsAppSettings>(`${base}/whatsapp`) });
+}
+export function useSaveWhatsAppSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: { enabled: boolean; api_key?: string; from_number: string }) => api.patch<WhatsAppSettings>(`${base}/whatsapp`, b),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["notif-whatsapp"] }),
+  });
+}
+export function useTestWhatsApp() {
+  return useMutation({ mutationFn: () => api.post<{ ok: boolean; detail: string }>(`${base}/whatsapp/test`, {}) });
+}
+export function useWhatsAppTemplates() {
+  return useQuery({ queryKey: ["notif-whatsapp-templates"], queryFn: () => api.get<WhatsAppTemplate[]>(`${base}/whatsapp/templates`) });
+}
+export function useSaveWhatsAppTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: WhatsAppTemplate) => api.patch<WhatsAppTemplate>(`${base}/whatsapp/templates`, b),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["notif-whatsapp-templates"] }),
+  });
+}
+export function useWhatsAppLog() {
+  return useQuery({ queryKey: ["notif-whatsapp-log"], queryFn: () => api.get<WhatsAppLogEntry[]>(`${base}/whatsapp/log`) });
+}
+
+// ----- WhatsApp broadcast (Course Launch / Webinar "Notify via WhatsApp") -----
+export function usePreviewCourseLaunch(courseId: string) {
+  return useMutation({ mutationFn: (b: BroadcastTarget) => api.post<BroadcastPreview>(`/api/v1/courses/${courseId}/notify-whatsapp/preview`, b) });
+}
+export function useSendCourseLaunch(courseId: string) {
+  return useMutation({ mutationFn: (b: BroadcastTarget) => api.post<BroadcastResult>(`/api/v1/courses/${courseId}/notify-whatsapp`, b) });
+}
+export function usePreviewWebinarNotify(liveClassId: string) {
+  return useMutation({ mutationFn: (b: BroadcastTarget) => api.post<BroadcastPreview>(`/api/v1/live-classes/${liveClassId}/notify-whatsapp/preview`, b) });
+}
+export function useSendWebinarNotify(liveClassId: string) {
+  return useMutation({ mutationFn: (b: BroadcastTarget) => api.post<BroadcastResult>(`/api/v1/live-classes/${liveClassId}/notify-whatsapp`, b) });
 }

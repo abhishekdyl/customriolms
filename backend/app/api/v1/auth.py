@@ -14,6 +14,7 @@ from app.api.deps import get_current_user, get_current_user_allow_trial_suspende
 from app.core.config import settings
 from app.core.countries import ALL_COUNTRIES
 from app.core.database import get_db
+from app.core.phone import normalize_phone
 from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
 from app.core.session import create_session, revoke_all_sessions, revoke_all_sessions_except, revoke_session
 from app.models.org import PLAN_USER_LIMITS, Org, OrgPlan, OrgStatus
@@ -195,7 +196,7 @@ async def register_user(body: UserRegisterRequest, db: AsyncSession = Depends(ge
         hashed_password=hash_password(body.password),
         role=RoleName.LEARNER,
         status=UserStatus.INVITED,
-        phone=body.phone,
+        phone=normalize_phone(body.phone),
         job_title=body.job_title,
         location=body.location,
         country=body.country,

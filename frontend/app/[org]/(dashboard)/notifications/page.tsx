@@ -1,20 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { BellRing, History, MessageSquare, Server } from "lucide-react";
+import { BellRing, History, MessageCircle, MessageSquare, Server } from "lucide-react";
 import type { ComponentType } from "react";
 import { Topbar } from "@/components/shell/topbar";
 import { SmtpTab } from "@/components/shell/notifications/smtp-tab";
 import { TemplatesTab } from "@/components/shell/notifications/templates-tab";
 import { RulesTab } from "@/components/shell/notifications/rules-tab";
 import { EmailLogTab } from "@/components/shell/notifications/email-log-tab";
+import { WhatsAppTab } from "@/components/shell/notifications/whatsapp-tab";
+import { WhatsAppLogTab } from "@/components/shell/notifications/whatsapp-log-tab";
 
-type TabId = "smtp" | "templates" | "rules" | "log";
+type TabId = "smtp" | "templates" | "rules" | "log" | "whatsapp" | "whatsapp-log";
 const tabs: [TabId, string, ComponentType<{ size?: number; className?: string }>][] = [
   ["smtp", "Email delivery", Server],
   ["templates", "Templates", MessageSquare],
   ["rules", "Reminder rules", BellRing],
   ["log", "Sent mail log", History],
+  ["whatsapp", "WhatsApp", MessageCircle],
+  ["whatsapp-log", "WhatsApp log", History],
 ];
 
 export default function NotificationsPage() {
@@ -38,6 +42,8 @@ export default function NotificationsPage() {
         {tab === "templates" && <TemplatesTab />}
         {tab === "rules" && <RulesTab />}
         {tab === "log" && <EmailLogTab />}
+        {tab === "whatsapp" && <WhatsAppTab />}
+        {tab === "whatsapp-log" && <WhatsAppLogTab />}
       </div>
     </div>
   );

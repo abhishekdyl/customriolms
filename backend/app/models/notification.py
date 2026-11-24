@@ -132,6 +132,63 @@ class EmailLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
 
 
+class OrgWhatsAppSettings(Base):
+    """One row per org, only when the org opts into WhatsApp notifications —
+    its own SendZen credentials (SendZen is a wrapper over the official
+    WhatsApp Cloud API; see whatsapp_service for the HTTP calls). Unlike
+    SMTP, there's deliberately no platform-shared fallback tier: a
+    WhatsApp Business sender number is org-specific by nature (each org's
+    own number, own approved templates), so "no settings here" just means
+    the feature is off for that org — see whatsapp_service.resolve_settings."""
+    __tablename__ = "org_whatsapp_settings"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orgs.id"), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # NOTE: stored as plain text for now — encrypt at rest (e.g. Fernet
+    # with a server key) before production, same caveat as OrgSmtpSettings.
+    api_key: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # The org's own WhatsApp Business number, E.164 digits with no "+"
+    # (SendZen's own `from` convention) — see core.phone.whatsapp_recipient.
+    from_number: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+
+
+class WhatsAppTemplate(Base):
+    """One row per org per message kind — which of the org's own
+    Meta-approved WhatsApp templates (created/approved in SendZen's
+    dashboard, not here — see notifications-settings guide) to use for
+    each of this app's built-in triggers. Unlike NotificationTemplate
+    (email), the subject/body text itself lives with Meta/SendZen, not in
+    this app — editing it here would do nothing without going through
+    Meta's re-approval, so this only stores the already-approved
+    template's name/language, which is all a send actually needs."""
+    __tablename__ = "whatsapp_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orgs.id"), nullable=False, index=True)
+    # certificate_earned | course_launch | webinar_scheduled
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    template_name: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    lang_code: Mapped[str] = mapped_column(String(10), default="en_US", nullable=False)
+
+
+class WhatsAppLog(Base):
+    """One row per outbound-WhatsApp attempt — EmailLog's exact counterpart
+    (see that model's docstring), so "kis ko kab kaunsa WhatsApp gaya" has
+    the same audit trail shape as email already does."""
+    __tablename__ = "whatsapp_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orgs.id"), nullable=False, index=True)
+    to_phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    # sent | failed | skipped — skipped means no phone on file (or an
+    # unusable one), or WhatsApp isn't configured/enabled for this org at
+    # all; sending was never even attempted either way.
+    status: Mapped[str] = mapped_column(String(10), nullable=False)
+    detail: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+
+
 class PlatformSmtpSettings(Base):
     """Exactly one row (id is the fixed platform_settings.SINGLETON_ID) —
     the Super Admin's shared mail server. Orgs that have no SMTP of their

@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 Provider = Literal["bigbluebutton", "zoom"]
-TargetScope = Literal["all", "course", "individual"]
+TargetScope = Literal["all", "team", "course", "individual"]
 Status = Literal["scheduled", "live", "ended"]
 
 
@@ -17,6 +17,7 @@ class LiveClassIn(BaseModel):
     duration_minutes: int = Field(default=60, ge=5, le=480)
     target_scope: TargetScope = "all"
     course_id: uuid.UUID | None = None
+    team_id: uuid.UUID | None = None
     user_ids: list[uuid.UUID] = []
     recording_url: str | None = None
 
@@ -24,6 +25,8 @@ class LiveClassIn(BaseModel):
     def _validate_target(self):
         if self.target_scope == "course" and self.course_id is None:
             raise ValueError("Pick a course when the target is a specific course's users")
+        if self.target_scope == "team" and self.team_id is None:
+            raise ValueError("Pick a team when the target is one team's members")
         if self.target_scope == "individual" and not self.user_ids:
             raise ValueError("Pick at least one user when the target is a hand-picked list")
         return self
@@ -39,6 +42,8 @@ class LiveClassOut(BaseModel):
     target_scope: TargetScope
     course_id: uuid.UUID | None
     course_title: str | None = None  # convenience for the admin list — avoids a second lookup per row
+    team_id: uuid.UUID | None = None
+    team_name: str | None = None  # convenience for the admin list — avoids a second lookup per row
     user_ids: list[uuid.UUID]
     recording_url: str | None
     created_by: uuid.UUID

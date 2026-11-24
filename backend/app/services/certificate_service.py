@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.certificate import Certificate, CertTemplate
 from app.models.course import Course
 from app.models.user import User
+from app.services import whatsapp_service
 
 # SQL equivalent of User.full_name — lastname is never null (defaults to
 # ""), so plain concat would leave a trailing space for a single-word name.
@@ -78,6 +79,9 @@ async def issue_certificate(db: AsyncSession, org_id: uuid.UUID, user_id: uuid.U
     db.add(cert)
     await db.commit()
     await db.refresh(cert)
+    # Best-effort WhatsApp notification — never blocks/fails certificate
+    # issuance itself (see send_certificate_notification's docstring).
+    await whatsapp_service.send_certificate_notification(db, user, course.title)
     return cert
 
 

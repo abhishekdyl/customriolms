@@ -9,9 +9,12 @@ from app.core.database import get_db
 from app.models.course import Course
 from app.models.live_class import LiveClass, LiveClassProvider
 from app.models.org import Org
+from app.models.team import Team
 from app.models.user import RoleName, User
 from app.schemas.live_class import JoinOut, LiveClassIn, LiveClassOut
+from app.schemas.notification import BroadcastPreviewOut, BroadcastResultOut, BroadcastTargetIn
 from app.services import live_class_service as svc
+from app.services import whatsapp_service as wa_svc
 from app.services.notification_service import get_owned
 from app.services.permission_service import is_team_scoped
 
@@ -33,10 +36,14 @@ async def _to_out(db: AsyncSession, lc: LiveClass) -> LiveClassOut:
     if lc.course_id is not None:
         course = await db.get(Course, lc.course_id)
         course_title = course.title if course else None
+    team_name = None
+    if lc.team_id is not None:
+        team = await db.get(Team, lc.team_id)
+        team_name = team.name if team else None
     creator = await db.get(User, lc.created_by)
     created_by_name = f"{creator.firstname} {creator.lastname}".strip() if creator else None
     return LiveClassOut.model_validate({
-        **lc.__dict__, "course_title": course_title, "created_by_name": created_by_name,
+        **lc.__dict__, "course_title": course_title, "team_name": team_name, "created_by_name": created_by_name,
         "status": svc.compute_status(lc),
     })
 
@@ -45,14 +52,17 @@ def _enforce_team_scope(body: LiveClassIn, user: User, existing_course_id: uuid.
     """A team-scoped instructor (Team Lead, or a custom role with
     OWN_TEAM scope) granted live_classes.manage can schedule classes
     for their own team's reach only — never "all" (that would blast
-    the whole org), and only for courses/users within their team.
-    Org/Super Admin are never team-scoped, so this is a no-op for them."""
+    the whole org), and only for courses/users/teams within their own
+    team. Org/Super Admin are never team-scoped, so this is a no-op
+    for them."""
     if not is_team_scoped(user):
         return
     if body.target_scope == "all":
         raise HTTPException(status_code=403, detail="Only an Org Admin can schedule a live class for the whole org")
     if body.target_scope == "individual" and user.team_id is None:
         raise HTTPException(status_code=403, detail="You're not assigned to a team, so you can't pick individual users")
+    if body.target_scope == "team" and body.team_id != user.team_id:
+        raise HTTPException(status_code=403, detail="You can only target your own team")
 
 
 @router.get("/providers", response_model=list[str])
@@ -76,6 +86,8 @@ async def create_live_class(body: LiveClassIn, db: AsyncSession = Depends(get_db
         raise HTTPException(status_code=400, detail=f"{body.provider} isn't configured — add its credentials in Org Settings first")
     if body.course_id is not None:
         await get_owned(db, Course, body.course_id, user.org_id)  # 404s if it's not this org's course
+    if body.team_id is not None:
+        await get_owned(db, Team, body.team_id, user.org_id)  # 404s if it's not this org's team
     _enforce_team_scope(body, user)
 
     lc = LiveClass(org_id=user.org_id, created_by=user.id, **body.model_dump())
@@ -95,6 +107,8 @@ async def update_live_class(live_class_id: uuid.UUID, body: LiveClassIn, db: Asy
         raise HTTPException(status_code=400, detail=f"{body.provider} isn't configured — add its credentials in Org Settings first")
     if body.course_id is not None:
         await get_owned(db, Course, body.course_id, user.org_id)
+    if body.team_id is not None:
+        await get_owned(db, Team, body.team_id, user.org_id)
     _enforce_team_scope(body, user)
 
     provider_changed = lc.provider != body.provider
@@ -126,6 +140,33 @@ async def delete_live_class(live_class_id: uuid.UUID, db: AsyncSession = Depends
             pass  # best-effort — see delete_zoom_meeting's docstring
     await db.delete(lc)
     await db.commit()
+
+
+@router.post("/{live_class_id}/notify-whatsapp/preview", response_model=BroadcastPreviewOut)
+async def preview_webinar_notification(
+    live_class_id: uuid.UUID, body: BroadcastTargetIn, db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_capability("live_classes.manage")),
+):
+    lc = await get_owned(db, LiveClass, live_class_id, user.org_id)
+    course = await db.get(Course, lc.course_id) if lc.course_id else None
+    users = await wa_svc.resolve_broadcast_targets(db, user.org_id, body, course)
+    recipient_count, without_phone_count = wa_svc.preview_counts(users)
+    return BroadcastPreviewOut(recipient_count=recipient_count, without_phone_count=without_phone_count)
+
+
+@router.post("/{live_class_id}/notify-whatsapp", response_model=BroadcastResultOut)
+async def send_webinar_notification(
+    live_class_id: uuid.UUID, body: BroadcastTargetIn, db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_capability("live_classes.manage")),
+):
+    """"Notify via WhatsApp" on a live class — tells recipients a session
+    is scheduled and points them at the Calendar page to join."""
+    lc = await get_owned(db, LiveClass, live_class_id, user.org_id)
+    course = await db.get(Course, lc.course_id) if lc.course_id else None
+    users = await wa_svc.resolve_broadcast_targets(db, user.org_id, body, course)
+    when_label = lc.scheduled_start.strftime("%d %b %Y, %I:%M %p")
+    sent, failed, skipped = await wa_svc.send_webinar_notification(db, user.org_id, lc.title, when_label, users)
+    return BroadcastResultOut(sent=sent, failed=failed, skipped=skipped)
 
 
 # ---------- Every org member's own view (no live_classes.manage needed) ----------

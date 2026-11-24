@@ -15,6 +15,7 @@ class LiveClassProvider:
 
 class LiveClassTargetScope:
     ALL = "all"            # every active user in the org
+    TEAM = "team"          # one team's members, directly — not via any course
     COURSE = "course"      # one course's enrolled learners (direct + team, same as ReminderRule)
     INDIVIDUAL = "individual"  # a hand-picked list of users
 
@@ -49,6 +50,7 @@ class LiveClass(Base):
 
     target_scope: Mapped[str] = mapped_column(String(12), default="all", nullable=False)  # LiveClassTargetScope
     course_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True)
+    team_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)  # target_scope == team
     user_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list, nullable=False)  # target_scope == individual
 
     # ---- BigBlueButton — meeting is created lazily on first join, not

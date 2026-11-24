@@ -24,6 +24,7 @@ from app.schemas.course_rating import (
 )
 from app.services import course_preview_service as preview_svc
 from app.services import course_rating_service as rating_svc
+from app.services import whatsapp_service as wa_svc
 from app.schemas.course import (
     AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CatalogCourseOut, CourseAssignRequest, CourseCreate,
     CourseDuplicateRequest, CourseEnrolCheckoutOut, CourseEnrolVerifyOut, CourseEnrolVerifyRequest,
@@ -32,6 +33,7 @@ from app.schemas.course import (
     DueOverrideSet, EnrolledLearnerOut, GradebookOut, LearnerCourseOut, ModuleCreate, ModuleOut,
     ModuleReorderRequest, ModuleUpdate, MyCourseItem, ParticipantRoleUpdate, QuizAttemptOut, SelfEnrolOut,
 )
+from app.schemas.notification import BroadcastPreviewOut, BroadcastResultOut, BroadcastTargetIn
 from app.schemas.learn import (
     CompleteRequest, CompleteResult, QuizResult, QuizSubmit, ScormCheckpointIn, ScormProgressOut, WatchCheckpointIn,
     WatchProgressOut,
@@ -740,6 +742,38 @@ async def update_participant_role(
         raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own Teacher can change participant roles")
     await _validate_ids_belong_to_org(db, User, [user_id], current_user.org_id, "user")
     await set_participant_role(db, course, user_id, body.as_role)
+
+
+@router.post(
+    "/{course_id}/notify-whatsapp/preview", response_model=BroadcastPreviewOut,
+    dependencies=[Depends(require_capability("courses.manage"))],
+)
+async def preview_course_launch_notification(
+    course_id: uuid.UUID, body: BroadcastTargetIn, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Recipient count + how many of them have no phone on file — shown
+    before the admin commits to actually sending (see BroadcastPreviewOut)."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    users = await wa_svc.resolve_broadcast_targets(db, current_user.org_id, body, course)
+    recipient_count, without_phone_count = wa_svc.preview_counts(users)
+    return BroadcastPreviewOut(recipient_count=recipient_count, without_phone_count=without_phone_count)
+
+
+@router.post(
+    "/{course_id}/notify-whatsapp", response_model=BroadcastResultOut,
+    dependencies=[Depends(require_capability("courses.manage"))],
+)
+async def send_course_launch_notification(
+    course_id: uuid.UUID, body: BroadcastTargetIn, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """"Notify via WhatsApp" on a course — admin-triggered, not tied to
+    Course.published (see this feature's own scope decision: launching
+    and announcing are separate moments, so this can be fired whenever,
+    more than once)."""
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    users = await wa_svc.resolve_broadcast_targets(db, current_user.org_id, body, course)
+    sent, failed, skipped = await wa_svc.send_course_launch_notification(db, current_user.org_id, course.title, users)
+    return BroadcastResultOut(sent=sent, failed=failed, skipped=skipped)
 
 
 @router.get(

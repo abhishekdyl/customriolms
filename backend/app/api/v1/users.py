@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_capability
 from app.core.database import get_db
+from app.core.phone import normalize_phone
 from app.core.security import create_access_token, create_refresh_token, hash_password
 from app.core.session import create_session, revoke_all_sessions
 from app.models.org import Org
@@ -286,7 +287,7 @@ async def update_user_profile(
     user.role = body.role
     user.custom_role_id = body.custom_role_id  # None whenever body.role != CUSTOM — schema already enforced that pairing
     user.team_id = body.team_id
-    user.phone = body.phone
+    user.phone = normalize_phone(body.phone)
     user.job_title = body.job_title
     user.location = body.location
     user.bio = body.bio

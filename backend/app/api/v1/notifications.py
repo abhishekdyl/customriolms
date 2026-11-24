@@ -10,8 +10,10 @@ from app.models.notification import NotificationTemplate, ReminderRule
 from app.models.user import User
 from app.schemas.notification import (
     EmailLogOut, RuleIn, RuleOut, SmtpIn, SmtpOut, SmtpTestResult, TemplateIn, TemplateOut,
+    WhatsAppLogOut, WhatsAppSettingsIn, WhatsAppSettingsOut, WhatsAppTemplateIn, WhatsAppTemplateOut, WhatsAppTestResult,
 )
 from app.services import notification_service as svc
+from app.services import whatsapp_service as wa_svc
 
 router = APIRouter(
     prefix="/api/v1/notifications", tags=["notifications"],
@@ -124,3 +126,40 @@ async def request_platform_fallback(db: AsyncSession = Depends(get_db), user: Us
     sends through it until that request is approved (see
     /api/v1/platform/smtp/requests on the Super Admin side)."""
     return svc.smtp_out(await svc.request_platform_fallback(db, user.org_id))
+
+
+# ---------- WhatsApp ----------
+@router.get("/whatsapp", response_model=WhatsAppSettingsOut)
+async def get_whatsapp_settings(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    return wa_svc.settings_out(await wa_svc.get_settings(db, user.org_id))
+
+
+@router.patch("/whatsapp", response_model=WhatsAppSettingsOut)
+async def save_whatsapp_settings(body: WhatsAppSettingsIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    return wa_svc.settings_out(await wa_svc.save_settings(db, user.org_id, body))
+
+
+@router.post("/whatsapp/test", response_model=WhatsAppTestResult)
+async def test_whatsapp(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if not user.phone:
+        raise HTTPException(status_code=400, detail="Add a phone number to your own profile first, then test.")
+    ok, detail = await wa_svc.send_test_message(db, user.org_id, user.phone)
+    return WhatsAppTestResult(ok=ok, detail=detail)
+
+
+@router.get("/whatsapp/templates", response_model=list[WhatsAppTemplateOut])
+async def list_whatsapp_templates(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    return await wa_svc.list_templates(db, user.org_id)
+
+
+@router.patch("/whatsapp/templates", response_model=WhatsAppTemplateOut)
+async def save_whatsapp_template(body: WhatsAppTemplateIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    return await wa_svc.save_template(db, user.org_id, body)
+
+
+@router.get("/whatsapp/log", response_model=list[WhatsAppLogOut])
+async def get_whatsapp_log(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Who got WhatsApp'd what, and when — this org's own send history
+    (certificates, Course Launch / Webinar broadcasts, test sends),
+    newest first."""
+    return await wa_svc.list_log(db, user.org_id)
