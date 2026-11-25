@@ -520,9 +520,20 @@ export interface CourseAnnouncement {
   title: string;
   body: string;
   is_hidden: boolean;
+  comments_enabled: boolean;
+  comment_count: number;
   author_name: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** One reply in an announcement's own discussion thread. */
+export interface CourseAnnouncementComment {
+  id: string;
+  body: string;
+  author_name: string | null;
+  is_manager: boolean;
+  created_at: string;
 }
 
 /** One course a learner isn't enrolled in yet but could self or paid-enrol

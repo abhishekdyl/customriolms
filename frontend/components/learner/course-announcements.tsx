@@ -1,11 +1,15 @@
 "use client";
 import { Megaphone } from "lucide-react";
 import { useCourseAnnouncements } from "@/lib/hooks/use-course-announcements";
+import { AnnouncementCommentThread } from "@/components/shell/courses/announcement-comment-thread";
 
 /** Read-only announcement board for a learner/teacher viewing a
  * course's own page — the backend already drops hidden announcements
  * for anyone who isn't a manager, so this just renders whatever list
- * comes back. */
+ * comes back. Each announcement's own discussion thread is read/write
+ * here (anyone enrolled can ask a question or reply), but moderating
+ * a comment (delete) is done from the course-manage Announcements tab
+ * instead, not from this learner-facing view. */
 export function CourseAnnouncementsPanel({ courseId }: { courseId: string }) {
   const { data: rows = [], isLoading } = useCourseAnnouncements(courseId);
 
@@ -24,6 +28,11 @@ export function CourseAnnouncementsPanel({ courseId }: { courseId: string }) {
             {a.author_name ?? "Instructor"} · {new Date(a.created_at).toLocaleDateString()}
           </p>
           <p className="mt-2 whitespace-pre-wrap text-[12.5px] text-ink">{a.body}</p>
+
+          <AnnouncementCommentThread
+            courseId={courseId} announcementId={a.id}
+            commentsEnabled={a.comments_enabled} commentCount={a.comment_count} canDelete={false}
+          />
         </div>
       ))}
     </div>

@@ -1,15 +1,16 @@
 """Course announcements — see models/course_announcement.py for the
 full design note. This module is deliberately thin: permission check,
 the default-seed helper, and turning a row (+ its author) into the
-API's CourseAnnouncementOut shape.
+API's CourseAnnouncementOut shape. Comment-thread logic lives in
+course_announcement_comment_service.py.
 """
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.course import Course
-from app.models.course_announcement import CourseAnnouncement
+from app.models.course_announcement import CourseAnnouncement, CourseAnnouncementComment
 from app.models.user import User
 from app.schemas.course_announcement import CourseAnnouncementOut
 from app.services.course_rating_service import can_moderate
@@ -44,9 +45,16 @@ async def _author_name(db: AsyncSession, author_user_id: uuid.UUID | None) -> st
     return f"{user.firstname} {user.lastname}".strip() if user else None
 
 
+async def _comment_count(db: AsyncSession, announcement_id: uuid.UUID) -> int:
+    return (await db.execute(
+        select(func.count()).select_from(CourseAnnouncementComment).where(CourseAnnouncementComment.announcement_id == announcement_id)
+    )).scalar_one()
+
+
 async def to_out(db: AsyncSession, row: CourseAnnouncement) -> CourseAnnouncementOut:
     return CourseAnnouncementOut(
         id=row.id, title=row.title, body=row.body, is_hidden=row.is_hidden,
+        comments_enabled=row.comments_enabled, comment_count=await _comment_count(db, row.id),
         author_name=await _author_name(db, row.author_user_id),
         created_at=row.created_at, updated_at=row.updated_at,
     )
@@ -58,17 +66,30 @@ async def list_for(db: AsyncSession, course_id: uuid.UUID, include_hidden: bool)
         stmt = stmt.where(CourseAnnouncement.is_hidden.is_(False))
     stmt = stmt.order_by(CourseAnnouncement.created_at.desc())
     rows = (await db.execute(stmt)).scalars().all()
-    # Resolve author names in one pass rather than one query per row.
+
+    # Resolve author names and comment counts in one pass each, rather
+    # than two queries per row.
     author_ids = {r.author_user_id for r in rows if r.author_user_id is not None}
     authors: dict[uuid.UUID, User] = {}
     if author_ids:
         users = (await db.execute(select(User).where(User.id.in_(author_ids)))).scalars().all()
         authors = {u.id: u for u in users}
+
+    counts: dict[uuid.UUID, int] = {}
+    if rows:
+        count_rows = (await db.execute(
+            select(CourseAnnouncementComment.announcement_id, func.count())
+            .where(CourseAnnouncementComment.announcement_id.in_([r.id for r in rows]))
+            .group_by(CourseAnnouncementComment.announcement_id)
+        )).all()
+        counts = dict(count_rows)
+
     out = []
     for r in rows:
         author = authors.get(r.author_user_id) if r.author_user_id else None
         out.append(CourseAnnouncementOut(
             id=r.id, title=r.title, body=r.body, is_hidden=r.is_hidden,
+            comments_enabled=r.comments_enabled, comment_count=counts.get(r.id, 0),
             author_name=f"{author.firstname} {author.lastname}".strip() if author else None,
             created_at=r.created_at, updated_at=r.updated_at,
         ))

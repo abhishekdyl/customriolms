@@ -15,7 +15,7 @@ from app.models.category import Category
 from app.models.course import Course
 from app.models.course_enrolment_payment import CourseEnrolmentPayment, CourseEnrolmentPaymentStatus
 from app.models.course_rating import CourseRating
-from app.models.course_announcement import CourseAnnouncement
+from app.models.course_announcement import CourseAnnouncement, CourseAnnouncementComment
 from app.models.org import Org
 from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
@@ -23,10 +23,14 @@ from app.schemas.audit_log import AuditLogOut
 from app.schemas.course_rating import (
     CourseRatingAdminOut, CourseRatingIn, CourseRatingModerateUpdate, CourseRatingSummary, MyCourseRatingOut,
 )
-from app.schemas.course_announcement import CourseAnnouncementIn, CourseAnnouncementOut, CourseAnnouncementUpdate
+from app.schemas.course_announcement import (
+    CourseAnnouncementIn, CourseAnnouncementOut, CourseAnnouncementUpdate,
+    CourseAnnouncementCommentIn, CourseAnnouncementCommentOut,
+)
 from app.services import course_preview_service as preview_svc
 from app.services import course_rating_service as rating_svc
 from app.services import course_announcement_service as announce_svc
+from app.services import course_announcement_comment_service as comment_svc
 from app.services import whatsapp_service as wa_svc
 from app.schemas.course import (
     AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CatalogCourseOut, CourseAssignRequest, CourseCreate,
@@ -1298,6 +1302,8 @@ async def update_course_announcement(
         row.body = data["body"].strip()
     if "is_hidden" in data:
         row.is_hidden = data["is_hidden"]
+    if "comments_enabled" in data:
+        row.comments_enabled = data["comments_enabled"]
     await db.commit()
     await db.refresh(row)
     return await announce_svc.to_out(db, row)
@@ -1312,5 +1318,65 @@ async def delete_course_announcement(
     if not announce_svc.can_manage(course, current_user):
         raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own Teacher can delete this")
     row = await _get_announcement_or_404(db, course_id, announcement_id)
+    await db.delete(row)
+    await db.commit()
+
+
+# ---------- Announcement comments (discussion thread) ----------
+# Scoped narrower than the announcement list itself — see
+# course_announcement_comment_service's module docstring: viewing and
+# posting both require can_participate (enrolled learner / this
+# course's Teacher / Org-Super Admin), not just "any org member".
+
+async def _visible_announcement_or_404(db: AsyncSession, course_id: uuid.UUID, announcement_id: uuid.UUID, user: User) -> CourseAnnouncement:
+    """A hidden announcement's comments are 404, not 403, for anyone
+    who isn't a manager — same "don't reveal it exists" treatment as
+    the announcement itself getting dropped from a learner's GET list."""
+    row = await _get_announcement_or_404(db, course_id, announcement_id)
+    course = await get_course_or_404(db, course_id, user.org_id)
+    if row.is_hidden and not announce_svc.can_manage(course, user):
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    return row
+
+
+@router.get("/{course_id}/announcements/{announcement_id}/comments", response_model=list[CourseAnnouncementCommentOut])
+async def list_announcement_comments(
+    course_id: uuid.UUID, announcement_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    if not comment_svc.can_participate(course, current_user):
+        raise HTTPException(status_code=403, detail="You need to be enrolled in this course to see its announcement discussion")
+    await _visible_announcement_or_404(db, course_id, announcement_id, current_user)
+    return await comment_svc.list_comments(db, announcement_id, course)
+
+
+@router.post("/{course_id}/announcements/{announcement_id}/comments", response_model=CourseAnnouncementCommentOut, status_code=201)
+async def create_announcement_comment(
+    course_id: uuid.UUID, announcement_id: uuid.UUID, body: CourseAnnouncementCommentIn,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    if not comment_svc.can_participate(course, current_user):
+        raise HTTPException(status_code=403, detail="You need to be enrolled in this course to comment")
+    announcement = await _visible_announcement_or_404(db, course_id, announcement_id, current_user)
+    if not announcement.comments_enabled:
+        raise HTTPException(status_code=403, detail="Comments are turned off for this announcement")
+    return await comment_svc.create_comment(db, current_user.org_id, announcement_id, current_user, body.body, course)
+
+
+@router.delete("/{course_id}/announcements/{announcement_id}/comments/{comment_id}", status_code=204)
+async def delete_announcement_comment(
+    course_id: uuid.UUID, announcement_id: uuid.UUID, comment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    if not announce_svc.can_manage(course, current_user):
+        raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own Teacher can delete a comment")
+    row = (await db.execute(
+        select(CourseAnnouncementComment).where(CourseAnnouncementComment.id == comment_id, CourseAnnouncementComment.announcement_id == announcement_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Comment not found")
     await db.delete(row)
     await db.commit()

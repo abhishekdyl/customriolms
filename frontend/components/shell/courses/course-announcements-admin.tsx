@@ -1,9 +1,10 @@
 "use client";
 import { useState } from "react";
-import { Eye, EyeOff, Megaphone, Pencil, Plus, Trash2, X, Check } from "lucide-react";
+import { Eye, EyeOff, Megaphone, MessageSquareOff, MessageSquareText, Pencil, Plus, Trash2, X, Check } from "lucide-react";
 import {
   useCourseAnnouncements, useCreateCourseAnnouncement, useDeleteCourseAnnouncement, useUpdateCourseAnnouncement,
 } from "@/lib/hooks/use-course-announcements";
+import { AnnouncementCommentThread } from "./announcement-comment-thread";
 import { cn } from "@/lib/utils";
 
 const inputCls = "w-full rounded-md border border-line-soft bg-bg-soft px-2.5 py-2 text-[12.5px] outline-none focus:border-primary";
@@ -85,6 +86,13 @@ export function CourseAnnouncementsAdminPanel({ courseId, canManage }: { courseI
                 <button type="button" title="Edit" onClick={() => startEdit(a.id, a.title, a.body)} className="rounded-md p-1.5 hover:bg-line-soft">
                   <Pencil size={13} className="text-ink-faint" />
                 </button>
+                <button
+                  type="button" title={a.comments_enabled ? "Turn off comments" : "Turn on comments"}
+                  onClick={() => update.mutate({ id: a.id, comments_enabled: !a.comments_enabled })}
+                  className="rounded-md p-1.5 hover:bg-line-soft"
+                >
+                  {a.comments_enabled ? <MessageSquareText size={13} className="text-ink-faint" /> : <MessageSquareOff size={13} className="text-ink-faint" />}
+                </button>
                 <button type="button" title="Delete" onClick={() => setConfirmingId(a.id)} className="rounded-md p-1.5 hover:bg-line-soft">
                   <Trash2 size={13} className="text-danger" />
                 </button>
@@ -129,6 +137,11 @@ export function CourseAnnouncementsAdminPanel({ courseId, canManage }: { courseI
               <button type="button" onClick={() => setConfirmingId(null)} className="text-[11px] text-ink-faint">Cancel</button>
             </div>
           )}
+
+          <AnnouncementCommentThread
+            courseId={courseId} announcementId={a.id}
+            commentsEnabled={a.comments_enabled} commentCount={a.comment_count} canDelete={canManage}
+          />
         </div>
       ))}
     </div>
