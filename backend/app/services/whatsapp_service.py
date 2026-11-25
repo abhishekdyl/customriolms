@@ -107,15 +107,20 @@ async def _send_template_message(
     from_number, set in Settings ▸ Notifications ▸ WhatsApp). Returns
     (ok, detail) — detail is either the provider's message id (success)
     or a short failure reason, same shape send_test_email uses for SMTP."""
+    # Field is "lang_code", not "language" — confirmed against SendZen's
+    # own dashboard/docs sample request (not the earlier secondary-source
+    # research this was first built from). "components" is included only
+    # when the template actually has body parameters, same as their
+    # sample (a plain {"name": ..., "lang_code": ...} with no components
+    # key at all for a parameter-less template).
+    template: dict = {"name": template_name, "lang_code": lang_code}
+    if body_params:
+        template["components"] = [{"type": "body", "parameters": [{"type": "text", "text": p} for p in body_params]}]
     payload = {
         "from": settings_row.from_number,
         "to": to_phone,
         "type": "template",
-        "template": {
-            "name": template_name,
-            "language": lang_code,
-            "components": [{"type": "body", "parameters": [{"type": "text", "text": p} for p in body_params]}] if body_params else [],
-        },
+        "template": template,
     }
     try:
         async with httpx.AsyncClient(timeout=15) as client:
