@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 
 import httpx
@@ -116,8 +117,16 @@ async def _send_template_message(
     template: dict = {"name": template_name, "lang_code": lang_code}
     if body_params:
         template["components"] = [{"type": "body", "parameters": [{"type": "text", "text": p} for p in body_params]}]
+    # SendZen's own sample sends "from" as plain digits, no "+" (same
+    # shape as `to`) — normalize here so a from_number saved with a "+"
+    # or stray spaces (e.g. "+91 7247824010") doesn't come back as
+    # SendZen's own "Invalid 'From' Phone Number" rather than actually
+    # sending. This does NOT fix a from_number that's simply wrong/not
+    # provisioned on the SendZen project — only SendZen's dashboard
+    # (Connected Numbers / Sandbox Number) says which ones are valid.
+    from_digits = re.sub(r"\D", "", settings_row.from_number or "")
     payload = {
-        "from": settings_row.from_number,
+        "from": from_digits,
         "to": to_phone,
         "type": "template",
         "template": template,
