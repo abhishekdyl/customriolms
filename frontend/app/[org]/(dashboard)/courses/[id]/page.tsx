@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Plus, ChevronUp, ChevronDown, Users, Award, Lock, BookOpen, Settings as SettingsIcon,
-  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X, History, Star, Eye, MessageCircle,
+  BarChart3, MoreHorizontal, Trash2, Loader2, ImagePlus, X, History, Star, Eye, MessageCircle, Megaphone,
 } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { CourseReviewsAdminPanel } from "@/components/shell/courses/course-reviews-admin";
@@ -26,6 +26,7 @@ import { EnrolmentSettingsPanel } from "@/components/shell/courses/enrolment-set
 import { GroupsPanel } from "@/components/shell/courses/groups-panel";
 import { ActivityPanel } from "@/components/shell/courses/activity-panel";
 import { AssignModal } from "@/components/shell/courses/assign-modal";
+import { CourseAnnouncementsAdminPanel } from "@/components/shell/courses/course-announcements-admin";
 import { WhatsAppNotifyModal } from "@/components/shell/notifications/whatsapp-notify-modal";
 import { usePreviewCourseLaunch, useSendCourseLaunch } from "@/lib/hooks/use-notifications";
 import { QuizAttemptsSection } from "@/components/shell/courses/quiz-attempts";
@@ -60,6 +61,7 @@ const TABS = [
   { id: "settings", label: "Settings", icon: SettingsIcon },
   { id: "participants", label: "Participants", icon: Users },
   { id: "grades", label: "Grades", icon: BarChart3 },
+  { id: "announcements", label: "Announcements", icon: Megaphone },
   { id: "reviews", label: "Reviews", icon: Star },
   { id: "activity", label: "Activity", icon: History },
   { id: "more", label: "More", icon: MoreHorizontal },
@@ -851,6 +853,8 @@ export default function CourseManagePage({ params }: { params: Promise<{ org: st
           <QuizAttemptsSection courseId={id} />
         </div>
       )}
+
+      {tab === "announcements" && <CourseAnnouncementsAdminPanel courseId={id} canManage={canModerateReviews} />}
 
       {tab === "reviews" && canModerateReviews && <CourseReviewsAdminPanel courseId={id} />}
 

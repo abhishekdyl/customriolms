@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  ArrowLeft, BookOpen, CheckCircle2, Circle, Clock, HelpCircle, Loader2, Lock, PlayCircle, Sparkles, Star, XCircle,
+  ArrowLeft, BookOpen, CheckCircle2, Circle, Clock, HelpCircle, Loader2, Lock, Megaphone, PlayCircle, Sparkles, Star, XCircle,
 } from "lucide-react";
 import { CourseReviewsPanel } from "@/components/learner/course-rating";
+import { CourseAnnouncementsPanel } from "@/components/learner/course-announcements";
 import { Video, VideoPlayer, VideoSkin } from "@videojs/react/video";
 import {
   useCheckpointScormProgress, useCheckpointWatchProgress, useCompleteModule, useMyCourse, useRetakeScormModule,
@@ -117,6 +118,7 @@ function InVideoQuestionOverlay({
 
 const TABS = [
   { id: "content", label: "Modules", icon: BookOpen },
+  { id: "announcements", label: "Announcements", icon: Megaphone },
   { id: "summary", label: "AI summary", icon: Sparkles },
   { id: "quiz", label: "Quiz", icon: HelpCircle },
   { id: "reviews", label: "Reviews", icon: Star },
@@ -919,6 +921,8 @@ export default function CourseViewPage() {
             ) : (
               <div className="text-[13px] text-ink-faint">No quiz on this course yet.</div>
             ))}
+
+          {tab === "announcements" && <CourseAnnouncementsPanel courseId={course.id} />}
 
           {tab === "reviews" && <CourseReviewsPanel courseId={course.id} />}
         </div>

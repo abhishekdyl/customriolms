@@ -513,6 +513,18 @@ export interface RatingEligibility {
   reason: string | null;
 }
 
+/** A course's announcement board — see backend's
+ * models/course_announcement.py. Flat list, no replies/threads. */
+export interface CourseAnnouncement {
+  id: string;
+  title: string;
+  body: string;
+  is_hidden: boolean;
+  author_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /** One course a learner isn't enrolled in yet but could self or paid-enrol
  * into — GET /courses/catalog. See backend CatalogCourseOut. */
 export interface CatalogCourse {

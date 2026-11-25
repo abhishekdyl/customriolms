@@ -15,6 +15,7 @@ from app.models.category import Category
 from app.models.course import Course
 from app.models.course_enrolment_payment import CourseEnrolmentPayment, CourseEnrolmentPaymentStatus
 from app.models.course_rating import CourseRating
+from app.models.course_announcement import CourseAnnouncement
 from app.models.org import Org
 from app.models.module import Module, ModuleType
 from app.models.user import RoleName, User
@@ -22,8 +23,10 @@ from app.schemas.audit_log import AuditLogOut
 from app.schemas.course_rating import (
     CourseRatingAdminOut, CourseRatingIn, CourseRatingModerateUpdate, CourseRatingSummary, MyCourseRatingOut,
 )
+from app.schemas.course_announcement import CourseAnnouncementIn, CourseAnnouncementOut, CourseAnnouncementUpdate
 from app.services import course_preview_service as preview_svc
 from app.services import course_rating_service as rating_svc
+from app.services import course_announcement_service as announce_svc
 from app.services import whatsapp_service as wa_svc
 from app.schemas.course import (
     AttemptOverrideOut, AttemptOverrideSet, CalendarItemOut, CatalogCourseOut, CourseAssignRequest, CourseCreate,
@@ -520,6 +523,10 @@ async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db), 
                      # list afterward; see Course.teacher_user_ids.
                      teacher_user_ids=[current_user.id])
     db.add(course)
+    await db.commit()
+    # Every course starts with one announcement instead of an empty
+    # board — see course_announcement_service.seed_default.
+    await announce_svc.seed_default(db, course, current_user.id)
     await db.commit()
     await audit_log_service.record(
         db, org_id=current_user.org_id, actor=current_user, action="course.created",
@@ -1228,5 +1235,82 @@ async def delete_course_rating(course_id: uuid.UUID, rating_id: uuid.UUID, db: A
     if not rating_svc.can_moderate(course, current_user):
         raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own creator can delete this")
     row = await _get_rating_or_404(db, course_id, rating_id)
+    await db.delete(row)
+    await db.commit()
+
+
+# ---------- Announcements ----------
+# A flat per-course announcement board (see models/course_announcement.py).
+# Anyone who can reach the course at all gets the non-hidden list;
+# adding, editing, hiding, and deleting are all gated by the same
+# can_manage check (Org/Super Admin, or one of this course's own
+# Teachers) — the feature doesn't distinguish "who can add" from "who
+# can moderate", unlike ratings, since there's no separate "learner
+# submission" here to protect.
+
+async def _get_announcement_or_404(db: AsyncSession, course_id: uuid.UUID, announcement_id: uuid.UUID) -> CourseAnnouncement:
+    row = (await db.execute(
+        select(CourseAnnouncement).where(CourseAnnouncement.id == announcement_id, CourseAnnouncement.course_id == course_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    return row
+
+
+@router.get("/{course_id}/announcements", response_model=list[CourseAnnouncementOut])
+async def list_course_announcements(course_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    include_hidden = announce_svc.can_manage(course, current_user)
+    return await announce_svc.list_for(db, course_id, include_hidden)
+
+
+@router.post("/{course_id}/announcements", response_model=CourseAnnouncementOut, status_code=201)
+async def create_course_announcement(
+    course_id: uuid.UUID, body: CourseAnnouncementIn,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    if not announce_svc.can_manage(course, current_user):
+        raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own Teacher can post an announcement")
+    row = CourseAnnouncement(
+        org_id=current_user.org_id, course_id=course_id, author_user_id=current_user.id,
+        title=body.title.strip(), body=body.body.strip(),
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return await announce_svc.to_out(db, row)
+
+
+@router.patch("/{course_id}/announcements/{announcement_id}", response_model=CourseAnnouncementOut)
+async def update_course_announcement(
+    course_id: uuid.UUID, announcement_id: uuid.UUID, body: CourseAnnouncementUpdate,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    if not announce_svc.can_manage(course, current_user):
+        raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own Teacher can edit this")
+    row = await _get_announcement_or_404(db, course_id, announcement_id)
+    data = body.model_dump(exclude_unset=True)
+    if "title" in data:
+        row.title = data["title"].strip()
+    if "body" in data:
+        row.body = data["body"].strip()
+    if "is_hidden" in data:
+        row.is_hidden = data["is_hidden"]
+    await db.commit()
+    await db.refresh(row)
+    return await announce_svc.to_out(db, row)
+
+
+@router.delete("/{course_id}/announcements/{announcement_id}", status_code=204)
+async def delete_course_announcement(
+    course_id: uuid.UUID, announcement_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    course = await get_course_or_404(db, course_id, current_user.org_id)
+    if not announce_svc.can_manage(course, current_user):
+        raise HTTPException(status_code=403, detail="Only an Org Admin or this course's own Teacher can delete this")
+    row = await _get_announcement_or_404(db, course_id, announcement_id)
     await db.delete(row)
     await db.commit()
