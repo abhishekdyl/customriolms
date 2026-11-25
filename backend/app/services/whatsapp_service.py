@@ -123,7 +123,15 @@ async def _send_template_message(
         "template": template,
     }
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        # local_address="0.0.0.0" forces an IPv4 socket, skipping any IPv6
+        # address SendZen's DNS returns — on a network with a broken/slow
+        # IPv6 route, httpx otherwise tries that address first and can eat
+        # the entire timeout budget on a connection that was never going
+        # to complete, long before it would fall back to IPv4 (seen in
+        # practice as a bare ConnectTimeout with no response at all, even
+        # though the same host answers an IPv4-only request instantly).
+        transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+        async with httpx.AsyncClient(timeout=15, transport=transport) as client:
             resp = await client.post(
                 SENDZEN_BASE_URL, json=payload,
                 headers={"Authorization": f"Bearer {settings_row.api_key}", "Content-Type": "application/json"},
