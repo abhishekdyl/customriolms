@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import traceback
 
 import sentry_sdk
@@ -11,8 +12,9 @@ from sqlalchemy import select
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
+from app.core.security import decode_token
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
-from app.services import notification_service
+from app.services import notification_service, usage_monitoring_service
 
 if settings.SENTRY_DSN:
     sentry_sdk.init(dsn=settings.SENTRY_DSN, environment=settings.ENV, traces_sample_rate=0.1)
@@ -63,6 +65,37 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def _org_request_stat_middleware(request: Request, call_next):
+    """Feeds the Super Admin's Usage Monitoring "load" column — see
+    usage_monitoring_service.record_request. Deliberately cheap and
+    best-effort on the request's own time budget: decoding the token
+    here is just a JWT signature check (no DB/Redis round trip, unlike
+    get_current_user's full session lookup), and the actual counter
+    write happens in a background task AFTER the response is already
+    being sent, so neither step can slow down or fail the request
+    itself. A request with no/invalid token (login, register, health
+    check, an expired or bad token) simply isn't counted — this is a
+    "how much load is this ORG generating" signal, not a general access
+    log."""
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = round((time.monotonic() - start) * 1000)
+
+    org_id = None
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Bearer "):
+        try:
+            org_id = decode_token(auth[7:]).get("org_id")
+        except Exception:
+            org_id = None
+
+    if org_id:
+        asyncio.create_task(usage_monitoring_service.record_request(org_id, duration_ms, response.status_code >= 500))
+
+    return response
+
 
 app.include_router(api_router)
 

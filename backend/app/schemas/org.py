@@ -30,6 +30,7 @@ class OrgOut(BaseModel):
     plan: OrgPlan
     status: OrgStatus
     user_limit: int
+    storage_limit_mb: int
     allowed_domains: list[str] = []
     created_at: datetime
     industry: str | None = None
@@ -121,6 +122,7 @@ class OrgUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=200)
     plan: OrgPlan | None = None
     user_limit: int | None = Field(default=None, ge=1)
+    storage_limit_mb: int | None = Field(default=None, ge=1)
     allowed_domains: list[str] | None = None
 
 

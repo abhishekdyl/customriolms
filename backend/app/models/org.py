@@ -31,6 +31,17 @@ class OrgStatus(str, enum.Enum):
 
 PLAN_USER_LIMITS = {OrgPlan.FREE: 10, OrgPlan.STARTER: 20, OrgPlan.GROWTH: 100, OrgPlan.ENTERPRISE: 500}
 
+# Default storage quota per plan, in MB — same per-plan-default-but-
+# editable-per-org shape as PLAN_USER_LIMITS/user_limit above (see
+# Org.storage_limit_mb). Used by usage_monitoring_service to compute
+# "X GB of Y GB used" per org and flag orgs over the warning threshold.
+PLAN_STORAGE_LIMITS_MB = {
+    OrgPlan.FREE: 1024,        # 1 GB
+    OrgPlan.STARTER: 5120,     # 5 GB
+    OrgPlan.GROWTH: 20480,     # 20 GB
+    OrgPlan.ENTERPRISE: 102400,  # 100 GB
+}
+
 
 class Org(Base):
     __tablename__ = "orgs"
@@ -41,6 +52,11 @@ class Org(Base):
     plan: Mapped[OrgPlan] = mapped_column(Enum(OrgPlan, name="orgplan"), default=OrgPlan.STARTER, nullable=False)
     status: Mapped[OrgStatus] = mapped_column(Enum(OrgStatus, name="orgstatus"), default=OrgStatus.TRIAL, nullable=False)
     user_limit: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    # Same shape as user_limit above: seeded from PLAN_STORAGE_LIMITS_MB
+    # at creation, editable afterward by a Super Admin independent of
+    # plan (e.g. a one-off extra allowance for a specific org), read by
+    # usage_monitoring_service to compute "X GB of Y GB used".
+    storage_limit_mb: Mapped[int] = mapped_column(Integer, default=5120, nullable=False)
     # Self-serve signup starts every org on a clock: trial_ends_at is set
     # once at creation (now + PlatformSettings.trial_days) and never
     # moved again, even past a license activation (billing.py's

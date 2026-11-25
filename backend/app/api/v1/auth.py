@@ -17,7 +17,7 @@ from app.core.database import get_db
 from app.core.phone import normalize_phone
 from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
 from app.core.session import create_session, revoke_all_sessions, revoke_all_sessions_except, revoke_session
-from app.models.org import PLAN_USER_LIMITS, Org, OrgPlan, OrgStatus
+from app.models.org import PLAN_STORAGE_LIMITS_MB, PLAN_USER_LIMITS, Org, OrgPlan, OrgStatus
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.team import Team
 from app.models.user import RoleName, User, UserStatus, split_full_name
@@ -78,6 +78,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # column's unrelated default of 20.
     org = Org(
         name=body.org_name, slug=slug, plan=OrgPlan.FREE, user_limit=PLAN_USER_LIMITS[OrgPlan.FREE],
+        storage_limit_mb=PLAN_STORAGE_LIMITS_MB[OrgPlan.FREE],
         trial_ends_at=datetime.now(timezone.utc) + timedelta(days=trial_days),
         # Billing/invoice address — see RegisterRequest's docstring.
         # billing_address holds "location" (the street/location line);
@@ -268,6 +269,7 @@ async def google_register(body: GoogleRegisterRequest, db: AsyncSession = Depend
     # column's unrelated default of 20.
     org = Org(
         name=body.org_name, slug=slug, plan=OrgPlan.FREE, user_limit=PLAN_USER_LIMITS[OrgPlan.FREE],
+        storage_limit_mb=PLAN_STORAGE_LIMITS_MB[OrgPlan.FREE],
         trial_ends_at=datetime.now(timezone.utc) + timedelta(days=trial_days),
     )
     db.add(org)

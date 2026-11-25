@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3, KeyRound, CreditCard, Video, LifeBuoy } from "lucide-react";
+import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3, KeyRound, CreditCard, Video, LifeBuoy, Activity } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,7 @@ const navByRole: Record<RoleName, NavItem[]> = {
     { href: "/organizations", label: "Organizations", icon: Building2 },
     { href: "/subscriptions", label: "Subscriptions", icon: CreditCard },
     { href: "/support-tickets", label: "Support Tickets", icon: LifeBuoy },
+    { href: "/usage-monitoring", label: "Usage Monitoring", icon: Activity },
     { href: "/platform-settings", label: "Platform Settings", icon: Server },
   ],
   org_admin: [

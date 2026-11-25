@@ -7,7 +7,7 @@ from app.core.countries import ALL_COUNTRIES
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.core.session import revoke_all_sessions
-from app.models.org import PLAN_USER_LIMITS, Org, OrgStatus
+from app.models.org import PLAN_STORAGE_LIMITS_MB, PLAN_USER_LIMITS, Org, OrgStatus
 from app.models.org_payment import OrgPayment
 from app.models.platform_settings import SINGLETON_ID, PlatformSettings
 from app.models.user import RoleName, User, split_full_name
@@ -215,7 +215,10 @@ async def create_org(body: OrgCreateRequest, db: AsyncSession = Depends(get_db))
     # real customer onboarded by hand here never starts a trial clock
     # (that's list_pilots above's whole basis for telling these apart
     # from self-serve signups: trial_ends_at IS NULL).
-    org = Org(name=body.org_name, slug=slug, plan=body.plan, status=OrgStatus.ACTIVE, user_limit=PLAN_USER_LIMITS[body.plan])
+    org = Org(
+        name=body.org_name, slug=slug, plan=body.plan, status=OrgStatus.ACTIVE,
+        user_limit=PLAN_USER_LIMITS[body.plan], storage_limit_mb=PLAN_STORAGE_LIMITS_MB[body.plan],
+    )
     db.add(org)
     await db.flush()
 
@@ -469,6 +472,7 @@ async def activate_license(org_id: str, body: ActivateLicenseRequest, db: AsyncS
     org.status = OrgStatus.ACTIVE
     org.plan = body.plan
     org.user_limit = body.user_limit if body.user_limit is not None else PLAN_USER_LIMITS[body.plan]
+    org.storage_limit_mb = PLAN_STORAGE_LIMITS_MB[body.plan]
     org.suspension_reason = None
     await db.commit()
     await db.refresh(org)
@@ -536,11 +540,16 @@ async def update_org(org_id: str, body: OrgUpdateRequest, db: AsyncSession = Dep
         org.plan = body.plan
         # Changing plan re-baselines the seat limit to that plan's default
         # unless the request also sends an explicit user_limit override
-        # (e.g. a negotiated custom seat count) in the same call.
+        # (e.g. a negotiated custom seat count) in the same call. Same
+        # reasoning for storage_limit_mb/storage below.
         if body.user_limit is None:
             org.user_limit = PLAN_USER_LIMITS[body.plan]
+        if body.storage_limit_mb is None:
+            org.storage_limit_mb = PLAN_STORAGE_LIMITS_MB[body.plan]
     if body.user_limit is not None:
         org.user_limit = body.user_limit
+    if body.storage_limit_mb is not None:
+        org.storage_limit_mb = body.storage_limit_mb
     if body.allowed_domains is not None:
         org.allowed_domains = [d.strip().lower() for d in body.allowed_domains if d.strip()]
 

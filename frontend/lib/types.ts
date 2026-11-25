@@ -1125,3 +1125,59 @@ export interface SupportTicketMessage {
   is_super_admin: boolean;
   created_at: string;
 }
+
+// ---- Usage monitoring (Super Admin) ----
+export interface ServerHealth {
+  cpu_percent: number;
+  ram_percent: number;
+  ram_used_mb: number;
+  ram_total_mb: number;
+  disk_percent: number;
+  disk_used_gb: number;
+  disk_total_gb: number;
+}
+
+export interface OrgUsage {
+  org_id: string;
+  org_name: string;
+  org_slug: string;
+  plan: OrgPlan;
+  status: OrgStatus;
+  user_count: number;
+  user_limit: number;
+  storage_mb: number;
+  storage_limit_mb: number;
+  storage_percent: number;
+  requests_today: number;
+  avg_response_ms: number;
+  active_users_today: number;
+}
+
+export interface UsageSeriesPoint {
+  date: string;
+  value: number;
+}
+
+export interface StorageBreakdownItem {
+  type: string;
+  bytes: number;
+}
+
+export interface OrgUsageDetail {
+  org_id: string;
+  org_name: string;
+  org_slug: string;
+  plan: OrgPlan;
+  status: OrgStatus;
+  user_count: number;
+  user_limit: number;
+  storage_mb: number;
+  storage_limit_mb: number;
+  storage_percent: number;
+  storage_breakdown: StorageBreakdownItem[];
+  dau_trend: UsageSeriesPoint[];
+  request_trend: UsageSeriesPoint[];
+  live_class_count: number;
+  live_class_minutes: number;
+  whatsapp_messages: number;
+}
