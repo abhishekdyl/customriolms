@@ -1090,3 +1090,38 @@ export interface ProfileField {
 export interface ProfileFieldValue extends ProfileField {
   value: string | null;
 }
+
+// ---- Support tickets (Org Admin <-> Super Admin helpdesk) ----
+export type SupportTicketCategory = "query" | "complaint" | "technical" | "billing" | "other";
+export type SupportTicketPriority = "low" | "medium" | "high" | "urgent";
+export type SupportTicketStatus = "open" | "resolved";
+
+export const supportCategoryLabel: Record<SupportTicketCategory, string> = {
+  query: "Query", complaint: "Complaint", technical: "Technical", billing: "Billing", other: "Other",
+};
+export const supportPriorityLabel: Record<SupportTicketPriority, string> = {
+  low: "Low", medium: "Medium", high: "High", urgent: "Urgent",
+};
+
+export interface SupportTicket {
+  id: string;
+  subject: string;
+  category: SupportTicketCategory;
+  priority: SupportTicketPriority;
+  status: SupportTicketStatus;
+  raised_by_name: string | null;
+  message_count: number;
+  org_id: string;
+  org_name: string;
+  org_slug: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupportTicketMessage {
+  id: string;
+  body: string;
+  author_name: string | null;
+  is_super_admin: boolean;
+  created_at: string;
+}

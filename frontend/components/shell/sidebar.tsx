@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3, KeyRound, CreditCard, Video } from "lucide-react";
+import { Users, BookOpen, ShieldCheck, Sparkles, Bell, Building2, LayoutDashboard, Server, LogOut, Library, History, BarChart3, KeyRound, CreditCard, Video, LifeBuoy } from "lucide-react";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 import { useMyOrg } from "@/lib/hooks/use-orgs";
 import { cn } from "@/lib/utils";
@@ -21,6 +21,7 @@ const navByRole: Record<RoleName, NavItem[]> = {
   super_admin: [
     { href: "/organizations", label: "Organizations", icon: Building2 },
     { href: "/subscriptions", label: "Subscriptions", icon: CreditCard },
+    { href: "/support-tickets", label: "Support Tickets", icon: LifeBuoy },
     { href: "/platform-settings", label: "Platform Settings", icon: Server },
   ],
   org_admin: [
@@ -36,6 +37,7 @@ const navByRole: Record<RoleName, NavItem[]> = {
     { href: "/audit-log", label: "Audit Log", icon: History, capability: "audit_log.view" },
     { href: "/roles", label: "Roles", icon: KeyRound }, // ORG_ADMIN-only, never shown to custom roles
     { href: "/billing", label: "Billing", icon: CreditCard }, // ORG_ADMIN-only, same reasoning as Roles above
+    { href: "/support", label: "Support", icon: LifeBuoy }, // ORG_ADMIN-only — raising a platform ticket is not delegatable
     { href: "/settings", label: "Org Settings", icon: Building2, capability: "org_settings.manage" },
   ],
   team_lead: [
@@ -66,7 +68,7 @@ const navByRole: Record<RoleName, NavItem[]> = {
 function navItemsFor(role: RoleName, capabilities: string[] | null | undefined): NavItem[] {
   if (role !== "custom") return navByRole[role];
   return navByRole.org_admin.filter((item) => {
-    if (item.href === "/roles" || item.href === "/billing") return false;
+    if (item.href === "/roles" || item.href === "/billing" || item.href === "/support") return false;
     if (!item.capability) return true;
     if (!capabilities) return true;
     const required = Array.isArray(item.capability) ? item.capability : [item.capability];
