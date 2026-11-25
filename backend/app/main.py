@@ -84,15 +84,20 @@ async def _org_request_stat_middleware(request: Request, call_next):
     duration_ms = round((time.monotonic() - start) * 1000)
 
     org_id = None
+    user_id = None
     auth = request.headers.get("authorization", "")
     if auth.startswith("Bearer "):
         try:
-            org_id = decode_token(auth[7:]).get("org_id")
+            claims = decode_token(auth[7:])
+            org_id = claims.get("org_id")
+            user_id = claims.get("sub")
         except Exception:
             org_id = None
 
     if org_id:
         asyncio.create_task(usage_monitoring_service.record_request(org_id, duration_ms, response.status_code >= 500))
+    if org_id and user_id:
+        asyncio.create_task(usage_monitoring_service.record_activity(org_id, user_id))
 
     return response
 

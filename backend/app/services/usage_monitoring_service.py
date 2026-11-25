@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
-from app.models.activity import ActivityDay
+from app.models.app_activity_day import AppActivityDay
 from app.models.file import FileRecord
 from app.models.org import Org
 from app.models.org_request_stat import OrgRequestStat
@@ -49,6 +49,22 @@ async def record_request(org_id: str, duration_ms: int, is_error: bool) -> None:
             await db.commit()
     except Exception:
         logger.exception("record_request failed for org %s", org_id)
+
+
+async def record_activity(org_id: str, user_id: str) -> None:
+    """Role-agnostic "Active Today" signal — any authenticated request
+    from any role marks that user active for today (see
+    models/app_activity_day.py's docstring for why this is a separate
+    table from the learner-only streak one). Same best-effort,
+    fire-and-forget shape as record_request above."""
+    try:
+        today = datetime.now(timezone.utc).date()
+        async with AsyncSessionLocal() as db:
+            stmt = pg_insert(AppActivityDay).values(user_id=user_id, day=today, org_id=org_id).on_conflict_do_nothing()
+            await db.execute(stmt)
+            await db.commit()
+    except Exception:
+        logger.exception("record_activity failed for org %s user %s", org_id, user_id)
 
 
 # ---- Storage ----
@@ -108,10 +124,9 @@ async def _user_counts_by_org(db: AsyncSession) -> dict:
 async def _dau_today_by_org(db: AsyncSession) -> dict:
     today = datetime.now(timezone.utc).date()
     rows = (await db.execute(
-        select(User.org_id, func.count(func.distinct(ActivityDay.user_id)))
-        .join(User, User.id == ActivityDay.user_id)
-        .where(ActivityDay.day == today)
-        .group_by(User.org_id)
+        select(AppActivityDay.org_id, func.count(func.distinct(AppActivityDay.user_id)))
+        .where(AppActivityDay.day == today)
+        .group_by(AppActivityDay.org_id)
     )).all()
     return dict(rows)
 
@@ -119,11 +134,10 @@ async def _dau_today_by_org(db: AsyncSession) -> dict:
 async def _dau_trend_for_org(db: AsyncSession, org_id, days: int) -> list[dict]:
     since = datetime.now(timezone.utc).date() - timedelta(days=days - 1)
     rows = (await db.execute(
-        select(ActivityDay.day, func.count(func.distinct(ActivityDay.user_id)))
-        .join(User, User.id == ActivityDay.user_id)
-        .where(User.org_id == org_id, ActivityDay.day >= since)
-        .group_by(ActivityDay.day)
-        .order_by(ActivityDay.day)
+        select(AppActivityDay.day, func.count(func.distinct(AppActivityDay.user_id)))
+        .where(AppActivityDay.org_id == org_id, AppActivityDay.day >= since)
+        .group_by(AppActivityDay.day)
+        .order_by(AppActivityDay.day)
     )).all()
     by_day = {d: c for d, c in rows}
     return _fill_series(by_day, since, days)
