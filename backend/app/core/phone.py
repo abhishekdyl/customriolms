@@ -39,15 +39,18 @@ def normalize_phone(raw: str | None) -> str | None:
 
 def is_valid_e164(phone: str | None) -> bool:
     """Strict check used right before a WhatsApp send is attempted —
-    is this a plausible E.164 number at all (leading "+", 8-15 digits,
-    no leading zero after the country code)? Deliberately doesn't check
-    the number actually exists/is reachable; that's what the provider's
-    own delivery-status webhook is for."""
+    is this a plausible E.164-shaped number at all (8-15 digits, no
+    leading zero after the country code)? A leading "+" is accepted
+    but NOT required: normalize_phone only adds one when the person
+    typed one themselves (see its docstring), so most real profiles —
+    someone who typed "919876543210" or "9876543210" with no "+" —
+    would otherwise never pass this check and could never be
+    WhatsApp'd at all, which defeats the feature. Deliberately doesn't
+    check the number actually exists/is reachable; that's what the
+    provider's own delivery-status webhook is for."""
     if not phone:
         return False
-    if not phone.startswith("+"):
-        return False
-    digits = phone[1:]
+    digits = phone[1:] if phone.startswith("+") else phone
     if not digits.isdigit():
         return False
     if not (_MIN_DIGITS <= len(digits) <= _MAX_DIGITS):
@@ -61,4 +64,4 @@ def whatsapp_recipient(phone: str | None) -> str | None:
     is_valid_e164) — the caller's cue to skip and log why."""
     if not is_valid_e164(phone):
         return None
-    return phone[1:]
+    return phone[1:] if phone.startswith("+") else phone
