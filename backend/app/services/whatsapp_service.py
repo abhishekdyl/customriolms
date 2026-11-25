@@ -148,8 +148,16 @@ async def _send_template_message(
         if resp.status_code >= 400:
             return False, f"SendZen {resp.status_code}: {resp.text[:200]}"
         data = resp.json() if resp.content else {}
-        message_id = data.get("message_id") or data.get("id") or ""
-        return True, message_id or "sent"
+        # Try every shape seen so far: a flat {"message_id"/"id": ...},
+        # or one nested under a "data" object (their own error responses
+        # nest detail under "data", so a success envelope nesting the id
+        # the same way is plausible) — and log the raw body itself when
+        # none of those match, instead of a useless literal "sent", so a
+        # genuinely new response shape is visible in the WhatsApp log
+        # rather than silently swallowed.
+        nested = data.get("data") if isinstance(data.get("data"), dict) else {}
+        message_id = data.get("message_id") or data.get("id") or nested.get("message_id") or nested.get("id") or ""
+        return True, message_id or (resp.text[:200] if resp.content else "accepted (empty response body)")
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
 
